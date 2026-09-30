@@ -90,7 +90,14 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 				body:           &bytes.Buffer{},
 			}
 
-			defer wrapped.commit(wrapped.budgetSpent())
+			// A closure, not a plain deferred call. `defer commit(spent)` evaluates
+			// its argument *now*, before the handler has run, so the flag was
+			// captured as false and the timeout never fired — the writer buffered
+			// and then committed the partial body as a 200, which is the precise
+			// failure the buffering exists to prevent.
+			defer func() {
+				wrapped.commit(wrapped.budgetSpent())
+			}()
 
 			next.ServeHTTP(wrapped, r.WithContext(ctx))
 		})
@@ -236,13 +243,11 @@ func (tw *timeoutWriter) commit(timedOut bool) {
 
 	tw.committed = true
 
-	// A flushed response is already on the wire. Substituting a 504 now would
-	// append an error document to a live event stream.
-	if tw.streaming {
-		return
-	}
-
-	if timedOut {
+	// A flushed response is already on the wire, so a 504 would append an error
+	// document to a live event stream. The buffer is still written, though: it
+	// holds everything the handler produced before the flush, and returning here
+	// silently dropped the first event of every stream.
+	if timedOut && !tw.streaming {
 		// Written straight to the parent: the buffer is discarded, and headers
 		// the handler set are deliberately not forwarded. A Content-Type
 		// describing a page that was never sent is a lie, and forwarding a

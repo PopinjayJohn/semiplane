@@ -103,10 +103,22 @@ func parseTrustedProxies(values []string) []netip.Prefix {
 func resolveClientIP(trusted []netip.Prefix, r *http.Request) string {
 	remote, remoteOK := remoteAddr(r)
 
+	// No proxy is trusted, so no forwarding header is evidence of anything: the
+	// peer is a caller, and a caller decides what its headers say. Reading them
+	// anyway would hand anyone who can reach the server the ability to choose
+	// the address in the access log — which is the input to every rate limit,
+	// audit and ban that reads it later. With nothing configured, the transport
+	// address is the only thing known to be true.
+	if len(trusted) == 0 {
+		return resolvedOr(remote, remoteOK)
+	}
+
 	// Each header may itself hold a comma-separated chain, and the chain runs
-	// right to left within the header as well, so the two loops nest with the
-	// same direction.
-	for _, header := range r.Header.Values("X-Forwarded-For") {
+	// right to left within the header as well. The *headers* run right to left
+	// too: when a chain arrives split across several lines, the last line is
+	// the one the nearest proxy appended, and iterating them left to right
+	// would adopt the oldest — and least verifiable — entry in the chain.
+	for _, header := range slices.Backward(r.Header.Values("X-Forwarded-For")) {
 		hops := splitHeaderList(header)
 		for _, hop := range slices.Backward(hops) {
 			addr, err := netip.ParseAddr(hop)
