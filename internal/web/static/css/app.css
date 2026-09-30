@@ -1,0 +1,17 @@
+/* Tailwind entry point. Built by `make css` into static/dist/app.css, which
+ * internal/web embeds and the server serves at /assets/app.css.
+ *
+ * This file is the only one the build scans for utility classes. Everything
+ * else under static/css is imported from here, and anything a .templ file
+ * renders has to be reachable from an @source directive below or the class
+ * never reaches the output. */
+
+@import "tailwindcss";
+
+/* templ renders server-side, so a class name lives in Go source, not in a
+ * template file the scanner would find. Pointing the scanner at both roots is
+ * what keeps a `data-testid`-adjacent utility from silently vanishing from the
+ * built stylesheet. */
+@source "../../components/**/*.templ";
+@source "../../../httpapi/**/*.go";
+@source "../../../domain/**/*.go";

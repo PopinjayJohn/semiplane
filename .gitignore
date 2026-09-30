@@ -46,6 +46,16 @@ node_modules/
 # Agent Manager worktrees are ephemeral checkouts, never part of the repo
 .kilo/worktrees/
 
+# Toolchain binaries installed by the Makefile (tailwind, templ). Never
+# committed: the standalone Tailwind binary is ~110MB.
+.toolbin/
+
+# Generated frontend assets. Produced by `make css` and `make templ`, which
+# `make check` runs before `go build` because internal/web embeds them. A
+# generated file in a diff means the gate was not run.
+internal/web/static/dist/
+*_templ.go
+
 # Hugo build output and cache
 docs/public/
 docs/resources/

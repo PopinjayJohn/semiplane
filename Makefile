@@ -19,6 +19,18 @@ GO     := $(GOENV) go
 GOLANGCI_VERSION := v2.14.0
 ACTIONLINT_VERSION := v1.7.7
 YQ_VERSION        := v4.47.2
+TEMPL_VERSION     := v0.3.1020
+# The frontend tools are installed to a repository-local GOBIN rather than
+# $HOME/go/bin: ci.yml already does this for the Go tools, and a developer's
+# personal GOBIN is not something a build should depend on.
+TOOLBIN      := $(CURDIR)/.toolbin
+# Tailwind ships a standalone binary and a sha256sums.txt covering every
+# platform. Pinning the *manifest's* digest is one committed hash instead of
+# four, and it is the stronger pin: the per-platform digests are then verified
+# against an upstream artifact whose own hash is committed here. See
+# docs/content/en/decisions/0019-tailwind-standalone-pinned.md.
+TAILWIND_VERSION         := v4.3.3
+TAILWIND_MANIFEST_SHA256 := 527b4fcd96950f9ae8f83bbbff27c61e4ff3596cb0b2eb760f9b3516de5d3c56
 # CGO_ENABLED=0 selects Hugo's standard edition. With cgo enabled, go install
 # builds the extended edition, which needs a C compiler for Sass the site never
 # uses -- and makes the built artifact depend on the build machine.
@@ -42,10 +54,25 @@ help: ## Show this help
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: tools
-tools: gopls golangci-lint actionlint yq hugo ## Install every developer tool (see AGENTS.md)
+tools: gopls golangci-lint actionlint yq hugo templ-bin tailwind ## Install every developer tool (see AGENTS.md)
 
 .PHONY: tools-ci
-tools-ci: golangci-lint ## Install only what the CI gate needs
+tools-ci: golangci-lint templ-bin tailwind ## Install only what the CI gate needs
+
+.PHONY: templ-bin
+templ-bin: ## Install the templ compiler at $(TEMPL_VERSION) into .toolbin
+	@# `export`, not an assignment prefix. Every other tool target sets GOBIN
+	@# inline and the prefix works, because the prefix applies to a single
+	@# command. This one is `. /etc/profile.d/go.sh && go install ...` -- the
+	@# conditional GOENV -- so a prefix would attach to the `.` builtin and
+	@# never reach go, silently installing to $HOME/go/bin instead.
+	export GOBIN="$(TOOLBIN)"; $(GOENV) go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION)
+
+.PHONY: tailwind
+tailwind: ## Verify and install the pinned Tailwind standalone binary into .toolbin
+	TAILWIND_VERSION=$(TAILWIND_VERSION) \
+	TAILWIND_MANIFEST_SHA256=$(TAILWIND_MANIFEST_SHA256) \
+	TOOLBIN="$(TOOLBIN)" ./tools/install-tailwind.sh
 
 .PHONY: gopls
 gopls: ## Install gopls (LSP; not needed in CI)
@@ -71,8 +98,28 @@ hugo: ## Install Hugo at $(HUGO_VERSION); builds the docs site
 fmt: ## Apply formatters (gofumpt + gci + golines)
 	$(GOENV) golangci-lint fmt
 
+WEB_CSS_SRC := $(CURDIR)/internal/web/static/css/app.css
+WEB_CSS_OUT := $(CURDIR)/internal/web/static/dist/app.css
+
+.PHONY: css
+css: tailwind ## Build the stylesheet into internal/web/static/dist/
+	@mkdir -p $(dir $(WEB_CSS_OUT))
+	$(TOOLBIN)/tailwindcss --input $(WEB_CSS_SRC) --output $(WEB_CSS_OUT) --minify
+
+.PHONY: templ
+templ: templ-bin ## Generate Go from every .templ file
+	$(TOOLBIN)/templ generate
+
 .PHONY: build
 build: ## Compile all packages
+	@# internal/web embeds the generated stylesheet, so a build without `make
+	@# css` first fails on a missing embed pattern. Saying so beats the
+	@# alternative, which is an error about a directory that legitimately is
+	@# not in version control.
+	@test -f $(WEB_CSS_OUT) || { \
+		echo "==> $(WEB_CSS_OUT) is missing."; \
+		echo "==> internal/web embeds it, so run: make css"; \
+		exit 1; }
 	$(GO) build $(PKGS)
 
 .PHONY: vet
@@ -106,11 +153,13 @@ test-integration: ## Run integration-tagged tests
 	$(GO) test -race -count=1 -tags=integration $(PKGS)
 
 .PHONY: check
-check: ## Mandatory gate: fmt-check, build, vet, lint, test
+check: ## Mandatory gate: fmt-check, css, templ, build, vet, lint, test
 	@echo "==> format check"
 	@diffs="$$($(GOENV) golangci-lint fmt --diff 2>/dev/null)"; \
 		if [ -n "$$diffs" ]; then echo "unformatted files:"; echo "$$diffs"; \
 		echo "run: make fmt"; exit 1; fi
+	@echo "==> css";    $(MAKE) --no-print-directory css
+	@echo "==> templ";  $(MAKE) --no-print-directory templ
 	@echo "==> build";  $(MAKE) --no-print-directory build
 	@echo "==> vet";    $(MAKE) --no-print-directory vet
 	@echo "==> lint";   $(MAKE) --no-print-directory lint
@@ -191,6 +240,9 @@ site-serve: site-plans ## Serve the docs site locally with live reload
 .PHONY: clean
 clean: ## Remove build and test artifacts
 	rm -rf bin coverage.out .playwright-mcp test-results
-	rm -rf $(SITE_PUBLISH) $(SITE_CACHE) $(SITE_DIR)/.site-check $(SITE_PLANS)
+	rm -rf $(SITE_PUBLISH) $(SITE_CACHE) $(SITE_DIR)/.site-check $(SITE_PLAN)S
 	rm -f $(SITE_DIR)/.hugo_build.lock
+	rm -rf $(TOOLBIN)
+	rm -f internal/web/static/dist/app.css
+	rm -f $(shell find internal -name '*_templ.go' 2>/dev/null)
 	$(GO) clean -testcache
