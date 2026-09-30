@@ -275,13 +275,19 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 		return fmt.Errorf("migration %04d (%s): %w", migration.Version, migration.Name, err)
 	}
 
+	// A Unix second count, not a time.Time. The driver renders a time.Time as a
+	// formatted string, and SQLite's dynamic typing stores that in a column
+	// declared INTEGER as TEXT — so the column would hold a value its own type
+	// declaration denies, and a future `WHERE applied_at < ?` against an integer
+	// would compare text to integer, which sorts every text value last. Silent,
+	// and wrong in the direction that hides old rows.
 	record := "INSERT INTO " + schemaMigrationsTable + " (version, name, applied_at) VALUES (?, ?, ?)"
 	if _, err := tx.ExecContext(
 		ctx,
 		record,
 		migration.Version,
 		migration.Name,
-		nowFunc(),
+		nowFunc().Unix(),
 	); err != nil {
 		rollback(tx)
 
