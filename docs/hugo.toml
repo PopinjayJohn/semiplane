@@ -85,6 +85,7 @@ enableRobotsTXT = true
     { name = "Operating", url = "operating/" },
     { name = "Roadmap", url = "roadmap/" },
     { name = "Contributing", url = "contributing/" },
+    { name = "Decisions", url = "decisions/" },
     { name = "Design records", url = "design/" },
   ]
 

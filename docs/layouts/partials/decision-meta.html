@@ -1,0 +1,55 @@
+{{- /*
+  decision-meta.html — status, date and supersession for an ADR.
+
+  The fields live in front matter and nothing renders them by default, which
+  makes an ADR look like an ordinary page. That is the failure this partial
+  exists to prevent: a superseded record that reads exactly like an accepted
+  one is worse than no record, because it will be followed.
+
+  Renders nothing at all when the front matter carries no status, so a page
+  that is not a decision is unaffected.
+*/ -}}
+{{- $status := .Params.status -}}
+{{- if $status -}}
+  {{- $supersedes := .Params.supersedes -}}
+  {{- $supersededBy := .Params.superseded_by -}}
+  <aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--{{ $status }}">{{ $status }}</span>
+      </dd>
+      {{- with .Params.date }}
+        <dt>Decided</dt>
+        <dd><time datetime="{{ . }}">{{ . }}</time></dd>
+      {{- end }}
+      {{- with $supersedes }}
+        <dt>Supersedes</dt>
+        <dd>
+          {{- range $i, $n := . }}
+            {{- if $i }}, {{ end -}}
+            <a href="{{ (printf "decisions/%s/" $n) | relURL }}">{{ $n }}</a>
+          {{- end -}}
+        </dd>
+      {{- end }}
+      {{- with $supersededBy }}
+        <dt>Superseded by</dt>
+        <dd>
+          <a href="{{ (printf "decisions/%s/" .) | relURL }}">{{ . }}</a>
+        </dd>
+      {{- end }}
+    </dl>
+  </aside>
+  {{- if eq $status "superseded" }}
+    {{- /* A warning, not a badge. Someone arriving from search must not read a
+           retired decision as current, and the status chip alone is easy to
+           skim past. */ -}}
+    <aside class="banner banner--warning" data-testid="decision-superseded-banner" role="note">
+      <p>
+        <strong>This decision has been superseded.</strong>
+        Read it for the reasoning, then read the record named above — it is the
+        one in force.
+      </p>
+    </aside>
+  {{- end -}}
+{{- end -}}

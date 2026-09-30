@@ -59,5 +59,21 @@ record — they are listed here:
   discrepancy.
 - The server-sent-event routes in the UI specification predate the URL scheme
   settled in the architecture record.
+- **The architecture record's `ETag` rule is a defect.** §5.5 says the validator
+  is the content hash, and the same section defines two body variants from that
+  one hash. A GM's unredacted response and a player's redacted one would
+  advertise the same validator, and any cache holding both would serve whichever
+  it stored first — a direct secret leak to a player. The correction is
+  [0016]({{ "decisions/0016-salted-etag/" | relURL }}): salt the validator with
+  the `include_secrets` flag.
+- **The architecture record's build order cannot work as written.** §15 builds
+  the templ shell at phase 5 but places the Tailwind toolchain at phase 10, and a
+  shell cannot be styled before the CSS toolchain exists. The toolchain moves to
+  the foundations phase and the shell becomes its own phase. See
+  [0013]({{ "decisions/0013-templ/" | relURL }}).
 - Diagrams render as code blocks. They are readable as source, which is how they
   were written.
+
+Where a record is wrong, the correction is a
+[decision record]({{ "decisions/" | relURL }}), never an edit here. That is the
+whole reason this list exists.

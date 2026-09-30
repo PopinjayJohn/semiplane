@@ -9,14 +9,35 @@ better prompt than an absent heading.
 <!-- Two sentences. The *why* is the part descriptions usually omit, and the part
      that makes a change reviewable. What it does is visible in the diff. -->
 
+## Phase and branch
+
+<!-- Which phase this belongs to, and the branch. A work-item branch is cut from
+     its phase branch, never from main. State any work item you are dropping, and
+     why — a silently dropped work item is an incomplete phase, not a detail. -->
+
+- Phase:
+- Work item (e.g. `P6/W3`):
+- Dropped, with reason: <!-- or "no" -->
+
 ## Related issue
 
 <!-- Closes #123, or "not user-visible" if there is no issue. State the
      no-issue case explicitly so a reviewer can tell "forgot" from "none". -->
 
+## Requirement IDs touched
+
+<!-- Spec IDs from docs/content/en/contributing/spec.md, e.g. S-5.6.1. An ADR
+     for this change? Link it. "Neither" is a valid answer and a useful one —
+     it means the choice was already settled by an existing record. -->
+
+- Spec IDs: <!-- or "none" -->
+- ADR: <!-- or "none, already settled" -->
+
 ## Gate
 
-<!-- `make ci` is green. -->
+<!-- `make ci` is green. `make site-check` if docs/ changed,
+     `make lint-workflows` if .github/workflows/ changed,
+     `make labels-check` if labels or a form changed. -->
 
 ## Design impact
 
@@ -30,8 +51,10 @@ better prompt than an absent heading.
       never be able to write `campaign_state`; it dispatches intents that a gameplay
       system resolves.
 - [ ] `[!secret]` handling, or anything a non-GM viewer can receive.
-- [ ] Access tiers, or the render cache key. Remember that the document body is
-      permission-neutral by construction; `include_secrets` is the only exception.
+- [ ] Access tiers, the render cache key, or the `ETag`. The body is permission-neutral
+      by construction; `include_secrets` is the only exception, and the validator is
+      salted with it.
+- [ ] A dependency, the build, the gate, or the CI matrix.
 - [ ] None of the above.
 
 ## Security
