@@ -1,70 +1,52 @@
-// Package httpapi exposes the semiplane HTTP surface.
 package httpapi
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
-	"time"
+
+	"github.com/semiplane/semiplane/internal/config"
+	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	"github.com/semiplane/semiplane/internal/web"
 )
 
 // NewRouter builds the application HTTP handler with all routes registered.
-func NewRouter(logger *slog.Logger) http.Handler {
+//
+// The middleware order is the part of this function that matters, and it is
+// one list rather than an assembly at each call site so the reasoning is
+// visible where it is decided. Listed outermost first, which is the order
+// requests traverse it:
+//
+//  1. RequestID — first, because every layer below it logs, and a log line
+//     without a correlation id cannot be tied back to a request.
+//  2. Recoverer — second, so it catches a panic in any layer below it, which
+//     includes a handler that has already committed a status line. That case is
+//     why the response is a log entry plus whatever the server can still write,
+//     not simply a dropped connection.
+//  3. RealIP — before Log, because Log's client_ip attribute has to be the
+//     resolved address rather than the proxy's.
+//  4. Log — times the handler, and sits outside Timeout so it observes the 504
+//     rather than the 200 a timed-out handler wrote. A timeout invisible in the
+//     access log is the failure this ordering prevents.
+//  5. Timeout — innermost of the timed layers, so the budget covers the handler
+//     and nothing else. Outermost would also time the logging and the panic
+//     recovery, and a timeout firing while the error path runs turns a 500 into
+//     a truncated response.
+//  6. securityHeaders — innermost, applied to the mux. It sets headers before
+//     delegating, so it has to be inside every layer that can write a response
+//     of its own, or a 504 from Timeout would ship without them.
+func NewRouter(logger *slog.Logger, cfg config.Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("GET /readyz", readinessHandler)
-	mux.Handle("GET /", loggingMiddleware(logger, http.NotFoundHandler()))
+	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServerFS(web.Dist())))
+	mux.Handle("/", notFoundHandler(logger))
 
-	return securityHeaders(mux)
-}
-
-type healthResponse struct {
-	Status string `json:"status"`
-}
-
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
-}
-
-func readinessHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, healthResponse{Status: "ready"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		slog.Error("encode response", slog.String("error", err.Error()))
-	}
-}
-
-func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		started := time.Now()
-
-		next.ServeHTTP(w, r)
-
-		logger.Info("request",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-			slog.Duration("elapsed", time.Since(started)),
-		)
-	})
-}
-
-func securityHeaders(next http.Handler) http.Handler {
-	headers := map[string]string{
-		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":        "DENY",
-		"Referrer-Policy":        "strict-origin-when-cross-origin",
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for key, value := range headers {
-			w.Header().Set(key, value)
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	return middleware.Chain(
+		securityHeaders(mux),
+		middleware.RequestID,
+		middleware.Recoverer(logger),
+		middleware.RealIP(cfg.TrustedProxies),
+		middleware.Log(logger),
+		middleware.Timeout(cfg.HandlerTimeout),
+	)
 }
