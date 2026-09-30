@@ -31,7 +31,7 @@ it:
 
 ```bash
 # planned — not implemented yet
-go run ./cmd/server admin create --username you
+semiplane admin create --username you
 ```
 
 ## Configuration
@@ -42,18 +42,14 @@ works:
 | Variable | Default | Meaning |
 |---|---|---|
 | `SEMIPLANE_ADDR` | `:8080` | Listen address. Keep it on a private interface behind a proxy. |
-| `SEMIPLANE_DATABASE_URL` | `sqlite://semiplane.db` | SQLite DSN. The file path is the part after `sqlite://`. |
+| `SEMIPLANE_DATABASE_URL` | `file:semiplane.db` | SQLite DSN. `sqlite://path` is accepted and translated. A DSN that sets a pragma is **rejected**: `journal_mode`, `busy_timeout` and `foreign_keys` are what the server depends on, and a configured one would silently turn them off. |
+| `SEMIPLANE_CONTENT_ROOT_BASE` | `/var/lib/semiplane/vaults` | Directory campaign vaults live beneath. **Must be absolute** — a campaign's content root is stored absolute, so a relative base would resolve differently after a restart from a different working directory. |
 | `SEMIPLANE_READ_TIMEOUT` | `10s` | Per-request read timeout. |
-| `SEMIPLANE_WRITE_TIMEOUT` | `30s` | Per-request write timeout. |
+| `SEMIPLANE_WRITE_TIMEOUT` | `30s` | Per-request response-write timeout, measured on the socket. |
+| `SEMIPLANE_HANDLER_TIMEOUT` | `25s` | Per-handler budget. A handler that exceeds it gets a `504`. Separate from the write timeout because that one bounds writing to the socket and this one bounds a handler that has been given the connection and has not returned — a handler blocked on a database read is the case that matters. |
 | `SEMIPLANE_SHUTDOWN_TIMEOUT` | `15s` | Grace period for in-flight requests on `SIGINT`/`SIGTERM`. |
+| `SEMIPLANE_TRUSTED_PROXIES` | *(empty)* | Comma-separated CIDRs or addresses whose forwarding headers are believed. Empty means believe none, which is correct when the server is reachable directly: an empty list is the only default under which a caller cannot forge its own address in the access log. |
 | `SEMIPLANE_ENV` | `development` | `production` changes what is logged and served. |
-
-The content root base directory is not configurable yet; it is added with the
-campaign-registration work. Campaign content will live in one directory per
-campaign, and semiplane will confine every path it reads or writes to that root
-with `os.Root` — a real boundary, not a `filepath.Clean` plus a string prefix.
-Content arriving from an Obsidian sync is untrusted input: shared vaults,
-third-party plugins, and compromised devices all write into it.
 
 ## Behind a reverse proxy
 
