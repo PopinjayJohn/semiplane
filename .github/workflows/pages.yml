@@ -1,0 +1,78 @@
+name: Deploy docs to Pages
+
+on:
+  # Deliberately NO paths filter. The site renders the committed design records
+  # from .kilo/plans/ at build time, so a filter covering only docs/** would
+  # silently skip the deploy when a design record changes -- and the site would
+  # keep serving a stale copy of a document that already moved. A Hugo build over
+  # this site is ~100ms; correctness is worth the seconds.
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+defaults:
+  run:
+    shell: bash
+
+# One deployment at a time, and never cancel one in flight: cancelling a deploy
+# that has started publishing can leave the site in a half-updated state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install Hugo
+        run: |
+          GOBIN="$GITHUB_WORKSPACE/.toolbin" make hugo
+          echo "$GITHUB_WORKSPACE/.toolbin" >> "$GITHUB_PATH"
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: make site
+        env:
+          # The configure-pages step is the authority on the deployment URL; a
+          # baseURL pinned in hugo.toml would be wrong for a fork that deploys
+          # to a different path, and silently serving dead absolute links is
+          # the failure mode.
+          BASEURL: ${{ steps.pages.outputs.base_url }}/
+        run: make site
+
+      - name: Verify the built site
+        run: |
+          ./scripts/check-site-links.sh docs/public "${{ steps.pages.outputs.base_path }}"
+          ./scripts/check-site-structure.sh docs/public
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/public
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # v4 is the version the action's own README demonstrates. GitHub's Hugo
+      # starter workflow pins v5; let Dependabot propose the bump rather than
+      # hand-picking from a starter template GitHub does not keep current.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

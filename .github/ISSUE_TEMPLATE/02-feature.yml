@@ -1,0 +1,108 @@
+name: Feature request
+description: New capability, or a change to how something already works.
+title: "[feature] "
+labels:
+  - "type: feature"
+  - "status: needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the **problem**, not the solution. A solution written here tends to lock
+        in an approach before anyone has checked whether it is the cheapest one.
+
+        Worth reading first, because both may already have decided your question:
+
+        - [Roadmap](https://popinjayjohn.github.io/semiplane/roadmap/) — the twelve build
+          phases and their order.
+        - [Design records](https://popinjayjohn.github.io/semiplane/design/) — the
+          architecture and UI specifications, including the open questions.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        The situation that made you reach for something semiplane does not have. Concrete
+        beats hypothetical: "I could not find the handout I had written last week" is
+        more useful than "content discovery could be better".
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What should be possible when this is done?
+      description: >-
+        A user-visible outcome. "The GM can do X without editing files by hand" — not
+        "add a service layer".
+      render: markdown
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which area is this in?
+      description: >-
+        This does **not** label the issue. GitHub cannot turn a dropdown answer into a
+        label, so the maintainer applies the matching `area:` label during triage.
+      multiple: false
+      options:
+        - Wiki — rendering, navigation, broken links, search
+        - Editor — the web editor, save conflicts, revisions
+        - VTT and realtime — the map, tokens, initiative, connection
+        - Content pipeline — markdown, front matter, file watching, assets
+        - Secrets — `[!secret]` callouts and revealing them
+        - Plugin API — gameplay systems, data packs, house rules, UI plugins
+        - Self-hosting and operations — deployment, configuration, backup, upgrades
+        - Accessibility — keyboard, screen reader, contrast, TV mode
+        - Documentation and this website
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: >-
+        Including "do nothing" and "work around it externally". If the workaround is
+        awkward enough that you are here, describe it — that detail is often the real
+        request.
+      render: markdown
+    validations:
+      required: false
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints a solution must respect
+      description: >-
+        Optional, and the most useful box on this form. semiplane has hard architectural
+        constraints that are not negotiable, and a proposal that violates one wastes
+        everyone's time. For example: game state lives in memory in a single process, so
+        no proposal that assumes a second authoritative copy; the map is never delivered
+        over SSE, so no proposal that adds a reactive stream to `/play`; rendered content
+        is permission-neutral except for `[!secret]`, so anything that makes documents
+        vary per viewer has a caching cost.
+      render: markdown
+    validations:
+      required: false
+  - type: checkboxes
+    id: design-impact
+    attributes:
+      label: Does this change something expensive to undo?
+      description: >-
+        Ticking any of these routes the issue to `status: needs-design` at triage, which
+        means a design decision comes before code.
+      options:
+        - label: The data model — a new table, column, or migration
+        - label: The URL scheme, the WebSocket protocol, or the intent vocabulary
+        - label: What a plugin is allowed to do, or the `System` interface itself
+        - label: `[!secret]` handling, or what a non-GM viewer can ever receive
+        - label: Access tiers, or the render cache key
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Working on it
+      options:
+        - label: I would send a pull request for this.
+          required: false
+        - label: I can provide a sample campaign that reproduces the current behaviour.
+          required: false

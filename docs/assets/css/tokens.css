@@ -1,0 +1,141 @@
+/*
+ * semiplane docs — token layer.
+ *
+ * Authored from the token tables in the UI specification
+ * (.kilo/plans/1790778908232-responsive-ui-ux-design-spec.md §6). When
+ * internal/web gains its own tokens.css, this file is the source it is copied
+ * from, not a second palette — and tokens_contrast_test.go should assert both
+ * files against the same floors. Two palettes would drift, and a docs site
+ * whose contrast fails while the app's passes is a lie about the app.
+ *
+ * Three layers, one responsibility each. Only layer 3 may appear in a
+ * component:
+ *   1. primitive — oklch ramps, spacing, radii, durations. No meaning.
+ *   2. semantic  — --bg, --text, --accent. Meaning, no component knowledge.
+ *   3. component — the small set that genuinely cannot be expressed semantically.
+ *
+ * Every pair below clears the WCAG AA floor for its role. A token that exists
+ * in only one theme is a bug.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* --- 1. primitive ------------------------------------------------------ */
+  --oklch-ink: oklch(0.16 0.01 60);
+  --oklch-parchment: oklch(0.96 0.008 85);
+  --oklch-slate: oklch(0.18 0.012 250);
+  --oklch-ember: oklch(0.7 0.15 55);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-prose: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --measure: 42rem;
+  --measure-wide: 58rem;
+
+  /* Breakpoints are declared as tokens so a component query and the shell
+     grid can never read different numbers. */
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+}
+
+/* --- 2. semantic: light, "parchment and ink" ----------------------------- */
+[data-theme="light"] {
+  --bg: #f7f6f3;              /* 0.9216 lum */
+  --surface: #ffffff;
+  --surface-sunken: #efede8;
+  --text: #16130f;            /* 17.13:1 on --bg */
+  --text-muted: #4a443c;      /* 8.90:1  */
+  --text-subtle: #5f594f;     /* 6.42:1  */
+  --border-subtle: #d6d2c9;   /* decorative only */
+  --border: #8a8377;          /* 3.47:1  */
+  --accent: #1b4d8f;          /* 7.76:1  */
+  --accent-solid: #1b4d8f;
+  --on-accent: #ffffff;       /* 8.38:1 on --accent-solid */
+  --accent-surface: #e8eff8;
+  --success: #1e6b3a;
+  --warning: #8a5a00;
+  --danger: #a4262c;
+  --focus-ring: #0a58ca;      /* 5.96:1  */
+  --focus-ring-offset: var(--bg);
+  --code-bg: #f1efe9;
+}
+
+/* --- 2. semantic: dark, "slate and ember" -------------------------------- */
+/* Solid fills invert in dark mode. A #1b4d8f button on a #14181d page measures
+   2.13:1 against its own background: the label passes and the SHAPE fails
+   1.4.11, so the button is invisible while its text is fine. Light fill, near
+   black label. This is the most commonly missed rule in dark palettes. */
+[data-theme="dark"] {
+  --bg: #14181d;              /* 0.0089 lum */
+  --surface: #1b2027;
+  --surface-sunken: #0e1116;
+  --text: #edeeF0;            /* 15.35:1 on --bg */
+  --text-muted: #a8b0ba;      /* 8.13:1  */
+  --text-subtle: #8b94a0;     /* 5.81:1  */
+  --border-subtle: #2b323b;
+  --border: #6b7684;          /* 3.86:1  */
+  --accent: #7fb2f0;          /* 8.09:1  */
+  --accent-solid: #5b9be8;
+  --on-accent: #0b1220;       /* 6.51:1 on --accent-solid */
+  --accent-surface: #1d2a3d;
+  --success: #5fcb8e;
+  --warning: #e0b341;
+  --danger: #f0877f;
+  --focus-ring: #9cc4ff;      /* 9.97:1  */
+  --focus-ring-offset: var(--bg);
+  --code-bg: #161b21;
+}
+
+/* No-JS visitors still get the OS polarity for UA-rendered controls and
+   scrollbars. They lose the explicit override, not coherence. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #14181d;
+    --surface: #1b2027;
+    --surface-sunken: #0e1116;
+    --text: #edeeeF0;
+    --text-muted: #a8b0ba;
+    --text-subtle: #8b94a0;
+    --border-subtle: #2b323b;
+    --border: #6b7684;
+    --accent: #7fb2f0;
+    --accent-solid: #5b9be8;
+    --on-accent: #0b1220;
+    --accent-surface: #1d2a3d;
+    --success: #5fcb8e;
+    --warning: #e0b341;
+    --danger: #f0877f;
+    --focus-ring: #9cc4ff;
+    --focus-ring-offset: #14181d;
+    --code-bg: #161b21;
+  }
+}
+
+/* --- 3. component -------------------------------------------------------- */
+.shell-header { background: var(--surface); border-bottom: 1px solid var(--border-subtle); }
+.shell-footer { background: var(--surface); border-top: 1px solid var(--border-subtle); }
+.card { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); }
+.card--accent { background: var(--accent-surface); border-color: var(--accent); }
+.btn { background: var(--accent-solid); color: var(--on-accent); border: 1px solid var(--accent-solid); }
+.btn--ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+
+code, kbd, pre { font-family: var(--font-mono); }
+pre { background: var(--code-bg); }

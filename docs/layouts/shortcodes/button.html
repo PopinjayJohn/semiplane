@@ -1,0 +1,14 @@
+{{- /* href is either an absolute external URL, or a site-relative path with no
+       leading slash -- relURL adds the baseURL path, so "/install/" would
+       resolve to the server root and 404 on a project site in a subdirectory. */ -}}
+{{- $href := .Get "href" | default (.Get 0) -}}
+{{- $text := .Inner | markdownify | plainify | htmlUnescape | chomp -}}
+{{- $ghost := .Get "ghost" -}}
+{{- $external := or (hasPrefix $href "http") (hasPrefix $href "mailto:") -}}
+{{- if not $external -}}
+  {{- $href = $href | relURL -}}
+{{- end -}}
+<a class="btn{{ if $ghost }} btn--ghost{{ end }}" href="{{ $href }}"
+   {{- if $external }} rel="noopener noreferrer"{{ end }}>
+  {{- $text -}}
+</a>

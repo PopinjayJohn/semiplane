@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+defaults:
+  run:
+    shell: bash
+
+# A superseded PR head is worth nothing. A superseded run on main is not: it may
+# already be deploying, and cancelling it can interrupt an in-flight Pages
+# deployment. So the group is per ref, and only pull requests cancel.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # go.mod declares the toolchain, so it is the single source of truth.
+      # Passing go-version as well would win over the file and create a second
+      # pin to keep in sync.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # $HOME/go/bin is not reliably on PATH on a hosted runner, so tools go to
+      # an explicit GOBIN that is prepended here. The versions come from the
+      # Makefile, so CI and a local checkout cannot drift apart.
+      - name: Install golangci-lint
+        run: |
+          GOBIN="$GITHUB_WORKSPACE/.toolbin" make golangci-lint
+          echo "$GITHUB_WORKSPACE/.toolbin" >> "$GITHUB_PATH"
+
+      # `make ci` runs go test -race, which needs cgo. ubuntu-latest ships gcc.
+      - name: make ci
+        run: make ci
+
+  labels:
+    name: labels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install yq
+        run: |
+          GOBIN="$GITHUB_WORKSPACE/.toolbin" make yq
+          echo "$GITHUB_WORKSPACE/.toolbin" >> "$GITHUB_PATH"
+
+      # GITHUB_TOKEN already carries issues: read, so no secret is needed. This
+      # is the guard against the issue forms referencing labels that do not
+      # exist: GitHub silently drops those, and the drift only shows up as
+      # untriaged issues weeks later.
+      - name: make labels-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make labels-check
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The site needs the committed design records under .kilo/plans/, which
+      # the design-record shortcode reads at build time. A missing record has to
+      # fail the build rather than render an empty page, so this job exists.
+      - name: Install Hugo
+        run: |
+          GOBIN="$GITHUB_WORKSPACE/.toolbin" make hugo
+          echo "$GITHUB_WORKSPACE/.toolbin" >> "$GITHUB_PATH"
+
+      - name: make site-check
+        run: make site-check

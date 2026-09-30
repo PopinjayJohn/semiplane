@@ -1,0 +1,52 @@
+name: Question
+description: How do I do something, or how does something work? Answered in Discussions.
+title: "[question] "
+labels:
+  - "type: question"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are answered in
+        [Discussions](https://github.com/PopinjayJohn/semiplane/discussions), where they
+        stay findable after they are answered. This issue is a signpost: a maintainer will
+        reply with a link to the thread, and the question is closed here.
+
+        Nothing is lost by asking here first — if it turns out to be a bug, it becomes one
+        and gets a `type: bug` label and a triage slot.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What are you trying to do?
+      description: >-
+        The goal, not just the question. "I want the party to stop seeing a token until
+        they identify it" is answerable; "how do I set visibility" is not.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: found
+    attributes:
+      label: What you already read or tried
+      description: >-
+        Documentation pages, design records, `AGENTS.md`, and anything you tried that did
+        not work. Naming the document you read is often the whole answer.
+      render: markdown
+    validations:
+      required: false
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you send
+      options:
+        - label: I read the [design records](https://popinjayjohn.github.io/semiplane/design/) relevant to my question.
+          required: false
+        - label: I searched the existing issues and Discussions.
+          required: false

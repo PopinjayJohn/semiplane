@@ -1,0 +1,29 @@
+{{- /*
+  design-record.html — the frame around an included design record.
+
+  The banner is the whole point. Someone landing here from a search engine has
+  no way to know these documents are dated records that may already contradict
+  shipped behaviour, and a stale design document presented as documentation is
+  worse than no document.
+*/ -}}
+<aside class="banner" data-testid="design-record-banner" aria-labelledby="banner-heading">
+  <h2 class="banner__heading" id="banner-heading">
+    <span class="banner__badge" aria-hidden="true">record</span>
+    Dated design record — {{ site.Params.designRecordDate }}
+  </h2>
+  <p>
+    This is a <strong>design record</strong>, not user documentation. It is
+    published here verbatim from the repository so it cannot drift from the
+    design it records — which also means it may describe behaviour the code does
+    not have yet, or no longer has.
+  </p>
+  <p>
+    For how to run semiplane, start with the
+    <a href="{{ "install/" | relURL }}">installation guide</a> and the
+    <a href="{{ "concepts/" | relURL }}">concepts</a>. Source of this page:
+    <a href="{{ site.Params.repo }}/blob/main/.kilo/plans/{{ .source }}"
+       data-testid="design-record-source"><code>.kilo/plans/{{ .source }}</code></a>.
+  </p>
+</aside>
+
+{{ .body }}

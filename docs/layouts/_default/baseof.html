@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="{{ site.Language.Lang }}" dir="ltr">
+<head>
+  {{- partial "head.html" . -}}
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="{{ site.Home.RelPermalink }}">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a>
+      {{- partial "nav.html" . -}}
+      <button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1">
+    {{- block "main" . }}{{ end -}}
+  </main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell">
+      {{- partial "footer.html" . -}}
+    </div>
+  </footer>
+
+  {{- partial "scripts.html" . -}}
+</body>
+</html>

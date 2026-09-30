@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # A no-op while the module has zero dependencies, and future-proofs the first
+  # one. Add a Dockerfile and a docker entry in the same commit as the file.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Grouped so a routine round of action bumps arrives as one reviewable pull
+  # request rather than five that each fail the same workflow for the same reason.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

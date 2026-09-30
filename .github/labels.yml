@@ -1,0 +1,145 @@
+# semiplane label manifest — labels as code.
+#
+# GitHub has no in-repo mechanism for declaring labels, so this file is the
+# reviewable source of truth and scripts/sync-labels.sh is the writer.
+#
+#   make labels         create or update every label below
+#   make labels-prune   delete repo labels that are NOT below
+#   make labels-check   fail if the repo and this file disagree
+#
+# Every string value is quoted. `name: type: bug` unquoted is not valid YAML
+# (a colon-space inside a plain scalar), and the manifest is read with yq.
+#
+# AXES (see .kilo/plans/1790788534875-github-repo-layout-plan.md §4.2)
+#   type:    exactly one per issue; applied automatically by the issue forms
+#   area:    at most one; the product surface the reporter was touching
+#   status:  at most one; the lifecycle. Clear it when the issue closes
+#   flags:   orthogonal booleans
+#
+# There is deliberately no priority: axis. Without a published triage SLA it rots.
+#
+# COLOUR RULE
+#   type: saturated · area: muted, 30° hue steps · status: amber/violet
+#   flags: neutral, except breaking/security which are red.
+#   Every colour below clears 4.5:1 against white label text, so no label
+#   flips to a dark foreground and breaks the sidebar's visual consistency.
+
+# ---------------------------------------------------------------- type: (5)
+- name: "type: bug"
+  color: "c74b47"
+  description: "Behaviour contradicts a documented design. See /design/ for what is documented."
+
+- name: "type: feature"
+  color: "308639"
+  description: "New capability."
+
+- name: "type: docs"
+  color: "2378c2"
+  description: "Documentation only — the site, the issue forms, or the label set."
+
+- name: "type: question"
+  color: "8766bb"
+  description: "Needs an answer, not a change. Answered in Discussions."
+
+- name: "type: chore"
+  color: "747474"
+  description: "Build, CI, dependencies, housekeeping. Not user-visible."
+
+# --------------------------------------------------------------- area: (12)
+# Not a mirror of internal/ on purpose: a reporter knows what they were doing,
+# not which package owns it. Add an area when a product surface appears, not when
+# a directory does.
+
+- name: "area: wiki"
+  color: "358189"
+  description: "Page rendering, navigation, broken links, search."
+
+- name: "area: editor"
+  color: "457c9a"
+  description: "The web editor, 412 conflict resolution, page revisions."
+
+- name: "area: vtt"
+  color: "5f74a1"
+  description: "Realtime hub, WebSocket protocol, placements, initiative, the map."
+
+- name: "area: content"
+  color: "7a6f9f"
+  description: "Markdown pipeline, front matter, file watcher, render cache, wikilinks, embeds, assets."
+
+- name: "area: secrets"
+  color: "8e6890"
+  description: "[!secret] callouts, the reveal ledger, redaction."
+
+- name: "area: auth"
+  color: "9b657a"
+  description: "Users, auth sessions, campaigns, membership, roles, admin."
+
+- name: "area: store"
+  color: "9f6661"
+  description: "SQLite, migrations, FTS5, backup."
+
+- name: "area: plugin"
+  color: "9a6b4c"
+  description: "The System interface, data packs, overlays, house rules, UI plugins."
+
+- name: "area: a11y"
+  color: "89713e"
+  description: "WCAG conformance, keyboard, screen reader, TV mode."
+
+- name: "area: ops"
+  color: "737a45"
+  description: "Deployment, reverse proxy, the binary, configuration, upgrades."
+
+- name: "area: ci"
+  color: "588059"
+  description: "GitHub Actions, the Makefile, dependencies."
+
+- name: "area: website"
+  color: "3b806f"
+  description: "This Pages site and its content."
+
+# ------------------------------------------------------------- status: (7)
+# A closing PR or a closing comment must clear the status: label, or the
+# triage query stops meaning anything.
+
+- name: "status: needs-triage"
+  color: "9a6700"
+  description: "Not yet understood. Applied automatically to new issues."
+
+- name: "status: ready"
+  color: "1d6b5f"
+  description: "Reproduced or understood; actionable as written."
+
+- name: "status: in-progress"
+  color: "3f5fd0"
+  description: "A branch or pull request is open against it."
+
+- name: "status: blocked"
+  color: "b04a12"
+  description: "Waiting on something external. Say what, in the issue."
+
+- name: "status: needs-design"
+  color: "8b2fa8"
+  description: "Needs a design decision before it can be built. See the design records."
+
+- name: "status: wontfix"
+  color: "57606a"
+  description: "Decided against. Say why in the issue."
+
+- name: "duplicate"
+  color: "5c656e"
+  description: "Not the only one. Link the canonical issue in the body."
+
+# ------------------------------------------------------------- flags: (3)
+
+- name: "breaking"
+  color: "a40e26"
+  description: "Needs a forward-only migration, a ruleset bump, or a URL/protocol change."
+
+- name: "security"
+  color: "6e0b0b"
+  description: "Security-relevant. Triage privately — see .github/SECURITY.md."
+
+- name: "good-first-issue"
+  color: "7057ff"
+  description: "Small, scoped, and needs no design decision."

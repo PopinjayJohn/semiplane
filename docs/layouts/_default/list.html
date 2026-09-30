@@ -1,0 +1,24 @@
+{{- define "main" -}}
+<article class="page">
+  <h1>{{ .Title }}</h1>
+  {{- with .Description }}
+    <p class="lede">{{ . }}</p>
+  {{- end }}
+  {{- if .Content }}
+    {{ .Content }}
+  {{- end }}
+  {{- $pages := .RegularPagesRecursive }}
+  {{- with $pages }}
+    <ul class="section-list" data-testid="section-list">
+      {{- range .ByWeight }}
+        <li>
+          <a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>
+          {{- with .Description }}
+            <br><span class="section-list__desc">{{ . }}</span>
+          {{- end }}
+        </li>
+      {{- end }}
+    </ul>
+  {{- end }}
+</article>
+{{- end -}}

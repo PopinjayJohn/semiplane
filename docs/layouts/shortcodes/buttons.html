@@ -1,0 +1,6 @@
+{{- /* Wrapper for a row of call-to-action links. Markup lives in a template
+       rather than in content because the renderer runs with raw HTML disabled —
+       a content file that reaches for <div> gets it silently stripped. */ -}}
+<div class="btn-row" data-testid="btn-row">
+  {{- .Inner -}}
+</div>

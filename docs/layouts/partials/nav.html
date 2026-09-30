@@ -1,0 +1,21 @@
+{{- /*
+  Primary navigation. Built from the site's own section list rather than a
+  hand-maintained menu, so a new content section appears in the nav without a
+  second edit somewhere else.
+
+  nav[].url is relative ("install/") rather than absolute ("/install/") because
+  relURL has to add the baseURL path. An absolute path here would resolve to the
+  server root and 404 on a project site served from a subdirectory -- and only on
+  the home page, which makes it the kind of bug that survives a casual check.
+*/ -}}
+<nav class="site-nav" aria-label="Main">
+  <ul>
+    {{- range site.Params.nav }}
+      {{- $url := .url | relURL -}}
+      {{- $isCurrent := eq $url $.RelPermalink -}}
+      <li>
+        <a href="{{ $url }}"{{ if $isCurrent }} aria-current="page"{{ end }}>{{ .name }}</a>
+      </li>
+    {{- end }}
+  </ul>
+</nav>

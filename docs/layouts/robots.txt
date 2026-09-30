@@ -1,0 +1,14 @@
+{{- /*
+  Custom robots.txt.
+
+  With enableRobotsTXT = true Hugo generates one from an embedded template, and
+  a static/robots.txt is silently overridden by it -- the file is not merged, it
+  is replaced. So this is a layout, not a static asset.
+
+  There is nothing to hide here: every page is public documentation, and the
+  design records are already in a public repository.
+*/ -}}
+User-agent: *
+Allow: /
+
+Sitemap: {{ "sitemap.xml" | absURL }}

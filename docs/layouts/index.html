@@ -1,0 +1,29 @@
+{{- define "main" -}}
+<h1>{{ .Title }}</h1>
+{{- with .Params.lede }}
+  <p class="lede">{{ . }}</p>
+{{- end }}
+{{ .Content }}
+
+<div class="grid" data-testid="entry-grid">
+  {{- range site.Params.nav }}
+    {{- $section := site.GetPage .url }}
+    {{- if not $section }}
+      {{- errorf "index: nav entry %q resolves to no page. Add content/en/%s, or drop the entry from params.nav in hugo.toml." .url .url -}}
+    {{- end }}
+    <div class="card">
+      <h2><a href="{{ $section.RelPermalink }}">{{ $section.LinkTitle }}</a></h2>
+      {{- with $section.Params.lede }}
+        <p>{{ . }}</p>
+      {{- end }}
+      {{- with $section.RegularPagesRecursive.ByWeight }}
+        <ul>
+          {{- range . }}
+            <li><a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a></li>
+          {{- end }}
+        </ul>
+      {{- end }}
+    </div>
+  {{- end }}
+</div>
+{{- end -}}

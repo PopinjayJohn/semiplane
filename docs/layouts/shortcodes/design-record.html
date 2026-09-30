@@ -1,0 +1,48 @@
+{{- /*
+  design-record — renders a committed design record from .kilo/plans/ verbatim.
+
+  Usage in a content file, with the shortcode delimiters escaped so this
+  comment does not close itself:
+
+      {{< design-record "1790774477695-semiplane-architecture-overview.md" >}}
+
+  Three rules, each one load-bearing:
+
+  1. A missing or unreadable record is a BUILD FAILURE, via errorf. A design
+     record that silently renders empty looks exactly like a page that was
+     never written, and the second is far more dangerous than a red build.
+  2. The leading H1 is stripped. The page's front matter supplies the title and
+     the layout renders it, so leaving the H1 in would produce two <h1>s --
+     which is a gate-blocking structural failure in the UI specification, and
+     the docs site holds itself to the same rule.
+  3. markdownify runs Goldmark, the same engine the application renders campaign
+     content with. What renders here is what renders there, by construction
+     rather than by convention.
+
+  Hugo sandboxes os.ReadFile to the project root, so a path that escapes it
+  returns empty rather than erroring. The records are read as ASSET resources
+  instead, staged into docs/assets/plans/ by `make site-plans` -- resources.Get
+  returns nil for a missing asset, which is what rule 1 below checks for. The
+  if/else is a real branch rather than two sequential guards because errorf does
+  not halt template execution: a plain early-return would still dereference the
+  nil resource and bury the real message under a nil-pointer error.
+*/ -}}
+
+{{- $file := path.Base (.Get 0) -}}
+{{- $path := path.Join site.Params.planDir $file -}}
+{{- $res := resources.Get $path -}}
+{{- if $res }}
+  {{- $raw := $res.Content | string -}}
+  {{- if $raw }}
+    {{- /* Drop the first line when it is the record's own H1 title. */ -}}
+    {{- $lines := split $raw "\n" -}}
+    {{- if hasPrefix (index $lines 0) "# " -}}
+      {{- $raw = delimit (after 1 $lines) "\n" -}}
+    {{- end -}}
+    {{- partial "design-record.html" (dict "body" ($raw | markdownify) "source" $file) -}}
+  {{- else }}
+    {{- errorf "design-record: %q is empty (asset %q)" $file $path -}}
+  {{- end }}
+{{- else }}
+  {{- errorf "design-record: no such design record %q (looked for asset %q). Run 'make site-plans' to stage them, and check params.planDir in hugo.toml. A missing record must fail the build, never render an empty page." $file $path -}}
+{{- end -}}

@@ -1,0 +1,114 @@
+name: Bug report
+description: semiplane does something other than what the design records say it should.
+title: "[bug] "
+labels:
+  - "type: bug"
+  - "status: needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks — this is a well-specified form, and the required fields are the ones
+        that actually cost a round trip to ask for later.
+
+        - [Search existing issues](https://github.com/PopinjayJohn/semiplane/issues) first.
+        - If the problem is with **markdown in your own campaign vault**, use the
+          "My campaign's content is not rendering" link in the template chooser instead.
+          Campaign content lives in your Obsidian vault, not in this repository, so that
+          is usually a vault or content problem rather than a semiplane bug.
+        - What semiplane *is* is described in the
+          [design records](https://popinjayjohn.github.io/semiplane/design/).
+  - type: input
+    id: version
+    attributes:
+      label: semiplane version or commit
+      description: A release version, or a commit SHA if you are running from source.
+      placeholder: "v0.0.0-untagged, 19d9251"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Host OS and architecture
+      description: Where the semiplane **server** runs, not where the browser runs.
+      placeholder: "linux/amd64, darwin/arm64, windows/amd64"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of semiplane were you using?
+      description: >-
+        This does **not** label the issue. GitHub cannot turn a dropdown answer into a
+        label, so the maintainer applies the matching `area:` label during triage.
+      multiple: false
+      options:
+        - Wiki — page rendering, navigation, broken links, search
+        - Editor — the web editor, save conflicts, revisions
+        - VTT and realtime — the map, tokens, initiative, connection
+        - Content pipeline — markdown, front matter, file watching, assets
+        - Secrets — `[!secret]` callouts and revealing them
+        - Accounts — users, logins, campaigns, roles
+        - Storage — SQLite, migrations, search index, backup
+        - Plugins — gameplay systems, data packs, house rules, UI plugins
+        - Accessibility — keyboard, screen reader, contrast, TV mode
+        - Running semiplane — deployment, reverse proxy, configuration, upgrades
+        - Build and CI — the Makefile, GitHub Actions, dependencies
+        - This website — the docs site, issue forms, labels
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >-
+        What you saw, and what you were doing at the time. Include your role (GM, player,
+        or anonymous) and the campaign's visibility if either could matter.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+      description: >-
+        If this contradicts something written down, say which document and section — that
+        is usually the fastest route to a fix.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        The shortest path from a fresh start to the problem. Wrap semiplane's markdown
+        extensions in backticks — `[[wikilink]]`, `{{statblock}}`, `{{dice}}` and
+        `[!secret]` — so they render as code instead of triggering GitHub's own alerts.
+      placeholder: |
+        1. Register a campaign at /c/test with visibility public
+        2. Create a page with `> [!secret]-` and a body
+        3. Load the page as an anonymous reader
+        4. The secret body is present in the response source
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Optional. **Do not paste campaign content, campaign names, or secret callout
+        text.** Logs are the most common place that leaks the thing this project goes to
+        some trouble to hide. Truncate and redact before pasting.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you send
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: >-
+            This is security-relevant and should be handled privately. I am opening this
+            publicly only because private reporting is not available to me.
