@@ -139,7 +139,7 @@ onward, and `main` stays green between phases.
 ```
 main
 └── phase/NN-slug                    one per phase, one PR to main
-    ├── phase/NN-slug/<work-item>    one per sub-agent, one PR to the phase branch
+    └── NN-slug/<work-item>          one per sub-agent, one PR to the phase branch
 ```
 
 - A phase branch is cut from `main` when the previous phase's PR has merged. Never from a stale
@@ -148,6 +148,13 @@ main
 - A phase branch merges to `main` only when its Definition of Done is met in full.
 - Sub-agents open a PR against the **phase branch**. Never push to `main`, never open a PR
   against `main`.
+- **A work-item branch drops the `phase/` prefix.** `phase/02-identity/domain-types` cannot
+  exist: git stores a branch as a file under `refs/heads/`, so `refs/heads/phase/02-identity`
+  is a file and cannot simultaneously be the directory holding
+  `refs/heads/phase/02-identity/domain-types`. It is a directory/file conflict in the ref
+  namespace and `git branch` refuses it outright. `02-identity/domain-types` has no such
+  ancestor ref and works. Never "tidy" this back.
+  [0023](docs/content/en/decisions/0023-work-item-branch-names-drop-the-phase-prefix.md).
 
 ### Definition of Done — a phase
 
