@@ -42,7 +42,7 @@ jobs:
           echo "$GITHUB_WORKSPACE/.toolbin" >> "$GITHUB_PATH"
 
       - id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: make site
         env:
@@ -58,7 +58,7 @@ jobs:
           ./scripts/check-site-links.sh docs/public "${{ steps.pages.outputs.base_path }}"
           ./scripts/check-site-structure.sh docs/public
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/public
 
@@ -75,4 +75,4 @@ jobs:
       # hand-picking from a starter template GitHub does not keep current.
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
