@@ -12,20 +12,11 @@ type healthResponse struct {
 	Status string `json:"status"`
 }
 
+// healthHandler answers `/healthz`: is the process alive. Deliberately does not
+// touch the store — liveness that fails when the database is busy turns a
+// database problem into a restart loop.
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
-}
-
-func readinessHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, readinessResponse{Status: "ready"})
-}
-
-// readinessResponse is the §13.2 counter surface. The counters themselves
-// arrive with the subsystems that produce them; the shape is fixed here so a
-// consumer does not have to handle a missing or renamed field per phase.
-type readinessResponse struct {
-	Status   string         `json:"status"`
-	Counters map[string]int `json:"counters"`
 }
 
 // notFoundHandler answers unmatched routes with a 404 rather than net/http's

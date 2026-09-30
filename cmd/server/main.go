@@ -15,6 +15,7 @@ import (
 
 	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/httpapi"
+	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
 )
 
@@ -145,9 +146,16 @@ func runServer(_ []string) error {
 		}
 	}()
 
+	// The process's one counter registry. Nothing in phase 1 increments
+	// anything yet — the watcher, cache, secrets, hub and plugin phases each
+	// register their own — so every §13.2 signal currently reads zero on
+	// /readyz, which is how a subsystem that never wired itself up becomes
+	// visible rather than invisible.
+	registry := observability.NewRegistry()
+
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.NewRouter(logger, cfg),
+		Handler:           httpapi.NewRouter(logger, cfg, registry),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

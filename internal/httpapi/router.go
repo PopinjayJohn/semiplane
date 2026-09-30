@@ -6,6 +6,7 @@ import (
 
 	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/web"
 )
 
@@ -34,10 +35,20 @@ import (
 //  6. securityHeaders — innermost, applied to the mux. It sets headers before
 //     delegating, so it has to be inside every layer that can write a response
 //     of its own, or a 504 from Timeout would ship without them.
-func NewRouter(logger *slog.Logger, cfg config.Config) http.Handler {
+//
+// NewRouter builds the application HTTP handler with all routes registered.
+//
+// registry supplies the §13.2 counters reported on `/readyz`. It is a
+// parameter rather than a package-level singleton so a test can build a router
+// with its own registry, and so the process has exactly one by construction.
+func NewRouter(
+	logger *slog.Logger,
+	cfg config.Config,
+	registry *observability.Registry,
+) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("GET /readyz", readinessHandler)
+	mux.Handle("GET /readyz", newReadyHandler(registry))
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServerFS(web.Dist())))
 	mux.Handle("/", notFoundHandler(logger))
 
