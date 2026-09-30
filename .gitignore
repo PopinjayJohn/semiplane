@@ -67,3 +67,4 @@ docs/assets/plans/
 # Editor/IDE
 # .idea/
 # .vscode/
+*.code-workspace
