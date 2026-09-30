@@ -62,6 +62,8 @@ it for you) or run `. /etc/profile.d/go.sh` first.
 | actionlint | v1.7.7 | lints `.github/workflows/` |
 | yq | v4.47.2 | reads `.github/labels.yml` |
 | Hugo | v0.167.0 | builds the docs site; **standard edition**, `CGO_ENABLED=0` |
+| templ | v0.3.1020 | compiles `.templ`; installed by `make templ-bin` |
+| Tailwind | v4.3.3 | standalone binary, SHA256-pinned; installed by `make tailwind` |
 | Node | 24.21.0 LTS | only for the Playwright MCP |
 | Playwright MCP | 0.0.83 | `/usr/local/bin/playwright-mcp`, Chromium pre-installed |
 | make | 4.4.1 | `make help` lists every target |
@@ -76,7 +78,15 @@ container lacks it, `apt-get install -y --no-install-recommends gcc libc6-dev`.
 ## The gate
 
 **No Go change is complete until `make check` passes.** It runs, in order:
-format diff check, `go build`, `go vet`, `golangci-lint run`, `go test -race`.
+format diff check, `make css`, `make templ`, `go build`, `go vet`,
+`golangci-lint run`, `go test -race`.
+
+`css` and `templ` precede `build` because `internal/web` embeds both outputs.
+The binary is the first place a missing stylesheet shows up, so `build` also
+checks for the file and says `run: make css` rather than failing on the embed
+pattern. `make tailwind` downloads ~110MB once per checkout into `.toolbin/`
+and verifies it against a committed digest of its release manifest;
+[0019](docs/content/en/decisions/0019-tailwind-standalone-pinned.md).
 
 ```bash
 make check          # the full gate
@@ -99,15 +109,6 @@ make site-check      # build the docs site; fails on any Hugo warning
 make lint-workflows  # actionlint over .github/workflows/
 make labels-check    # the repo's labels and .github/labels.yml agree
 ```
-
-From phase 1, `check` will additionally depend on `make css` and `make templ`
-before `build`, because `internal/web` embeds both outputs. Until that lands, a
-plain `make check` is the whole Go gate.
-
-The template and CSS toolchain does not exist yet. That is phase 1's work, and
-it is the first thing phase 1 must land, on its own: every later phase
-inherits the shape of the gate, so a toolchain problem should never be
-diagnosed through eleven unrelated files.
 
 ## Build phases
 

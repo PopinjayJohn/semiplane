@@ -29,6 +29,17 @@ disagree, **the decision records win**, and this document is wrong until someone
   See [0004]({{ "decisions/0004-single-process-constraint/" | relURL }}).
 - **S-1.3** Out of scope: voice and video, combat automation, native mobile clients, multi-
   instance HA, horizontal scaling, and third-party runtime plugin loading.
+- **S-1.4** **A forwarding header is evidence of nothing until an operator names the proxy
+  that sent it.** With no proxy configured, the client address is the transport address and
+  `X-Forwarded-For` and `X-Real-IP` are ignored entirely — the default must be safe for a
+  directly exposed server, because that address is the input to every access-log line, rate
+  limit and ban that reads it later. Where a proxy *is* configured, the chain is walked
+  right to left and the first hop that is not a configured proxy is the client; a left-to-right
+  walk returns the value a caller chose. See
+  [0020]({{ "decisions/0020-trusted-proxies-and-client-ip/" | relURL }}).
+- **S-1.5** A `X-Request-Id` is honoured only when it is short printable ASCII, and is marked
+  `fwd-` rather than `gen-`. The header is unauthenticated by construction, so an unvalidated
+  value is a caller writing newlines into every log line carrying it.
 
 ## S-2 — Terminology and roles
 

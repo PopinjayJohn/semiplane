@@ -45,6 +45,16 @@ jobs:
           echo "$GITHUB_WORKSPACE/.toolbin" >> "$GITHUB_PATH"
 
       # `make ci` runs go test -race, which needs cgo. ubuntu-latest ships gcc.
+
+      # Before `make ci`, not after. `check` depends on `css` and `templ`
+      # because internal/web embeds their output, so a toolchain problem would
+      # otherwise surface as a lint or vet failure against eleven unrelated
+      # files. Its own step means its own signal.
+      - name: Install the frontend toolchain
+        run: |
+          GOBIN="$GITHUB_WORKSPACE/.toolbin" make templ-bin
+          make tailwind
+
       - name: make ci
         run: make ci
 
