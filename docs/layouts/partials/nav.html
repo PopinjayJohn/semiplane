@@ -1,7 +1,11 @@
 {{- /*
-  Primary navigation. Built from the site's own section list rather than a
-  hand-maintained menu, so a new content section appears in the nav without a
-  second edit somewhere else.
+  Primary navigation, rendered from site.Params.nav in hugo.toml.
+
+  That array is hand-maintained, and deliberately so: the comment above it says
+  this partial is "built from the site's own section list", and it is not. A
+  generated nav would pick up every content section automatically, including the
+  ones that are internal machinery rather than documentation. Keeping the list
+  explicit is what lets the order be the deliberate one it is.
 
   nav[].url is relative ("install/") rather than absolute ("/install/") because
   relURL has to add the baseURL path. An absolute path here would resolve to the

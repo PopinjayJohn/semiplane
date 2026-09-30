@@ -294,6 +294,59 @@ tbody tr:last-child td { border-block-end: 0; }
   max-width: var(--measure);
 }
 
+/* --- architecture decision records ---------------------------------------- */
+
+/*
+ * A definition list rather than a row of chips: the labels have to stay
+ * readable at a glance, because the status chip alone is exactly the thing a
+ * reader skims past when they arrived from a search engine.
+ */
+.decision-meta {
+  margin-block-end: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 0.9375rem;
+}
+.decision-meta dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+.decision-meta dt {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.decision-meta dd { margin: 0; }
+
+.decision-status {
+  display: inline-block;
+  padding: 0.1em 0.6em;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid currentcolor;
+}
+.decision-status--accepted { color: var(--success); }
+.decision-status--proposed { color: var(--accent); }
+/*
+ * The one status that is not a colour on its own. Superseded records carry a
+ * banner as well, so this is reinforcement rather than the only signal.
+ */
+.decision-status--superseded {
+  color: var(--warning);
+  text-decoration: line-through;
+}
+
+.banner--warning {
+  border-color: var(--warning);
+  background: var(--surface);
+}
+
 /* --- table of contents ---------------------------------------------------- */
 
 .toc {

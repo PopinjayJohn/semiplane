@@ -1,8 +1,53 @@
 # semiplane — Agent Guide
 
-Self-hosted, system-agnostic TTRPG wiki and VTT. Go 1.27, `net/http`,
-`log/slog`. This file is the operational contract for agents working in this
-repo.
+Self-hosted, system-agnostic TTRPG wiki and VTT. Go 1.27, `net/http`, `log/slog`.
+This file is the operational contract for agents working in this repo.
+
+**Read it in this order.** The single-instance rule and the branch topology come first because
+violating either is expensive in a way a failing build is not.
+
+## The single-instance rule
+
+**Authoritative game state lives in memory, and the WebSocket hub is process-local. Two
+instances behind a load balancer will silently diverge** — not fail loudly, diverge, with each
+client showing a coherent and wrong game.
+
+SQLite's single-writer limit is **not** the constraint. In-memory state ownership is. Nothing
+scales semiplane until a shared broker exists, and that is a different architecture, not a
+configuration change. Do not add clustering, leader election, sticky-session requirements, or a
+"second instance" flag. Full reasoning:
+[0004](docs/content/en/decisions/0004-single-process-constraint.md).
+
+## Where the contracts live
+
+| Document | What it decides |
+|---|---|
+| [`docs/content/en/contributing/spec.md`](docs/content/en/contributing/spec.md) | **Requirements**, numbered `S-n.n`. Cite the ID; do not restate the rule. |
+| [`docs/content/en/decisions/`](docs/content/en/decisions/) | **Decisions and their costs.** Check before choosing a library or a structure. |
+| `.kilo/plans/1790774477695-semiplane-architecture-overview.md` | Domain semantics, data model, protocol. A dated record. |
+| `.kilo/plans/1790778908232-responsive-ui-ux-design-spec.md` | Interface contract. A dated record. |
+
+The design records are **immutable**. They contain open questions that have since been answered
+and sections describing behaviour the code does not have yet. When one is wrong, the correction
+is an ADR plus an entry in the design index's "Known staleness" — never an edit to the record.
+
+## Vocabulary
+
+The strings **"world" and "session" appear nowhere in the interface** — not in `aria-label`,
+`title`, empty states, or error copy. Neither entity exists. A leftover is a bug, and a grep for
+them is a test.
+
+| Domain term | UI label |
+|---|---|
+| campaign | Campaign |
+| page | Page |
+| game object | its registered kind label — data, not a string |
+| placement | the kind's label; a `token` placement is a **Token** |
+| the live tabletop | **Table** (not an entity — a campaign has at most one, so there is no list) |
+| campaign state | never surfaced |
+| auth session | never surfaced |
+
+Roles are `gm` and `player`. **Content editing is GM-only.** There is no `editor` role.
 
 ## Toolchain
 
@@ -55,23 +100,190 @@ make lint-workflows  # actionlint over .github/workflows/
 make labels-check    # the repo's labels and .github/labels.yml agree
 ```
 
+From phase 1, `check` will additionally depend on `make css` and `make templ`
+before `build`, because `internal/web` embeds both outputs. Until that lands, a
+plain `make check` is the whole Go gate.
+
+The template and CSS toolchain does not exist yet. That is phase 1's work, and
+it is the first thing phase 1 must land, on its own: every later phase
+inherits the shape of the gate, so a toolchain problem should never be
+diagnosed through eleven unrelated files.
+
+## Build phases
+
+Thirteen phases, each on its own branch. The plan is
+`.kilo/plans/1790796797509-phased-delivery-plan.md`.
+
+| # | Phase | Branch | Lands |
+|---|---|---|---|
+| 0 | Governance | `phase/00-governance` | ADRs, `spec.md`, this file |
+| 1 | Foundations | `phase/01-foundations` | Middleware chain, config, `admin create`, migration skeleton, the templ + Tailwind toolchain |
+| 2 | Identity and tenancy | `phase/02-identity` | Users, sessions, campaigns, membership, `os.Root` |
+| 3 | Content read path | `phase/03-content-read` | Path confinement, front matter, render, sanitise, cache, `ETag` |
+| 4 | Watcher and index | `phase/04-watcher` | Directory watches, debounce, FTS, degraded mode |
+| 5 | Shell | `phase/05-shell` | templ shell, tokens, primitives, structural a11y gate |
+| 6 | Wiki surface | `phase/06-wiki-surface` | Wiki and edit routes, `If-Match`, conflict view, search, assets |
+| 7 | Realtime plane | `phase/07-realtime` | In-memory state, hub, protocol codec, debounced persistence |
+| 8 | Plugins and systems | `phase/08-plugins` | `System` contract, registry, 5e engine and packs, house rules |
+| 9 | Client | `phase/09-client` | PixiJS canvas, token list, Datastar live chrome, theme layer |
+| 10 | Secret callouts | `phase/10-secrets` | `[!secret]`, two-variant render, reveal endpoint, ledger, reconciliation |
+| 11 | Demo vault | `phase/11-demo-vault` | Three seeded campaigns as a release artifact |
+| 12 | Hardening | `phase/12-hardening` | The security tests, race coverage, failure modes |
+
+**Each phase is independently runnable.** The server starts and answers `/healthz` from phase 1
+onward, and `main` stays green between phases.
+
+### Branch topology
+
+```
+main
+└── phase/NN-slug                    one per phase, one PR to main
+    ├── phase/NN-slug/<work-item>    one per sub-agent, one PR to the phase branch
+```
+
+- A phase branch is cut from `main` when the previous phase's PR has merged. Never from a stale
+  `main`.
+- A work-item branch is cut from the phase branch, never from `main`.
+- A phase branch merges to `main` only when its Definition of Done is met in full.
+- Sub-agents open a PR against the **phase branch**. Never push to `main`, never open a PR
+  against `main`.
+
+### Definition of Done — a phase
+
+1. `make ci` green locally.
+2. `make site-check` green if `docs/` changed.
+3. `make lint-workflows` green if `.github/workflows/` changed.
+4. `make labels-check` green if labels or an issue form changed.
+5. All three CI checks — `gate`, `labels`, `docs` — green on the phase PR.
+6. Every work item merged, **or explicitly dropped with a reason in the phase PR description**.
+7. `spec.md` updated if a requirement changed.
+8. An ADR added for every significant decision (see `AGENTS.md`'s § below).
+9. `AGENTS.md` updated if the layout, gate, or a convention changed.
+10. The server still starts and answers `/healthz`.
+11. No `.gitkeep` remains in a package that now has real source files.
+
+**Definition of Done — release:** the secret-redaction test is green and fails loudly if a
+non-GM response ever contains secret text. `make demo-check` is also green.
+
+### Rules that make parallel work merge
+
+These exist because without them, N sub-agents produce N merge conflicts instead of N merged
+PRs.
+
+1. **Path ownership.** Every work item declares the paths it owns and touches nothing else. A
+   drive-by edit is a review comment, not a conflict someone resolves later.
+2. **One integrator per phase.** Exactly one work item owns `cmd/server/`,
+   `internal/httpapi/router.go`, `Makefile`, `.github/workflows/`, `go.mod`, `go.sum`,
+   `.golangci.yml`, and `docs/hugo.toml`. Every other agent **asks the integrator** for a change
+   to one of those files rather than making it.
+3. **Dependencies are pre-added.** Every pinned dependency for a phase is committed by the
+   integrator in the phase's first commit, so no work item edits `go.mod` mid-phase. `go.sum`
+   is regenerated by any dependency addition and is the most contended file in a Go repo.
+4. **ADR numbers are pre-assigned.** A number is never reused, never renumbered.
+5. **Generated files are never in a diff.** `*_templ.go`, the built stylesheet,
+   `docs/public/`, `docs/resources/` and `docs/assets/plans/` are produced by the gate and are
+   gitignored. If one appears in a PR, that PR is wrong.
+
 ## Layout
 
+**Target layout.** Only `cmd/`, `internal/config`, `internal/domain`, `internal/store` and
+`internal/httpapi` exist today; the rest arrives with the phase that fills it. A path listed
+here that does not yet exist is not a mistake — it is the destination of a phase in the table
+above.
+
 ```
-cmd/server/       thin main: config, server wiring, signal handling
+cmd/server/       thin main: config, wiring, signals. The composition root.
 internal/config/  env parsing, no project deps
 internal/domain/  pure types and rules, no I/O
-internal/store/   persistence and migrations
+internal/store/   persistence and migrations (forward-only)
+internal/content/ os.Root confinement, front matter, render, cache, watcher
+internal/realtime/hub, campaign state, protocol codec
+internal/plugin/  registry; explicit registration, NO init()
 internal/httpapi/ handlers, routing, middleware
-internal/web/     templates and static assets
+internal/web/     templ components and static assets
 docs/             Hugo documentation site (its own project root)
+demo-vault/       the demo campaigns (phase 11)
 scripts/          sync-labels.sh, check-site-links.sh, check-site-structure.sh
-.github/          issue forms, PR template, label manifest, workflows
 ```
 
-Dependencies point inward. `httpapi` → `domain`/`store`; `domain` imports
-nothing from the project.
+Note two subdirectories the architecture overview's module tree requires and that do not
+exist yet: `internal/domain/rules/` and `internal/domain/systems/` (phase 8), and
+`internal/web/plugins/` (phase 8). `scripts/check-demo.sh` arrives with phase 11.
 
+Dependencies point inward. `httpapi` → `domain`/`store`; `domain` imports nothing from the
+project. **`domain` must not import `content`, `store`, or anything with I/O.**
+
+A `.gitkeep` marks a package that does not exist yet. **Delete it when the package gains its
+first real file.**
+
+## When to write a decision record
+
+Write one when a work item makes a choice a later reader could reasonably have made differently,
+and where being wrong is expensive to undo:
+
+- A new third-party dependency, or dropping, upgrading, or replacing one.
+- A deviation from the architecture overview's decision table.
+- A change to the data model, URL scheme, WebSocket protocol, intent vocabulary, the `System`
+  interface, or plugin authority.
+- **Anything touching path confinement, sanitisation, authorisation, the render cache key, or
+  secret redaction.**
+- Any change to the build, the gate, or the CI matrix.
+
+An ADR is **not** required for an implementation choice the records already settled.
+
+Format, and the two non-obvious rules:
+
+- Location: `docs/content/en/decisions/NNNN-kebab-title.md`, front matter with `title`,
+  `description`, `lede`, `weight`, `date`, `status`, `supersedes`, `superseded_by`. Body
+  sections: `Context`, `Decision`, `Consequences`, `Alternatives considered`.
+- **No leading `# ` in the body.** The layout renders the title as the page's only `<h1>`; a
+  second one fails `check-site-structure.sh`, which is gate-blocking. Start at `## Context`.
+- Cross-reference with `{{ "decisions/0002-foo/" | relURL }}` — relative, trailing slash, no
+  leading `/`. Anything else fails `check-site-links.sh`.
+
+A reversed decision keeps its record: set `status: superseded` and `superseded_by`. Never delete
+and never renumber.
+
+## Security invariants
+
+These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S-14.
+
+- **Path confinement is `os.Root`**, per campaign, created at registration. Never
+  `filepath.Clean` plus a prefix check. It applies to writes *and* to every path in front
+  matter.
+- **Never `html.WithUnsafe()`.** Never. With a public tier and Obsidian sync as an input, this
+  is a security boundary.
+- **Obsidian Sync is untrusted input.** Shared vaults, community plugins, compromised devices.
+  Validate all YAML — front matter is attacker-reachable — and resolve all paths inside
+  `os.Root`.
+- **Secret redaction is omission, not hiding.** Not `display:none`, not a comment, not a class.
+  The callout is removed entirely, before sanitisation and before any template sees it.
+- **The `ETag` is salted with `include_secrets`.** A GM response and a player response must
+  never share a validator, or a cache serves the unredacted page to a player.
+  [0016](docs/content/en/decisions/0016-salted-etag.md).
+- **Cross-campaign links are never inlined.** The linking page's HTML must be byte-identical
+  for every viewer. [0017](docs/content/en/decisions/0017-cross-campaign-links-never-inline.md).
+- **`ruleset_version` fingerprints resolution semantics, not house-rule configuration.**
+  Toggling a house rule must not strand a campaign.
+  [0018](docs/content/en/decisions/0018-ruleset-version-fingerprint.md).
+- **Secret reconciliation fails toward hiding.** Capped, and on exhaustion it leaves the secret
+  hidden and logs an error.
+- **No event carries secret content, file contents, or dice results.** Asserted by a test,
+  because logging the thing that failed is the natural thing to do when debugging.
+
+## Conventions that the linter will not catch
+
+- Migrations are forward-only, under `internal/store/migrations/`. **Never edit a shipped
+  migration.** Add a new one.
+- Prefer the standard library; check `go.mod` before adding a second library for the same job.
+- Registration happens in the composition root, never in `init()`. `init()` hides ordering and
+  leaks state between tests.
+- Rule code must be deterministic: no `time.Now`, no map iteration, no direct `crypto/rand`.
+  There is no sandbox, so this is enforced by lint and tests.
+- Templates get `data-testid` on elements under test. Assert on that, never on CSS classes or
+  DOM shape.
+- Do not add a `gosec` or other linter `excludes` entry to silence a finding. Fix the code, or
+  justify the suppression inline with `//nolint:lor // why`.
 
 ## Skills
 
@@ -87,25 +299,14 @@ deliberately omits.
 
 Configured in `kilo.json`.
 
-- `playwright` — 25 `browser_*` tools, Chromium, `--isolated`. Diagnostic
+- **playwright** — 25 `browser_*` tools, Chromium, `--isolated`. Diagnostic
   use; anything that must persist belongs in a committed test.
-- `context7` — current library documentation. Prefer it over recalling
+- **context7** — current library documentation. Prefer it over recalling
   third-party API signatures from memory.
 
 `browser_evaluate` and `browser_run_code_unsafe` require approval. There is no
 Go-specific MCP: gopls already provides diagnostics, and Kilo consumes it
 natively through its `lsp` tool.
-
-## Conventions that the linter will not catch
-
-- Migrations are forward-only, under `internal/store/migrations/`. Never edit a
-  shipped migration.
-- Prefer the standard library; check `go.mod` before adding a second library
-  for the same job.
-- Templates get `data-testid` on elements under test. Assert on that, never on
-  CSS classes or DOM shape.
-- Do not add a `gosec` or other linter `excludes` entry to silence a finding.
-  Fix the code, or justify the suppression inline with `//nolint:lor // why`.
 
 ## GitHub plumbing
 
@@ -124,6 +325,9 @@ The docs site is deployed from `main` by `.github/workflows/pages.yml`. Its
 workflow has **no `paths:` filter** on purpose: the site renders the design
 records from `.kilo/plans/` at build time, so a filter covering only `docs/**`
 would silently stop deploying when a record changes. Do not add one.
+
+`main` is protected: no direct pushes, pull requests required, head branches
+auto-deleted, and `gate`, `labels` and `docs` required.
 
 ## Git
 

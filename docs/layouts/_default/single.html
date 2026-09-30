@@ -15,6 +15,9 @@
       {{ .TableOfContents }}
     </details>
   {{- end }}
+  {{- /* Renders nothing unless the page's front matter carries a `status`, so
+         a page that is not an ADR is unaffected. */ -}}
+  {{- partial "decision-meta.html" . -}}
   {{ .Content }}
 </article>
 {{- end -}}
