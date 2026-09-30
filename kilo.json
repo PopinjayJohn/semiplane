@@ -1,0 +1,92 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": [
+        "/usr/local/bin/playwright-mcp",
+        "--browser",
+        "chromium",
+        "--isolated",
+        "--no-sandbox",
+        "--viewport-size",
+        "1280x720",
+        "--timeout-action",
+        "10000",
+        "--output-dir",
+        ".playwright-mcp"
+      ],
+      "environment": {
+        "PATH": "/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin",
+        "PLAYWRIGHT_BROWSERS_PATH": "/root/.cache/ms-playwright"
+      },
+      "enabled": true,
+      "timeout": 60000
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true,
+      "timeout": 30000
+    }
+  },
+  "permission": {
+    "playwright_*": "ask",
+    "playwright_browser_navigate": "allow",
+    "playwright_browser_snapshot": "allow",
+    "playwright_browser_find": "allow",
+    "playwright_browser_click": "allow",
+    "playwright_browser_type": "allow",
+    "playwright_browser_fill_form": "allow",
+    "playwright_browser_select_option": "allow",
+    "playwright_browser_press_key": "allow",
+    "playwright_browser_hover": "allow",
+    "playwright_browser_wait_for": "allow",
+    "playwright_browser_resize": "allow",
+    "playwright_browser_tabs": "allow",
+    "playwright_browser_navigate_back": "allow",
+    "playwright_browser_console_messages": "allow",
+    "playwright_browser_network_requests": "allow",
+    "playwright_browser_network_request": "allow",
+    "playwright_browser_take_screenshot": "allow",
+    "playwright_browser_close": "allow",
+    "playwright_browser_evaluate": "ask",
+    "playwright_browser_run_code_unsafe": "ask",
+    "playwright_browser_file_upload": "ask",
+    "context7_*": "allow",
+    "bash": {
+      "go version*": "allow",
+      "go env*": "allow",
+      "go build*": "allow",
+      "go run*": "allow",
+      "go test*": "allow",
+      "go vet*": "allow",
+      "go mod *": "allow",
+      "go fmt*": "allow",
+      "gofmt*": "allow",
+      "gopls*": "allow",
+      "golangci-lint*": "allow",
+      "make*": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git branch*": "allow",
+      "git add*": "ask",
+      "git commit*": "ask",
+      "git push*": "ask",
+      "git rebase*": "ask",
+      "git merge*": "ask",
+      "git reset*": "ask",
+      "*": "ask"
+    },
+    "edit": {
+      "*.env": "deny",
+      "*.pem": "deny",
+      "*.key": "deny",
+      "**/secrets/**": "deny",
+      "*": "allow"
+    },
+    "external_directory": "ask"
+  }
+}

@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+bin/
+dist/
 
 # Test binary, built with `go test -c`
 *.test
@@ -26,6 +28,23 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
+
+# Local sqlite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Playwright MCP output (screenshots, traces, session state)
+.playwright-mcp/
+test-results/
+playwright-report/
+blob-report/
+node_modules/
+
+# Agent Manager worktrees are ephemeral checkouts, never part of the repo
+.kilo/worktrees/
 
 # Editor/IDE
 # .idea/

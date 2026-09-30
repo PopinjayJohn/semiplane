@@ -1,0 +1,263 @@
+version: "2"
+
+run:
+  timeout: 5m
+  concurrency: 4
+  issues-exit-code: 1
+  tests: true
+  build-tags:
+    - integration
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  sort-order:
+    - linter
+    - severity
+    - file
+  show-stats: false
+  path-prefix: ""
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+    - gci
+    - golines
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/semiplane)
+    golines:
+      max-len: 100
+      tab-len: 4
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+linters:
+  default: standard
+  enable:
+    # --- correctness ---
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - makezero
+    - mirror
+    - nilerr
+    - noctx
+    - perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - testifylint
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - whitespace
+    - wrapcheck
+
+    # --- API & maintainability ---
+    - containedctx
+    - decorder
+    - dupword
+    - funcorder
+    - goconst
+    - godot
+    - godoclint
+    - godox
+    - gomoddirectives
+    - iface
+    - importas
+    - inamedparam
+    - interfacebloat
+    - loggercheck
+    - misspell
+    - modernize
+    - musttag
+    - nakedret
+    - nilnil
+    - nolintlint
+    - prealloc
+    - protogetter
+    - sloglint
+    - tagalign
+    - tagliatelle
+    - testpackage
+    - thelper
+    - varnamelen
+    - wsl_v5
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1020
+        - -ST1021
+        - -ST1022
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      severity: medium
+      confidence: medium
+      excludes:
+        - G104
+        - G304
+      config:
+        G401:
+          - "crypto/md5"
+          - "crypto/sha1"
+        G115:
+          - "max=2147483647"
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - ifElseChain
+        - hugeParam
+        - unnamedResult
+    revive:
+      confidence: 0.8
+      enable-default-rules: true
+      rules:
+        - name: context-as-argument
+          disabled: true
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: empty-block
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+      ignore-tests: true
+    misspell:
+      locale: UK
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    varnamelen:
+      min-name-length: 3
+      ignore-names:
+        - err
+        - ctx
+        - tx
+        - db
+        - id
+        - ok
+        - r
+        - w
+      ignore-decls:
+        - "t *testing.T"
+        - "b *testing.B"
+        - "f *testing.F"
+    godot:
+      scope: declarations
+      capital: false
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+      ignore-package-globs:
+        - "encoding/*"
+        - "github.com/pkg/errors"
+
+  exclusions:
+    generated: lax
+    warn-unused: false
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - goconst
+          - wsl_v5
+          - varnamelen
+          - godot
+          - funcorder
+      - path: (^|/)migrations?/
+        linters:
+          - gosec
+          - goconst
+          - errcheck
+      - path: (.+)_test\.go
+        text: 't\.Helper\(\)'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - '\.pb\.go$'
+      - '_gen\.go$'
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
+  new: false
+  fix: false
+  whole-files: false
+
+severity:
+  default: error
