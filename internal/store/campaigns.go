@@ -189,8 +189,8 @@ func (s *Store) DeleteCampaign(ctx context.Context, id int64) error {
 			return translateWrite(err, what)
 		}
 
-		if _, err := tx.ExecContext(ctx, rebuildPagesFTS); err != nil {
-			return translateWrite(err, what)
+		if rebuildErr := rebuildPagesFTSTx(ctx, tx, what); rebuildErr != nil {
+			return rebuildErr
 		}
 
 		return nil

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -37,6 +38,19 @@ const (
 	prefixedPageColumns = "p.id, p.campaign_id, p.path, p.kind, p.title, p.content_hash," +
 		" p.byte_size, p.created_at, p.updated_at"
 
+	// indexedPageColumns is the row as the FTS maintenance paths see it: the
+	// rowid the index is keyed on, the path that names it, and the two values the
+	// index was built from.
+	//
+	// A different shape from pageColumns rather than an extension of it, because
+	// the two answer different questions and the difference is the whole point.
+	// pageColumns is what a reader wants — and it omits `body_plain`, because a
+	// listing of a thousand pages must not drag every body through a request that
+	// asked for titles. indexedPageColumns is what a *writer* wants, and a writer
+	// holding the row has to hold the text too: an external-content FTS5 table
+	// cannot be told to forget a row's terms without being given them.
+	indexedPageColumns = "id, path, title, body_plain"
+
 	// The upsert writes `created_at` on insert and leaves it alone on update, so a
 	// re-index after an edit keeps the row's age while moving `updated_at`. Both
 	// are Unix seconds, never a time.Time: see the note in errors.go about a
@@ -64,15 +78,64 @@ const (
 
 	rebuildPagesFTS = "INSERT INTO pages_fts (pages_fts) VALUES ('rebuild')"
 
-	// What the upsert must know before it writes: the rowid, title and body the
-	// index currently holds for this path.
-	selectIndexedText = "SELECT id, title, body_plain FROM pages WHERE campaign_id = ? AND path = ?"
+	// What a writer must know before it writes: the rowid, the path that names
+	// it, and the title and body the index currently holds.
+	//
+	// `path` is here rather than passed to the scanner because the two statements
+	// that read this shape read it from different places — one looks a path up,
+	// the other scans a campaign or a subtree — and a caller that assembled the
+	// `indexedText` itself would be able to pair a rowid with the wrong path,
+	// which is the one thing the delete command cannot detect: it drops the terms
+	// of whatever rowid it is handed, and the rowid is not in the values.
+	selectIndexedText = "SELECT " + indexedPageColumns +
+		" FROM pages WHERE campaign_id = ? AND path = ?"
+
+	// The same shape for a whole campaign, for the prune. `body_plain` is in it
+	// although `pageColumns` omits it, because the prune is the writer and
+	// unindexing a row needs the values that were indexed — the same reason
+	// `selectIndexedText` carries them.
+	selectIndexedPagesForCampaign = "SELECT " + indexedPageColumns +
+		" FROM pages WHERE campaign_id = ? ORDER BY path"
+
+	// …and for one directory subtree, for a folder rename.
+	//
+	// A range rather than `LIKE`, because `pages_campaign_path_key` is
+	// (campaign_id, path) and a range on its trailing column is a slice of one
+	// campaign's rows already in path order; `LIKE 'dir/%'` cannot use it and
+	// would scan. The bounds are `oldDir + "/"` and `oldDir + "0"`, which bracket
+	// exactly the paths whose next byte is the separator. The range is an
+	// optimisation and not the filter: `renamePageScan` re-checks the prefix in
+	// Go, because SQLite compares text bytewise and a page path containing a
+	// control byte below `'/'` would fall inside the range without sharing the
+	// prefix.
+	selectIndexedPagesUnder = "SELECT " + indexedPageColumns +
+		" FROM pages WHERE campaign_id = ? AND path >= ? AND path < ? ORDER BY path"
 
 	selectPageByPath = "SELECT " + pageColumns + " FROM pages WHERE campaign_id = ? AND path = ?"
 
 	selectPagesForCampaign = "SELECT " + pageColumns + " FROM pages WHERE campaign_id = ? ORDER BY path"
 
 	deletePage = "DELETE FROM pages WHERE campaign_id = ? AND path = ?"
+
+	// The delete by rowid, for the paths that know the row and not the path: the
+	// prune (which reads a campaign's rows and must delete them without a second
+	// lookup) and the folder rename (which cannot delete by path, because the
+	// path it wants to delete is the destination's and that row may be the very
+	// one it is about to write).
+	//
+	// Scoped to nothing, deliberately. Both callers already read the row inside
+	// the same transaction and hold its id, so the id is as specific as the path
+	// was and no less trustworthy.
+	deletePageByID = "DELETE FROM pages WHERE id = ?"
+
+	// The re-key. `created_at` is absent from the SET list for the reason the
+	// upsert omits it: a page that moved is the same page, and a rename that
+	// reset its age would make every folder reorganisation look like a deletion
+	// followed by a creation in every report that reads the timestamp.
+	//
+	// `updated_at` moves, because it answers "when did semiplane last write this
+	// row" and this is a write.
+	renamePage = "UPDATE pages SET path = ?, updated_at = ? WHERE id = ?"
 
 	// visibleToViewer is S-8.2, and it is a predicate rather than a filter the
 	// caller may omit.
@@ -138,6 +201,11 @@ const (
 	// word anybody typed, and it is quoted whole into the MATCH expression, so it
 	// is the length of a string this package builds.
 	maxSearchTermBytes = 64
+
+	// contentRootDir is the spelling a walk reaches a content root by, and the one
+	// path a subtree rename refuses. The root's name is `campaigns.content_root`
+	// and changing it is a registration, not a page operation.
+	contentRootDir = "."
 )
 
 // PageSearch is one search request.
@@ -160,7 +228,8 @@ type PageSearch struct {
 	Limit int
 }
 
-// indexedText is what `pages_fts` currently holds for one page.
+// indexedText is what `pages_fts` currently holds for one page, together with
+// the path the row is named by.
 //
 // Read before a write because an external-content FTS5 table cannot be told to
 // forget a row's terms without being given the terms: the index is not a copy of
@@ -168,6 +237,7 @@ type PageSearch struct {
 // are gone.
 type indexedText struct {
 	id        int64
+	path      string
 	title     string
 	bodyPlain string
 }
@@ -340,13 +410,396 @@ func (s *Store) DeletePage(ctx context.Context, campaignID int64, path string) e
 	})
 }
 
+// RenamePage moves one page row from oldPath to newPath, in one transaction,
+// moving its FTS entries with it.
+//
+// A re-key, not a re-index: the file's bytes did not change, so there is nothing
+// to re-read and `content_hash` is carried across untouched. What a remove-then-
+// upsert would lose is the row's identity — its `id` and its `created_at` — and
+// S-3.1's index is not supposed to forget that a page renamed in Obsidian is the
+// same page. Keeping the rowid also keeps the FTS entries addressable, which is
+// why the unindex/index pair below runs even though no value changes: the pair is
+// this package's one FTS maintenance discipline, and a re-key that skipped it
+// would be the second path through the index that a test would have to reason
+// about separately.
+//
+// ErrNotFound when there is no row at oldPath, which a caller reconciling a tree
+// treats as "this was never indexed" rather than as a fault — see DeletePage. It
+// matters most here, because a rename the watcher saw as a remove followed by a
+// rename is a legal sequence and the row is genuinely gone by the time the rename
+// arrives.
+//
+// ErrConflict when a row already occupies newPath. Deliberately refused rather
+// than resolved: the two rows are two files with one name, and choosing which
+// survives is a filesystem decision that has already been made elsewhere. The
+// caller converges by re-indexing the destination and dropping the source.
+func (s *Store) RenamePage(ctx context.Context, campaignID int64, oldPath, newPath string) error {
+	if oldPath == "" || newPath == "" {
+		return fmt.Errorf("%w: rename page", ErrInvalidPagePath)
+	}
+
+	what := "rename page " + oldPath + " to " + newPath
+
+	return s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		previous, found, err := readIndexedText(ctx, tx, campaignID, oldPath)
+		if err != nil {
+			return err
+		}
+
+		if !found {
+			return fmt.Errorf("%w: %s", ErrNotFound, what)
+		}
+
+		if _, taken, err := readIndexedText(ctx, tx, campaignID, newPath); err != nil {
+			return err
+		} else if taken {
+			return fmt.Errorf("%w: %s", ErrConflict, what)
+		}
+
+		// Same order as reindexPage: drop what was indexed, write the row, index
+		// the values again. See the comment there for why the order is fixed.
+		if unindex := unindexPage(ctx, tx, previous, what); unindex != nil {
+			return unindex
+		}
+
+		if _, err := tx.ExecContext(ctx, renamePage,
+			newPath,
+			unixSeconds(nowFunc()),
+			previous.id,
+		); err != nil {
+			return translateWrite(err, what)
+		}
+
+		if _, err := tx.ExecContext(ctx, insertIntoPagesFTS,
+			previous.id,
+			previous.title,
+			previous.bodyPlain,
+		); err != nil {
+			return translateWrite(err, what)
+		}
+
+		return nil
+	})
+}
+
+// RenamePagesUnder moves every page row inside one directory subtree to another,
+// in one transaction, and returns how many rows moved.
+//
+// The operation a directory watch needs and cannot get from RenamePage. A sync
+// client renaming a folder produces one filesystem event for the folder, and the
+// pages inside it did not change — only where they are. Answering that with a
+// per-file upsert would re-read and re-hash every page in the folder, which is
+// the one thing a re-key exists to avoid, and would still have to prune the old
+// paths first, which is a second pass over the same rows.
+//
+// oldDir and newDir are slash-separated directory paths relative to the campaign's
+// content root. Neither is a page: the operation moves everything *under* a
+// directory, and a caller that passed a page path gets zero rows moved rather
+// than an error, because this package has no opinion about what a directory is
+// and does not know the markdown extension. Refusing an empty or `"."` argument
+// does say something useful, though — the content root itself is not a directory
+// that can be renamed, and a caller that meant it has a bug rather than a case.
+//
+// A destination row that a moved row would land on is dropped, and that is the
+// filesystem's decision rather than this function's. Two files cannot share a
+// path, so whichever file is on disk at newPath is the page that path describes
+// now; the row for the one that lost is a page that no longer exists under that
+// name. The alternative — refusing the whole rename with ErrConflict — would
+// leave a folder move that the filesystem has already performed unindexed, and
+// the only recovery would be a full rescan.
+func (s *Store) RenamePagesUnder(
+	ctx context.Context,
+	campaignID int64,
+	oldDir, newDir string,
+) (int, error) {
+	if oldDir == "" || newDir == "" || oldDir == contentRootDir || newDir == contentRootDir {
+		return 0, fmt.Errorf("%w: rename pages under %q", ErrInvalidPagePath, oldDir)
+	}
+
+	what := "rename pages under " + oldDir + " to " + newDir
+
+	var moved int
+
+	err := s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// Reset, not accumulated: a retried write after a rollback must not
+		// report the rows a rolled-back attempt moved.
+		moved = 0
+
+		moving, err := readPagesUnder(ctx, tx, campaignID, oldDir)
+		if err != nil {
+			return err
+		}
+
+		// Every destination collision is resolved before the first UPDATE, because
+		// the unique index refuses the write that would land on it and the order
+		// the rows are moved in cannot be chosen to avoid every pair.
+		for _, page := range moving {
+			target := movePath(oldDir, newDir, page.path)
+
+			occupied, found, err := readIndexedText(ctx, tx, campaignID, target)
+			if err != nil {
+				return err
+			}
+
+			if !found {
+				continue
+			}
+
+			if unindex := unindexPage(ctx, tx, occupied, what); unindex != nil {
+				return unindex
+			}
+
+			if _, err := tx.ExecContext(ctx, deletePageByID, occupied.id); err != nil {
+				return translateWrite(err, what)
+			}
+		}
+
+		for _, page := range moving {
+			if unindex := unindexPage(ctx, tx, page, what); unindex != nil {
+				return unindex
+			}
+
+			if _, err := tx.ExecContext(ctx, renamePage,
+				movePath(oldDir, newDir, page.path),
+				unixSeconds(nowFunc()),
+				page.id,
+			); err != nil {
+				return translateWrite(err, what)
+			}
+
+			if _, err := tx.ExecContext(ctx, insertIntoPagesFTS,
+				page.id,
+				page.title,
+				page.bodyPlain,
+			); err != nil {
+				return translateWrite(err, what)
+			}
+
+			moved++
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return moved, nil
+}
+
+// PrunePages deletes the rows of one campaign whose path keep refuses, and
+// returns how many it deleted.
+//
+// The convergence half of the index, and the reason "converges" is a claim rather
+// than an aspiration. A watcher drops events: an overflow queue, a watch that was
+// never established because the limit was exhausted (S-4.5), a directory that was
+// moved into the tree without a per-file event. Every one of those leaves a row
+// pointing at a file that is not there, and a search hit for a page that no
+// longer exists is worse than no hit — it is a result that 404s.
+//
+// A predicate rather than a set of paths to delete, because the walk that drives
+// this holds every path in a campaign and materialising it as a slice to hand
+// over would be a second copy of the index in memory for no benefit. keep MUST
+// NOT touch this Store: it runs inside a write transaction on the single
+// connection, and a query from inside one waits for a lock that transaction
+// holds.
+func (s *Store) PrunePages(
+	ctx context.Context,
+	campaignID int64,
+	keep func(path string) bool,
+) (int, error) {
+	if keep == nil {
+		return 0, errors.New("store: prune pages without a keep predicate")
+	}
+
+	what := "prune pages for campaign " + strconv.FormatInt(campaignID, 10)
+
+	var pruned int
+
+	err := s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		pruned = 0
+
+		rows, err := tx.QueryContext(ctx, selectIndexedPagesForCampaign, campaignID)
+		if err != nil {
+			return translateRead(err, what)
+		}
+
+		stale, err := collectStalePages(rows, keep, what)
+		if err != nil {
+			return err
+		}
+
+		for _, page := range stale {
+			if unindex := unindexPage(ctx, tx, page, what); unindex != nil {
+				return unindex
+			}
+
+			if _, err := tx.ExecContext(ctx, deletePageByID, page.id); err != nil {
+				return translateWrite(err, what)
+			}
+
+			pruned++
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return pruned, nil
+}
+
+// RebuildPagesFTS rebuilds `pages_fts` from `pages` in full, and is the only way
+// to change the index in bulk.
+//
+// S-11.2: an external-content FTS5 table cannot be `ALTER`ed, so a change that
+// touches a whole table is not a statement but this one. Two uses, and both are
+// cases where per-row maintenance is the wrong shape rather than merely slower:
+// a repair after something outside this package wrote `pages`, and a caller that
+// has just reindexed every campaign from the filesystem and wants the index to
+// agree with the result without an invariant it has to trust.
+//
+// It is not a substitute for the upsert's discipline. A rebuild is a full scan
+// of every row in every campaign, on a table whose whole point is that the
+// index stores no copy of the text, so the cost of a per-event rebuild is paid on
+// every event.
+func (s *Store) RebuildPagesFTS(ctx context.Context) error {
+	const what = "rebuild the page search index"
+
+	return s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return rebuildPagesFTSTx(ctx, tx, what)
+	})
+}
+
+// rebuildPagesFTSTx issues the rebuild inside the caller's transaction, so that
+// a delete which cascades into `pages` and a repair of the index it left behind
+// commit together. DeleteCampaign is the other caller.
+func rebuildPagesFTSTx(ctx context.Context, tx *sql.Tx, what string) error {
+	if _, err := tx.ExecContext(ctx, rebuildPagesFTS); err != nil {
+		return translateWrite(err, what)
+	}
+
+	return nil
+}
+
+// readPagesUnder returns the rows of one campaign's directory subtree, oldest
+// path first.
+//
+// The range scan does the narrowing and this re-checks it; see
+// selectIndexedPagesUnder for why a range over byte order is an optimisation
+// rather than the predicate.
+func readPagesUnder(
+	ctx context.Context,
+	tx *sql.Tx,
+	campaignID int64,
+	dir string,
+) ([]indexedText, error) {
+	what := "read pages under " + dir
+
+	rows, err := tx.QueryContext(ctx, selectIndexedPagesUnder,
+		campaignID, dir+"/", dir+"0")
+	if err != nil {
+		return nil, translateRead(err, what)
+	}
+
+	defer closeRows(rows, what)
+
+	var found []indexedText
+
+	for rows.Next() {
+		page, err := scanIndexedText(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		if !strings.HasPrefix(page.path, dir+"/") {
+			continue
+		}
+
+		found = append(found, page)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, translateRead(err, what)
+	}
+
+	return found, nil
+}
+
+// collectStalePages drains a cursor and returns the rows keep refuses.
+//
+// The cursor is closed before this returns rather than by the caller's defer,
+// because the caller deletes what comes back inside the same transaction and a
+// cursor left open on the single connection would block its own next statement.
+func collectStalePages(
+	rows *sql.Rows,
+	keep func(path string) bool,
+	what string,
+) ([]indexedText, error) {
+	defer closeRows(rows, what)
+
+	var stale []indexedText
+
+	for rows.Next() {
+		page, err := scanIndexedText(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		if keep(page.path) {
+			continue
+		}
+
+		stale = append(stale, page)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, translateRead(err, what)
+	}
+
+	return stale, nil
+}
+
+// movePath is page's path with the oldDir prefix replaced by newDir.
+func movePath(oldDir, newDir, path string) string {
+	return newDir + strings.TrimPrefix(path, oldDir)
+}
+
+// scanIndexedText reads one page row in the shape the FTS maintenance paths need.
+//
+// No `what` and no translateRead: the wrapping is done by the two callers, which
+// name a different operation each ("read pages under X", "prune pages for
+// campaign N") and would only be relabelling one string to share a helper.
+func scanIndexedText(row rowScanner) (indexedText, error) {
+	var text indexedText
+
+	if err := row.Scan(
+		&text.id,
+		&text.path,
+		&text.title,
+		&text.bodyPlain,
+	); err != nil {
+		return indexedText{}, fmt.Errorf("scan page row: %w", err)
+	}
+
+	return text, nil
+}
+
 // PageByPath reads one page of one campaign.
 //
-// ErrNotFound carries no statement about whether the page ever existed, which is
-// what makes it safe to answer a request with: a private campaign and a campaign
-// that does not exist have to be indistinguishable (AGENTS.md, no-access-is-404).
-// The route mounts the access gate; this is not where authorisation happens
-// (ADR 0024).
+// ErrNotFound carries no statement about whether the page ever existed, which
+// is what makes it safe to answer a request with: a private campaign and a
+// campaign that does not exist have to be indistinguishable (AGENTS.md,
+// no-access-is-404). The route mounts the access gate; this is not where
+// authorisation happens (ADR 0024).
+//
+// It does not join `campaigns`, and pages_test.go's audit is why that is stated
+// rather than left to be re-derived. The S-8.2 hazard is a statement that reaches
+// `pages` carrying no campaign scope of its own, which this one does not: it is
+// addressed by the id of a campaign the caller was already authorised for, on
+// the far side of a gate ADR 0024 requires the route to mount. The statement that
+// *is* reached from a search box is SearchPages, and it joins.
 func (s *Store) PageByPath(
 	ctx context.Context,
 	campaignID int64,
@@ -571,6 +1024,7 @@ func readIndexedText(
 
 	err := tx.QueryRowContext(ctx, selectIndexedText, campaignID, path).Scan(
 		&text.id,
+		&text.path,
 		&text.title,
 		&text.bodyPlain,
 	)
