@@ -48,12 +48,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/observability"
 )
 
 // markdownExtension is the only file extension a page can have.
@@ -323,6 +324,12 @@ type Indexer struct {
 	roots *Registry
 	pages PageStore
 	kinds domain.PageKindRegistry
+
+	// indexSignals is the observability surface every failure here reports
+	// through. Read through `signals()` rather than directly, because a nil one
+	// must not be a nil dereference on the path that handles a page that cannot
+	// be read.
+	indexSignals *observability.Index
 }
 
 // NewIndexer returns an Indexer that reads through roots and writes through
@@ -333,8 +340,13 @@ type Indexer struct {
 // hard-coded empty registry so that the composition root can hand over the plugin
 // registry when phase 8 builds one and the index honours `kind: token` without a
 // second edit.
-func NewIndexer(roots *Registry, pages PageStore, kinds domain.PageKindRegistry) *Indexer {
-	return &Indexer{roots: roots, pages: pages, kinds: kinds}
+func NewIndexer(
+	roots *Registry,
+	pages PageStore,
+	kinds domain.PageKindRegistry,
+	signals *observability.Index,
+) *Indexer {
+	return &Indexer{roots: roots, pages: pages, kinds: kinds, indexSignals: signals}
 }
 
 // HandleChange applies one settled change, and reports failures rather than
@@ -352,14 +364,8 @@ func NewIndexer(roots *Registry, pages PageStore, kinds domain.PageKindRegistry)
 // logging-and-continuing safe rather than merely convenient.
 func (ix *Indexer) HandleChange(ctx context.Context, change Change) {
 	if err := ix.ApplyChange(ctx, change); err != nil {
-		slog.ErrorContext(ctx, "index.change_failed",
-			slog.String("event", "index.change_failed"),
-			slog.String("campaign", change.Slug),
-			slog.Int64("campaign_id", change.CampaignID),
-			slog.String("op", change.Op.String()),
-			slog.String("path", change.Path),
-			slog.String("error", err.Error()),
-		)
+		ix.signals().ChangeFailed(ctx, strconv.FormatInt(change.CampaignID, 10),
+			change.Op.String(), change.Path, err)
 	}
 }
 
@@ -392,13 +398,8 @@ func (ix *Indexer) ApplyChange(ctx context.Context, change Change) error {
 		// reason, both land here. The prune decides which; the log says which
 		// happened.
 		if err := ix.pages.DeletePage(ctx, change.CampaignID, change.Path); err != nil {
-			slog.WarnContext(ctx, "index.remove_failed",
-				slog.String("event", "index.remove_failed"),
-				slog.String("campaign", change.Slug),
-				slog.Int64("campaign_id", change.CampaignID),
-				slog.String("path", change.Path),
-				slog.String("error", err.Error()),
-			)
+			ix.signals().ChangeFailed(ctx, strconv.FormatInt(change.CampaignID, 10),
+				change.Op.String(), change.Path, err)
 
 			return fmt.Errorf("remove %s from the index: %w", change.Path, err)
 		}
@@ -487,7 +488,7 @@ func (ix *Indexer) ReindexCampaign(
 		if indexErr != nil {
 			report.Skipped++
 
-			ix.reportSkipped(ctx, slug, rel, indexErr)
+			ix.reportSkipped(ctx, campaignID, rel, indexErr)
 
 			continue
 		}
@@ -579,34 +580,28 @@ func (ix *Indexer) rename(ctx context.Context, change Change) error {
 			return fmt.Errorf("move the index entries under %s: %w", change.OldPath, err)
 		}
 
-		slog.InfoContext(ctx, "index.renamed_directory",
-			slog.String("event", "index.renamed_directory"),
-			slog.String("campaign", change.Slug),
-			slog.Int64("campaign_id", change.CampaignID),
-			slog.String("from", change.OldPath),
-			slog.String("to", change.Path),
-			slog.Int("pages", moved),
-		)
+		// Not a signal of its own. Moving a subtree is the system working: the
+		// interesting question is how many rows moved, which is a field on a line
+		// rather than a line of its own, and an `info` event per directory rename
+		// would put the routine work of the indexer in the same stream as its
+		// failures.
+		ix.signals().Renamed(ctx, strconv.FormatInt(change.CampaignID, 10),
+			change.OldPath, change.Path, moved)
 
 		return nil
 	}
 
+	// The re-key is an optimisation, not the mechanism: the destination is
+	// indexed either way, so a re-key that fails is a warning rather than an
+	// error, and the source row is dropped below.
 	if err := ix.pages.RenamePage(
 		ctx,
 		change.CampaignID,
 		change.OldPath,
 		change.Path,
-	); err == nil {
-		return nil
-	} else {
-		slog.WarnContext(ctx, "index.rename_rekey_failed",
-			slog.String("event", "index.rename_rekey_failed"),
-			slog.String("campaign", change.Slug),
-			slog.Int64("campaign_id", change.CampaignID),
-			slog.String("from", change.OldPath),
-			slog.String("to", change.Path),
-			slog.String("error", err.Error()),
-		)
+	); err != nil {
+		ix.signals().ChangeFailed(ctx, strconv.FormatInt(change.CampaignID, 10),
+			change.Op.String(), change.Path, err)
 	}
 
 	// The destination is indexed and the source dropped, in that order, so a
@@ -617,13 +612,8 @@ func (ix *Indexer) rename(ctx context.Context, change Change) error {
 	}
 
 	if err := ix.pages.DeletePage(ctx, change.CampaignID, change.OldPath); err != nil {
-		slog.WarnContext(ctx, "index.rename_source_left",
-			slog.String("event", "index.rename_source_left"),
-			slog.String("campaign", change.Slug),
-			slog.Int64("campaign_id", change.CampaignID),
-			slog.String("path", change.OldPath),
-			slog.String("error", err.Error()),
-		)
+		ix.signals().RenameSourceLeft(ctx, strconv.FormatInt(change.CampaignID, 10),
+			change.OldPath, 1, err)
 	}
 
 	return nil
@@ -679,13 +669,8 @@ func (ix *Indexer) indexPath(
 		// interpret inert rather than fatal: the page renders as prose and the
 		// route will say so. Skipping it here would break every link to a page
 		// that works, which is the exact failure a malformed block must not cause.
-		slog.WarnContext(ctx, "index.page_degraded",
-			slog.String("event", "index.page_degraded"),
-			slog.String("campaign", slug),
-			slog.Int64("campaign_id", campaignID),
-			slog.String("path", rel),
-			slog.String("error", doc.FrontMatter.Err.Error()),
-		)
+		ix.signals().PageDegraded(ctx, strconv.FormatInt(campaignID, 10), rel,
+			doc.FrontMatter.Err)
 	}
 
 	_, err = ix.pages.UpsertPage(ctx, domain.PageText{
@@ -704,19 +689,34 @@ func (ix *Indexer) indexPath(
 	return true, nil
 }
 
+// signals returns the signal surface, substituting one that discards when the
+// composition root supplied none.
+//
+// A nil `*observability.Index` is tolerated rather than fatal for the reason
+// `NewWatch` gives: an indexer must not fail to index because nobody wired its
+// telemetry, and a missing log line is recoverable where a nil dereference on the
+// path that handles an unreadable page is not.
+//
+// Constructed per call rather than cached, because a nil logger and a nil
+// registry are both tolerated inside `NewIndex` and the path is only reached when
+// telemetry is unwired — four allocations on the failure path of a subsystem whose
+// whole subject is not failing.
+func (ix *Indexer) signals() *observability.Index {
+	if ix.indexSignals != nil {
+		return ix.indexSignals
+	}
+
+	return observability.NewIndex(nil, nil)
+}
+
 // reportSkipped says that a file the walk found is not in the index.
 //
 // Warn and not error, because one unreadable page in a vault of five hundred is
-// an operator's problem and not a degraded service — unlike `watch.add_failed`,
-// which is S-12.2's "never below error" because a watcher that has stopped
-// watching is silently losing every change after it.
-func (ix *Indexer) reportSkipped(ctx context.Context, slug, rel string, err error) {
-	slog.WarnContext(ctx, "index.page_skipped",
-		slog.String("event", "index.page_skipped"),
-		slog.String("campaign", slug),
-		slog.String("path", rel),
-		slog.String("error", err.Error()),
-	)
+// an operator's problem and not a degraded service — unlike `index.change_failed`,
+// which is error because a write that returned 200 and never reached the index is
+// indistinguishable, from outside, from a write that worked.
+func (ix *Indexer) reportSkipped(ctx context.Context, campaignID int64, rel string, err error) {
+	ix.signals().PageSkipped(ctx, strconv.FormatInt(campaignID, 10), rel, err)
 }
 
 // root resolves a slug to its confined content root.

@@ -19,9 +19,12 @@ func TestAllEventNamesAreUniqueAndComplete(t *testing.T) {
 
 	names := observability.AllEventNames()
 
-	// A defensive count: the architecture record lists eighteen. If this fails,
-	// a signal was added without updating the test, which is the intended alarm.
-	const wantCount = 18
+	// A defensive count: the architecture record lists eighteen, and phase 4 adds
+	// five for the indexer under ADR 0032. If this fails, a signal was added
+	// without updating the test, which is the intended alarm — and, if the addition
+	// came with no record, this failure is the only thing standing between an
+	// unrecorded deviation and a shipped one.
+	const wantCount = 23
 
 	if len(names) != wantCount {
 		t.Errorf("AllEventNames() has %d entries, want %d", len(names), wantCount)
@@ -395,14 +398,14 @@ func TestEventAttributesCarryNoFreeFormBag(t *testing.T) {
 		Detail:     "ENOENT",
 	}
 
-	// The point is the *shape* of the struct, not its values: it holds three
-	// strings and nothing else, so there is no field a secret, a file body or a
+	// The point is the *shape* of the struct, not its values: it holds only strings
+	// and one bounded integer, so there is no field a secret, a file body or a
 	// dice result could be passed through. A `[]byte`, an `any`, or an
 	// `Attrs []slog.Attr` bag is what this is checking for, and adding any of
 	// them is what should break this test.
 	typ := reflect.TypeOf(attrs)
 
-	const wantFields = 3
+	const wantFields = 7
 
 	if got := typ.NumField(); got != wantFields {
 		t.Errorf("EventAttributes has %d fields, want %d", got, wantFields)
@@ -414,11 +417,16 @@ func TestEventAttributesCarryNoFreeFormBag(t *testing.T) {
 		}
 	}
 
-	// Every field must be a string: a container field is exactly the hole the
-	// invariant closes.
+	// Every field must be a string or an int. A string is bounded by what a
+	// caller puts in it, which is the whole discipline S-12.3 rests on and which
+	// the field names and their comments state; an int carries no text at all, so
+	// `Count` is safe by type rather than by convention. Anything else — a slice,
+	// a map, an interface — is the hole the invariant closes.
 	for _, field := range reflect.VisibleFields(typ) {
-		if field.Type.Kind() != reflect.String {
-			t.Errorf("EventAttributes.%s is %s, want string; a container field is a way "+
+		switch field.Type.Kind() {
+		case reflect.String, reflect.Int:
+		default:
+			t.Errorf("EventAttributes.%s is %s; a container or interface field is a way "+
 				"to carry content a log line must never hold", field.Name, field.Type)
 		}
 	}

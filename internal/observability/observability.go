@@ -91,6 +91,55 @@ const (
 	// still serve.
 	EventPluginMissing         EventName = "plugin.missing"
 	EventPluginVersionMismatch EventName = "plugin.version_mismatch"
+
+	// The four signals below are **not** in §13.2. They are the indexer's, added
+	// with phase 4 and recorded as a deviation in
+	// 0032-index-signals-beyond-the-architecture-list, because a deviation from a
+	// published record is corrected by a record and not by silence.
+	//
+	// They exist because the alternatives were worse than a deviation. The
+	// indexer emits them through `slog` directly — which is what it did first, and
+	// which puts the invariant S-12.3 depends on outside the one place that
+	// decides what a line may carry: `slog.Any("body", raw)` compiles and ships
+	// there. Or it could fold them into the §13.2 names, which would report a
+	// failed index write as `content.render_error` — a page that rendered fine.
+	//
+	// Four, not one per failure mode. The operation is an **attribute** rather than
+	// part of the name, because `index.change_failed` with `op=remove` and with
+	// `op=rename` are one signal an operator alerts on, and seven names would make
+	// a dashboard that answers "is the index keeping up" into seven queries that
+	// each answer "did this one thing happen".
+
+	// EventIndexChangeFailed is a settled change the indexer could not apply: the
+	// page is absent from search until the next rescan. Error, and not one of
+	// S-12.2's rule-fixed names — this one is error by judgment, for the same
+	// reason `watch.add_failed` is: a GM's save that never reaches the index looks
+	// exactly like a save that worked.
+	EventIndexChangeFailed EventName = "index.change_failed"
+
+	// EventIndexPageSkipped is a file the walk found that is not in the index: over
+	// the size cap, unreadable, a symlink the policy refuses. Warn, because one
+	// unreadable page in a vault of five hundred is an operator's problem and not a
+	// degraded service.
+	EventIndexPageSkipped EventName = "index.page_skipped"
+
+	// EventIndexPageDegraded is a page that **is** indexed but whose front matter
+	// did not interpret, so its kind and title fell back to prose (S-3.3). Warn,
+	// and distinct from `index.page_skipped` on purpose: this page is searchable
+	// and reachable, and the failure is a degraded page rather than a missing one.
+	EventIndexPageDegraded EventName = "index.page_degraded"
+
+	// EventIndexRenameSourceLeft is a rename whose fallback indexed the destination
+	// but could not drop the old row, so a search hit still names the path the page
+	// left. Warn, and not silent: the prune removes it on the next pass, and until
+	// then a search result 404s.
+	EventIndexRenameSourceLeft EventName = "index.rename_source_left"
+
+	// EventIndexRenamed is a directory rename that moved a subtree of rows. The one
+	// routine event of the five, and deliberately debug and uncounted: a
+	// directory rename is the indexer working, and a dashboard where a rising line
+	// could mean either that or a failure is a dashboard nobody trusts.
+	EventIndexRenamed EventName = "index.renamed"
 )
 
 // AllEventNames is every §13.2 signal name, in declaration order.
@@ -121,6 +170,11 @@ var eventNames = []EventName{
 	EventStateWriteMs,
 	EventPluginMissing,
 	EventPluginVersionMismatch,
+	EventIndexChangeFailed,
+	EventIndexPageSkipped,
+	EventIndexPageDegraded,
+	EventIndexRenameSourceLeft,
+	EventIndexRenamed,
 }
 
 // Counter is a monotonically increasing value, and optionally a gauge that can
@@ -275,6 +329,35 @@ type EventAttributes struct {
 	// Detail is a short discriminator: an error class, a retry count, a token
 	// id. Never secret text, never a file body, never a dice result.
 	Detail string
+
+	// Op is the operation the event concerns, from a closed vocabulary — the
+	// indexer's `upsert`, `remove`, `rename`. Absent for every event that is not
+	// about one.
+	//
+	// An attribute rather than part of the event name, and that is the whole
+	// argument: `index.change_failed` with `op=remove` and with `op=rename` are
+	// one signal an operator alerts on, so folding the operation into the name
+	// would multiply the spellings a query has to know without multiplying the
+	// information it can return. A closed vocabulary, so nothing unbounded and
+	// nothing derived from a document can reach it.
+	Op string
+
+	// From is the path something moved *from*, and is set only where a move is
+	// what happened. A second path field, not a general-purpose one: a rename is
+	// the only event in the system with two paths, and giving both the same field
+	// would mean one of them is right and the other is empty half the time.
+	From string
+
+	// Count is a number of things — pages moved, rows written. A count rather than
+	// a list, because a list is unbounded and this is what an operator reads off
+	// the line.
+	Count int
+
+	// To is the path something moved *to*, paired with `From`. Two fields rather
+	// than a pair or a formatted string, because a caller formatting
+	// "old -> new" into `Detail` is a caller who has to escape it, and a caller
+	// putting a map in here is a caller who has defeated the type.
+	To string
 }
 
 // Event logs a named event with its permitted attributes.
@@ -306,6 +389,27 @@ func Event(
 
 	if attrs.Detail != "" {
 		record = append(record, slog.String("detail", attrs.Detail))
+	}
+
+	if attrs.Op != "" {
+		record = append(record, slog.String("op", attrs.Op))
+	}
+
+	if attrs.From != "" {
+		record = append(record, slog.String("from", attrs.From))
+	}
+
+	if attrs.To != "" {
+		record = append(record, slog.String("to", attrs.To))
+	}
+
+	// Counted, not gauged: `attrs.Count` describes this event rather than the
+	// state of anything, so emitting it unconditionally would put a zero on every
+	// line that has no count. `!= 0` is the honest condition for "this event had
+	// a count", and an event that genuinely counted zero is not one anything
+	// needs to distinguish.
+	if attrs.Count != 0 {
+		record = append(record, slog.Int("count", attrs.Count))
 	}
 
 	logger.LogAttrs(ctx, level, string(name), record...)
