@@ -1,0 +1,94 @@
+package components
+
+// The three states below are the centre and rail slots UI §4.7 designs for
+// pre-campaign routes. They are exported components rather than branches inside
+// a page so each one is a designed surface that can be asserted on its own, and
+// so the router can reuse the same rail on a route this work item does not own.
+
+// InstanceRail is the right rail for a pre-campaign route: what this instance
+// is, which build it is, and what is not working.
+//
+// §4.4 gives this slot to / and /login, and §4.6 says it still earns its place
+// there. What it cannot show is a campaign's system, house rules or roster,
+// because there is no campaign — which is why this is one panel and not five
+// empty ones.
+templ InstanceRail(instance InstanceView) {
+	<section class="panel" aria-labelledby="instance-rail-heading" data-testid="rail-instance">
+		// h2 under the centre's h1: heading levels never skip (UI §7.2), and the
+		// rail follows main in the document, so this is the first subheading
+		// the reader meets.
+		<h2 id="instance-rail-heading">Instance</h2>
+		<p class="panel-line" data-testid="rail-instance-name">{ instance.displayName() }</p>
+		if instance.Version != "" {
+			<p class="panel-line" data-testid="rail-instance-version">{ instance.Version }</p>
+		}
+	</section>
+	if len(instance.Degraded) > 0 {
+		@DegradedNotice(instance.Degraded)
+	}
+}
+
+// DegradedNotice is the rail's standing warning that part of this instance is
+// not working (UI §4.2, §4.7).
+//
+// Not a live region and not a toast. The condition persists until an operator
+// fixes it — a watcher that has stopped watching is not an event that happened
+// once — so a polite announcement would fire on every navigation for a state
+// the reader can see. §4.2 puts it in the footer because the footer is the one
+// part of the shell that never scrolls away; on a pre-campaign route the rail
+// is where §4.4 puts it and where the reader already is.
+templ DegradedNotice(degraded []DegradedView) {
+	<section class="panel panel--warning" aria-labelledby="degraded-heading" data-testid="degraded-warning">
+		<h2 id="degraded-heading">Not working</h2>
+		<ul class="panel-list">
+			for _, item := range degraded {
+				<li>
+					<span class="panel-term">{ item.Name }</span>
+					if item.Detail != "" {
+						<span class="panel-detail">{ item.Detail }</span>
+					}
+				</li>
+			}
+		</ul>
+		<p class="panel-note">The rest of this instance is unaffected.</p>
+	</section>
+}
+
+// FirstRun is the centre slot when the account is a member of no campaigns
+// (UI §4.7's first-run row).
+//
+// A user can exist with zero campaigns — the first account is provisioned
+// before any browser reaches the server — so this is a campaign empty state and
+// not a user one (UI §4.6). The copy is two lines of fact and one action,
+// because this is a self-hosted tool and a reader standing at an empty
+// instance has already decided to use it.
+templ FirstRun(view CampaignListView) {
+	<section class="empty" aria-labelledby="first-run-heading" data-testid="first-run">
+		<h2 id="first-run-heading">No campaigns yet</h2>
+		<p>A campaign holds the pages, the assets and the table for one game. Everything in semiplane belongs to one.</p>
+		<p>Everything you add stays on this instance.</p>
+		if view.CreateHref != "" {
+			<a class="target button button--primary" href={ view.CreateHref } data-testid="first-run-cta">Register your first campaign</a>
+		}
+		if view.DocsHref != "" {
+			<a class="target" href={ view.DocsHref } data-testid="first-run-docs">Read the documentation</a>
+		}
+	</section>
+}
+
+// LoadError is the centre slot when a page could not be produced at all
+// (UI §4.7's `500` row).
+//
+// The reference is the whole content. It is what ties a reader's report to a
+// line in the access log, and §4.7 gives the rail an empty panel for this
+// state — the rail already says which instance and which build failed, so
+// repeating it would be noise.
+templ LoadError(failure LoadFailure) {
+	<section class="empty" aria-labelledby="load-error-heading" data-testid="error-state">
+		<h2 id="load-error-heading">This page could not be loaded</h2>
+		<p data-testid="error-state-message">semiplane could not load this page. Nothing has been changed.</p>
+		if failure.Reference != "" {
+			<p class="empty-note">Reference: <code data-testid="error-state-reference">{ failure.Reference }</code></p>
+		}
+	</section>
+}
