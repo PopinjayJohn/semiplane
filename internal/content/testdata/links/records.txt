@@ -1,0 +1,4 @@
+0	Goblin	allowed	yes	greyhaven	notes/Goblin
+1	Goblin	unsupported	no	-	-
+2	(no target)	unsupported	no	-	-
+3	notes/Goblin	allowed	yes	greyhaven	notes/Goblin

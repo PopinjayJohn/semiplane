@@ -1,0 +1,15 @@
+<h1 id="the-coast">The Coast</h1>
+<p>The first one.</p>
+<h2 id="the-coast-1">The Coast</h2>
+<p>The second one gets a distinct id, so <code>[[This Page#The Coast]]</code> and an
+in-page link each have somewhere to land that is not ambiguous.</p>
+<h2 id="the-coast-2">The Coast</h2>
+<p>The third one, and its id is distinct again.</p>
+<h3 id="the-coast-3">The coast</h3>
+<p>Capitalisation folds, so this collides with the first three and is numbered too.</p>
+<h4 id="the-coast-4">The Coast</h4>
+<p>A heading with markup in it: the <strong>Drowned</strong> <code>Lighthouse</code></p>
+<h5 id="the-coast-custom">The Coast {#custom}</h5>
+<p>An authored id is not honoured: <code>parser.WithAttribute</code> is not enabled, so the
+text after the hash is part of the heading and the id is generated from all of
+it. See the note in <code>render.go</code> for why an author may not choose an id.</p>

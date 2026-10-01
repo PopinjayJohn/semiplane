@@ -1,0 +1,21 @@
+<h1 id="dice">Dice</h1>
+<p>The GM rolls, the server rolls, and this page never does. Roll
+<span class="dice" data-ext="dice" data-ref-index="0" data-arg="1d20+5"></span> for the attack.</p>
+<p>The quoted spelling the documentation uses: <span class="dice" data-ext="dice" data-ref-index="1" data-arg="2d6"></span></p>
+<p>No argument at all: <span class="dice" data-ext="dice" data-ref-index="2"></span></p>
+<p>A different pool: <span class="dice" data-ext="dice" data-ref-index="3" data-arg="4d6 drop lowest"></span></p>
+<p>A 2d6-pool system describes a different grammar from a d20 one, so the
+expression is carried verbatim and the protocol never assumes d20. What lives in
+the DOM is the expression, in an attribute, and the element’s text is empty.</p>
+<h1 id="stat-blocks">Stat blocks</h1>
+<p>The stat block for a named game object: <span class="statblock" data-ext="statblock" data-ref-index="4" data-arg="Goblin"></span></p>
+<p>One with a path: <span class="statblock" data-ext="statblock" data-ref-index="5" data-arg="creatures/Goblin"></span></p>
+<p>A stat block’s shape is the gameplay plugin’s business — which fields, in what
+order, whether an ability score reads as a modifier or a number — so the slot
+carries the operand and nothing else.</p>
+<h1 id="what-is-not-a-directive">What is not a directive</h1>
+<p>An unknown name stays text, because a page must not be destroyed by a plugin
+that is not installed: {{blast:3d6}}</p>
+<p>Neither does a stray brace pair: {{}} or {{ dice }} or {{dice:}}</p>
+<p>And a <code>{{…}}</code> written in backticks is text too: <code>{{dice:1d20+5}}</code>, as is
+<code>[[The Lighthouse]]</code> in a code span.</p>
