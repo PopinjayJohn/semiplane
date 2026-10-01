@@ -1,0 +1,155 @@
+package ui
+
+// The tabs primitive (WAI-ARIA's tabs pattern, UI §7.4's arrow-key rule).
+//
+// The pattern's defining property is that the tablist is *one* tab stop with
+// several stops inside it, which is what roving tabindex expresses: the selected
+// tab is `tabindex="0"` and its neighbours are `-1`, so `Tab` leaves the widget
+// and the arrow keys move within it. Every tab therefore has `tabindex`, which is
+// why this component can be asserted against §7.10's prohibition without
+// qualifying — the only values it ever writes are `0` and `-1`.
+
+// Tab is one tab and the panel it controls.
+type Tab struct {
+	// ID is the tab's element id; the panel's id is derived from it as
+	// `ID + "-panel"`. Required, because a tab that points at nothing is a tab
+	// that displays a label and no content.
+	ID string
+	// Label is the tab's visible text, and its accessible name.
+	Label string
+	// Content is the panel's body.
+	Content templ.Component
+}
+
+// TabsView is a tablist and its panels.
+type TabsView struct {
+	// Label is the tablist's accessible name. Required: a tablist with no name is
+	// a group of buttons a reader cannot tell apart from the toolbar beside it,
+	// and §7.2's rule about distinguishing labels is about exactly this.
+	Label string
+	// Tabs are the tabs, in order. Arrow traversal is this order, so a caller
+	// that sorts them is deciding what the arrow keys do.
+	Tabs []Tab
+	// Selected is the ID of the tab that is selected. Empty or unknown means the
+	// first tab — see selectedTabID.
+	Selected string
+	// TestID is the tablist's test hook.
+	TestID string
+}
+
+// Tabs renders a tablist and one panel per tab.
+//
+// Exactly one tab is ever selected, because a tablist with two selected tabs is
+// a widget with two answers to "what am I looking at", and with none is a widget
+// whose `aria-controls` all point at `hidden` panels. The server-rendered form of
+// that guarantee is selectedTabID, which falls back rather than guessing: a
+// caller who forgets to set Selected gets the first tab, and a caller who sets
+// it to an id that is not there gets the first tab too.
+//
+// The panels that are not selected carry `hidden`, not `aria-hidden`. §7.10
+// prohibits `aria-hidden` on a focusable element and a panel full of controls is
+// exactly that; `hidden` removes the subtree from the accessibility tree and the
+// tab order together, which is what "not selected" means. §7.2 forbids hiding a
+// *landmark*, and a tabpanel is not one.
+//
+// No `tabindex` on the panels. WAI-ARIA's example puts `tabindex="0"` on a panel
+// with nothing focusable inside it, so the reader can scroll it; a panel whose
+// content is a list or a form already has focus stops of its own, and adding one
+// more makes the tab sequence longer than the widget without making it usable.
+templ Tabs(view TabsView) {
+	// An empty tablist renders nothing at all: a labelled group of nothing is
+	// worse than an absent widget, because the reader spends a tab stop
+	// discovering it. A bare `return` cannot express that inside a templ block —
+	// templ reads a Go statement as text — so the guard is a conditional around
+	// the whole widget.
+	if len(view.Tabs) > 0 {
+		@tabsBody(view)
+	}
+}
+
+// tabsBody is the widget, once there is known to be at least one tab.
+//
+// Separate from Tabs because templ reads a bare Go statement inside a templ
+// block as *text* rather than as code, so `selected` could not be hoisted out of
+// the two loops here even if hoisting were worth it. It is recomputed per tab: a
+// loop over the tabs inside another loop over the same slice, which is four
+// iterations on the play rail and is not the thing worth optimising.
+templ tabsBody(view TabsView) {
+	<div class="tabs" data-tabs={ view.Label }>
+		<div class="tab-list" role="tablist" aria-label={ view.Label } data-testid={ view.TestID }>
+			for _, tab := range view.Tabs {
+				// aria-selected first in the attribute order because it is the
+				// one that varies; roving tabindex to 0 on exactly the selected
+				// tab, which is what makes the tablist one tab stop.
+				if isSelectedTab(view, tab) {
+					<button
+						type="button"
+						role="tab"
+						class={ TargetClass + " tab" }
+						id={ tab.ID }
+						aria-selected="true"
+						aria-controls={ tab.ID + "-panel" }
+						tabindex="0"
+						data-tab={ tab.ID }
+						data-testid={ tab.ID + "-tab" }
+					>
+						{ tab.Label }
+					</button>
+				} else {
+					<button
+						type="button"
+						role="tab"
+						class={ TargetClass + " tab" }
+						id={ tab.ID }
+						aria-selected="false"
+						aria-controls={ tab.ID + "-panel" }
+						tabindex="-1"
+						data-tab={ tab.ID }
+						data-testid={ tab.ID + "-tab" }
+					>
+						{ tab.Label }
+					</button>
+				}
+			}
+		</div>
+		for _, tab := range view.Tabs {
+			if isSelectedTab(view, tab) {
+				<div class="tab-panel" role="tabpanel" id={ tab.ID + "-panel" } aria-labelledby={ tab.ID } data-tabpanel={ tab.ID } data-testid={ tab.ID + "-panel" }>
+					if tab.Content != nil {
+						@tab.Content
+					}
+				</div>
+			} else {
+				<div class="tab-panel" role="tabpanel" id={ tab.ID + "-panel" } aria-labelledby={ tab.ID } hidden data-tabpanel={ tab.ID } data-testid={ tab.ID + "-panel" }>
+					if tab.Content != nil {
+						@tab.Content
+					}
+				</div>
+			}
+		}
+	</div>
+}
+
+// isSelectedTab reports whether one tab is the selected one.
+func isSelectedTab(view TabsView, tab Tab) bool {
+	return tab.ID == selectedTabID(view)
+}
+
+// selectedTabID is the tab that is selected, falling back to the first.
+//
+// Falling back rather than rendering nothing: a tablist with no selected tab has
+// every panel hidden, so the widget shows labels and no content, and the reader
+// has no way to open one. Two inputs produce the fallback — an empty Selected,
+// and a Selected naming a tab this view does not have — and both are a caller's
+// mistake that should degrade to a working widget.
+func selectedTabID(view TabsView) string {
+	if view.Selected != "" {
+		for _, tab := range view.Tabs {
+			if tab.ID == view.Selected {
+				return view.Selected
+			}
+		}
+	}
+
+	return view.Tabs[0].ID
+}

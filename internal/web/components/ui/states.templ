@@ -1,0 +1,633 @@
+package ui
+
+// The empty, error and degraded states of UI §4.7, plus the primitives that
+// state copy is set in.
+//
+// A state is a designed surface using the full shell, not a branch inside a
+// page: §4.7 says so, and it is also what makes the contract assertable. Each
+// one here is a single-parameter component with its own accessible name, its
+// own `data-testid`, and the record's own copy wherever the record supplies any.
+// A handler chooses which state to render and fills in what only it knows; the
+// wording lives here, because a sentence written in a handler is a sentence
+// nobody reads twice and a vocabulary test cannot reach (UI §1.2, §10.2).
+//
+// THE ELEVEN, AND WHERE THE ELEVENTH COMES FROM
+// ---------------------------------------------
+// §4.7's table has ten rows: first run, no pages, search without a query, search
+// without results, 403, 404, 412, 500, an unknown `system_id`, and
+// `ruleset_version` drift. §4.7's own task list and §15.3 step 8 both say
+// eleven. The eleventh is `ConnectionLost`: §7.5's live-region table lists
+// "Ruleset drift, game ended, connection lost" and cites §4.7 for all three, and
+// of the two that the table does not design, connection loss is the one with
+// state behind it — the overview's §7 defines reconnect, and UI §9 lists mass
+// disconnect as a handled failure. So the eleven are the ten rows plus that one.
+//
+// "Game ended" is the twelfth §7.5 attributes to §4.7 and is deliberately NOT
+// here. There is no domain state behind it — the architecture plan's intent set
+// has no such op — and UI §4.9 says, about exactly this, "if turn-end is not an
+// op, the UI cannot ship without a plan amendment; flag it, do not invent a
+// client-side turn flag". A state whose only content would be an invented flag
+// is worse than an absent one, so it waits for the amendment.
+//
+// NOTHING HERE IS A LIVE REGION EXCEPT FOUR STATES
+// ------------------------------------------------
+// §7.5 fixes which announcements are assertive and which are polite, and
+// §13.4 requires the search route to carry none at all. A live region is not a
+// way to make a page louder: a `role="alert"` fires when content is *inserted*
+// into it, so a region that was in the document at load says nothing, and a
+// region a handler re-renders on every navigation says something every time. The
+// four states that do carry `role="alert"` are the ones the record names for it:
+// a 412 conflict, ruleset drift, and a lost connection — plus, in phase 10, a
+// secret reveal and a capped reconciliation, neither of which exists yet. The
+// other seven states are regions a reader reaches by navigating, and navigating
+// is not an event.
+
+import (
+	"strings"
+	"unicode/utf8"
+)
+
+// Heading says which heading element a state renders its own heading as.
+type Heading int
+
+const (
+	// HeadingInPage is the zero value: a route already owns the page's `<h1>`,
+	// and the state renders its heading as `<h2>` beneath it. The zero value
+	// because that is what `components.CampaignList` and `components.WikiArticle`
+	// already do, so a route that mounts a state into its centre slot does not
+	// have to think about it and cannot get it wrong by omission.
+	HeadingInPage Heading = iota
+	// HeadingPage: the state is the whole centre, so it owns the `<h1>`. An error
+	// page has no other heading to put one in, and UI §7.5 requires a search
+	// result count in the `<h1>` — "12 results for goblin" — so the two search
+	// states need it. Five of the eleven are rendered this way in their
+	// fixtures; the field is per-state rather than per-package because the two
+	// search states and a 404 are mounted by different routes with different
+	// surroundings.
+	HeadingPage
+)
+
+// stateHeading renders a state's own heading at the level its placement calls
+// for.
+//
+// One helper rather than a branch in eleven templates: "heading levels never
+// skip" (UI §7.2) is a rule about the document, and eleven copies of the same
+// branch is eleven chances to spell it differently. The two states whose heading
+// contains markup the record specifies — a path in a 404, the query term in a
+// search result count — branch inline, because a helper that took a component
+// would have to be handed a no-op for the other nine.
+templ stateHeading(id, text string, heading Heading) {
+	if heading == HeadingPage {
+		<h1 id={ id }>{ text }</h1>
+	} else {
+		<h2 id={ id }>{ text }</h2>
+	}
+}
+
+// headingID derives a state's heading element id from its own test hook.
+//
+// Derived rather than supplied because a caller inventing one would invent a
+// different one per render, and an `aria-labelledby` naming an id that moves is a
+// region with no accessible name. The test hook is the one string per state that
+// is already unique in a document, which makes it the only id source that
+// cannot produce a duplicate.
+func headingID(testID string) string {
+	return testID + "-heading"
+}
+
+// displayText bounds a caller-supplied string before it is rendered.
+//
+// Every value a caller passes into user-visible copy is attacker-reachable or
+// operator-supplied: a request id from a header, a page path from a URL, a query
+// term from a query string, a system id from a campaign's own configuration.
+// Bounded because §4.7 requires the first three to be *echoed* — a load failure
+// stays diagnosable because the reader can quote its reference — and an
+// unbounded echo of a 40kB query string is a denial of service on the reader's
+// own screen. `ToValidUTF8` first so a truncated value cannot end mid-rune, and
+// the cut walks back to a rune boundary for the same reason: a lone continuation
+// byte renders as U+FFFD in some engines and as nothing in others.
+//
+// The bound is a display bound and not a validation one. It never decides
+// whether a value is legitimate, only how much of it is shown.
+func displayText(value string, max int) string {
+	value = strings.ToValidUTF8(value, "")
+	if len(value) <= max {
+		return value
+	}
+
+	cut := max
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+
+	return value[:cut] + "…"
+}
+
+// The display bounds displayText is called with, one per kind of value rather
+// than one for all of them. They are distinct because the things have different
+// jobs: a reference is quoted verbatim into a support thread and must not be
+// shortened, a query is re-edited into the field it came from and stays legible
+// at 200, a page path is read once and is the longest thing a reader may be shown,
+// and a name appears in a heading where a hundred and twenty characters is already
+// past the point of reading one.
+const (
+	maxReferenceDisplay = 64
+	maxQueryDisplay     = 200
+	maxPathDisplay      = 256
+	maxSystemIDDisplay  = 64
+	maxNameDisplay      = 120
+	// maxCellDisplay bounds a table cell's text, which arrives from a campaign's
+	// own Markdown and can be a paragraph.
+	maxCellDisplay = 320
+)
+
+// The state test hooks. Named so a caller, a test and the heading id derived
+// from them all read the same string, and so the two hooks this package inherited
+// from `components` — `first-run` and `error-state` — keep their existing
+// spelling rather than being renamed for tidiness.
+
+// firstRunTestID is the first-run state's hook. Inherited from `components` so
+// the phase-2 render test keeps passing unchanged.
+const firstRunTestID = "first-run"
+
+// noPagesTestID is the campaign-with-no-pages state's hook.
+const noPagesTestID = "state-campaign-no-pages"
+
+// searchIdleTestID is the search-without-a-query state's hook.
+const searchIdleTestID = "state-search-idle"
+
+// searchEmptyTestID is the search-without-results state's hook.
+const searchEmptyTestID = "state-search-no-results"
+
+// forbiddenTestID is the 403 state's hook.
+const forbiddenTestID = "state-error-403"
+
+// notFoundTestID is the 404 state's hook.
+const notFoundTestID = "state-error-404"
+
+// conflictTestID is the 412 state's hook.
+const conflictTestID = "state-error-412"
+
+// loadErrorTestID is the 500 state's hook. Inherited from `components` so the
+// phase-2 render test keeps passing unchanged.
+const loadErrorTestID = "error-state"
+
+// systemMissingTestID is the unknown-`system_id` state's hook.
+const systemMissingTestID = "state-system-missing"
+
+// rulesetDriftTestID is the `ruleset_version` drift state's hook.
+const rulesetDriftTestID = "state-ruleset-drift"
+
+// connectionLostTestID is the lost-connection state's hook. §7.5 cites §4.7 for
+// it; see the header of this file for why it is here and "game ended" is not.
+const connectionLostTestID = "state-connection-lost"
+
+// FirstRunView is the first-run state: no campaigns exist for this account.
+type FirstRunView struct {
+	// CreateHref is where the call to action points. Empty omits the action,
+	// leaving the explanation: a CTA pointing at a route that does not exist is
+	// the one button a new operator will press.
+	CreateHref string
+	// DocsHref is the documentation the state offers. Empty omits the link, for
+	// an operator who has not configured one.
+	DocsHref string
+	// Heading is the heading level. A route whose centre slot this fills owns
+	// the `<h1>`; leave it at HeadingInPage.
+	Heading Heading
+}
+
+// FirstRun is the centre slot when the account is a member of no campaigns.
+//
+// A user can exist with zero campaigns — the first account is provisioned by
+// `semiplane admin create` before any browser reaches the server — so this is a
+// *campaign* empty state and not a user one (UI §4.6). The copy is two lines of
+// fact and one action, because §4.7 is explicit that this is not a marketing
+// page: a reader standing at an empty instance has already decided to use it.
+templ FirstRun(view FirstRunView) {
+	<section class="empty" aria-labelledby={ headingID(firstRunTestID) } data-testid={ firstRunTestID }>
+		@stateHeading(headingID(firstRunTestID), "No campaigns yet", view.Heading)
+		<p>A campaign holds the pages, the assets and the table for one game. Everything in semiplane belongs to one.</p>
+		<p>Everything you add stays on this instance.</p>
+		if view.CreateHref != "" {
+			<a class={ TargetClass + " button button--primary" } href={ view.CreateHref } data-testid="first-run-cta">Register your first campaign</a>
+		}
+		if view.DocsHref != "" {
+			<a class={ TargetClass } href={ view.DocsHref } data-testid="first-run-docs">Read the documentation</a>
+		}
+	</section>
+}
+
+// NoPagesView is the campaign-with-no-pages state.
+type NoPagesView struct {
+	// CreateHref is where "Create a page" points. Empty omits the control
+	// entirely, which is what a player gets: UI §4.4 requires edit affordances
+	// to be *absent* for a player rather than disabled, so there is nothing in
+	// the DOM for them to find.
+	CreateHref string
+	// Heading is the heading level.
+	Heading Heading
+}
+
+// NoPages is the centre slot for a campaign whose content root holds no pages.
+//
+// The state says what is missing and, for the reader who can fix it, the one
+// control that fixes it. §4.7 gives this state a roster in the rail and an empty
+// outline beside it; both belong to the route's rail slot, not to the state, and
+// an empty outline panel is better than no outline panel because §7.2 forbids a
+// shell that can render a landmark with nothing in it.
+templ NoPages(view NoPagesView) {
+	<section class="empty" aria-labelledby={ headingID(noPagesTestID) } data-testid={ noPagesTestID }>
+		@stateHeading(headingID(noPagesTestID), "This campaign has no pages yet", view.Heading)
+		<p>Pages hold the notes, places and rules this campaign runs on.</p>
+		if view.CreateHref != "" {
+			<a class={ TargetClass + " button button--primary" } href={ view.CreateHref } data-testid="campaign-no-pages-cta">Create a page</a>
+		}
+	</section>
+}
+
+// SearchIdleView is the search route before a query has been submitted.
+type SearchIdleView struct {
+	// Action is where the form submits. `GET`, because §7.5 makes search
+	// submit-to-navigate over ordinary HTTP so the response is ETag-cacheable
+	// and the URL is shareable.
+	Action string
+	// Value is the field's current contents, echoed so a submitted-and-refined
+	// reader is not asked to type it again.
+	Value string
+	// Heading is the heading level. §7.5 puts the result count in the `<h1>`, so
+	// this state renders its own: it is the whole page.
+	Heading Heading
+}
+
+// SearchIdle is the centre slot for the search route with no query.
+//
+// The field is focused, because §4.7 designs this state as "search field,
+// focused, with a hint" — a reader who arrived at /search has already decided
+// to search, and a field they have to click first is a step with no purpose.
+//
+// The form is a landmark, and it is labelled. §7.2's rule is about *unlabelled*
+// duplicates, and a search landmark with a name is the one landmark whose whole
+// job is to be found by name. `autofocus` is the only focus movement in this
+// package: §7.4 prohibits a background event moving focus, and arriving on the
+// search route is not one.
+templ SearchIdle(view SearchIdleView) {
+	<section class="empty" aria-labelledby={ headingID(searchIdleTestID) } data-testid={ searchIdleTestID }>
+		@stateHeading(headingID(searchIdleTestID), "Search", view.Heading)
+		@searchForm("search-idle", view.Action, view.Value, true)
+	</section>
+}
+
+// SearchEmptyView is the search route with a query and no matching pages.
+type SearchEmptyView struct {
+	// Action is where the form submits, exactly as in SearchIdleView.
+	Action string
+	// Query is the term that was searched for, echoed into the heading §7.5
+	// requires and back into the field so the reader can edit rather than retype.
+	Query string
+	// Heading is the heading level.
+	Heading Heading
+}
+
+// SearchEmpty is the centre slot for a search that matched nothing.
+//
+// §7.5's rule that a search route carries no live region at all is why the query
+// is echoed in the heading rather than announced: the reader submitted it, so
+// they know it, and a polite announcement of the reader's own keystroke is the
+// noise §13.4 prohibits. The heading carries the term because §7.5 puts the
+// count there, and a count of zero is still the answer to "what did you find".
+templ SearchEmpty(view SearchEmptyView) {
+	<section class="empty" aria-labelledby={ headingID(searchEmptyTestID) } data-testid={ searchEmptyTestID }>
+		// Not stateHeading: §7.5's own example emphasises the term, and the
+		// heading is the page's <h1> on this route.
+		if view.Heading == HeadingPage {
+			<h1 id={ headingID(searchEmptyTestID) }>No results for <em data-testid="search-no-results-term">{ displayText(view.Query, maxQueryDisplay) }</em></h1>
+		} else {
+			<h2 id={ headingID(searchEmptyTestID) }>No results for <em data-testid="search-no-results-term">{ displayText(view.Query, maxQueryDisplay) }</em></h2>
+		}
+		<p>Nothing in this campaign matches. Try fewer words, or a different spelling.</p>
+		@searchForm("search-no-results", view.Action, view.Query, false)
+	</section>
+}
+
+// searchForm renders the search field, its hint and its submit button.
+//
+// Shared by the two search states because it is one form with two starting
+// points, and two copies is two chances for the ids to drift — a `<label for>`
+// pointing at a field that is not there renders a field with no name, which is
+// the failure §7.7 opens on.
+//
+// prefix namespaces the ids and the test hooks because both states may be
+// rendered by a test or a preview side by side, and a duplicate id would make
+// the second form's label address the first form's field.
+templ searchForm(prefix, action, value string, focus bool) {
+	<form class="stack form" method="get" action={ action } role="search" aria-label="Search this campaign">
+		<div class="field">
+			<label for={ prefix + "-query" }>Search this campaign</label>
+			<input
+				id={ prefix + "-query" }
+				class={ TargetClass }
+				type="search"
+				name="q"
+				value={ displayText(value, maxQueryDisplay) }
+				aria-describedby={ prefix + "-hint" }
+				if focus {
+					autofocus
+				}
+				data-testid={ prefix + "-query" }
+			/>
+			<p id={ prefix + "-hint" } class="field-hint" data-testid={ prefix + "-hint" }>Type a word or two, then submit. Results are counted from this campaign's pages.</p>
+		</div>
+		<button type="submit" class={ TargetClass + " button button--primary" } data-testid={ prefix + "-submit" }>Search</button>
+	</form>
+}
+
+// ForbiddenView is the 403 state.
+type ForbiddenView struct {
+	// CampaignName is the campaign the reader may read but not act in. §4.7
+	// requires it: "so the message is specific". Naming it is safe because
+	// reaching a capability gate at all means the campaign is not itself a
+	// secret — ADR 0024: it is public, or the reader is a member.
+	CampaignName string
+	// Heading is the heading level. A 403 is a whole page, so this is normally
+	// HeadingPage.
+	Heading Heading
+}
+
+// Forbidden is the centre slot for a reader who can see a campaign and may not do
+// what they asked for.
+//
+// This state is only ever rendered when the campaign is *known* to the reader.
+// An anonymous request that fails a gate gets 401 and this same wording, and a
+// request for a private campaign the reader cannot see gets the 404 below — see
+// ADR 0024, which settles that "no access is 404, not 403" and that a 403 says
+// "you are known and you may not". Rendering this state for a campaign the
+// reader cannot see would turn one status code into a campaign-existence oracle,
+// which is the exact leak the record forbids.
+templ Forbidden(view ForbiddenView) {
+	<section class="empty" aria-labelledby={ headingID(forbiddenTestID) } data-testid={ forbiddenTestID }>
+		@stateHeading(headingID(forbiddenTestID), "You do not have access to this campaign", view.Heading)
+		<p>Campaign: <strong data-testid="error-403-campaign">{ displayText(view.CampaignName, maxNameDisplay) }</strong></p>
+		<p>Ask a Game Master if you need access.</p>
+	</section>
+}
+
+// NotFoundView is the 404 state.
+//
+// Three fields and no more, and that is a security property rather than
+// tidiness. §4.7's closing rule is that "a 404 and a private campaign must not
+// be distinguishable to an anonymous user… Both return the same body shape", so
+// there is deliberately no field here that could say *why* the page is missing —
+// not a reason, not a status, not a boolean. A caller with a reason in its hands
+// has somewhere to put it that is not this component, and the reflection test
+// `TestNotFoundViewCarriesNoReason` is what holds the line.
+type NotFoundView struct {
+	// PagePath is the campaign-relative page path the reader asked for, so the
+	// message can name it. It is not a filesystem path and must not be one; see
+	// pagePathForDisplay.
+	PagePath string
+	// CampaignRootHref is where the link back to the campaign goes. Empty omits
+	// the link, which is the right answer only for a request outside any
+	// campaign.
+	CampaignRootHref string
+	// Heading is the heading level.
+	Heading Heading
+}
+
+// NotFound is the centre slot for a path that does not resolve.
+//
+// The same component serves "no page at this path" and "no campaign you can see
+// at this slug", because the two must be indistinguishable — see NotFoundView.
+// There is no branch on the reason, and there is nowhere to put one.
+templ NotFound(view NotFoundView) {
+	<section class="empty" aria-labelledby={ headingID(notFoundTestID) } data-testid={ notFoundTestID }>
+		// Not stateHeading: §4.7 quotes the heading as "No page at *path*", and
+		// a path in a heading reads as a path only inside a <code>.
+		if view.Heading == HeadingPage {
+			<h1 id={ headingID(notFoundTestID) }>No page at <code data-testid="error-404-path">{ pagePathForDisplay(view.PagePath) }</code></h1>
+		} else {
+			<h2 id={ headingID(notFoundTestID) }>No page at <code data-testid="error-404-path">{ pagePathForDisplay(view.PagePath) }</code></h2>
+		}
+		<p>It may have been renamed, or the link that brought you here may be out of date.</p>
+		if view.CampaignRootHref != "" {
+			<a class={ TargetClass } href={ view.CampaignRootHref } data-testid="error-404-campaign-link">Open the campaign overview</a>
+		}
+	</section>
+}
+
+// pagePathForDisplay decides what a 404 may echo.
+//
+// §4.7 says "never a raw server path echo", and the reason is not politeness: a
+// filesystem path on an error page tells an anonymous reader how the operator
+// laid out the disk, and a caller that reached into a route by hand could pass
+// one. So the value is accepted only when it looks like a page path inside a
+// campaign — relative, no traversal, no backslash, no control character — and
+// otherwise the heading simply has no path in it. Losing the path on a 404 is a
+// small cost; leaking the content root is the one ADR 0024 exists to prevent.
+//
+// A colon is *not* rejected: a page may legitimately be called "Boss: The
+// Warden", the value is rendered as escaped text rather than as an address, and
+// a leading slash plus the absence of backslashes already cover the absolute and
+// Windows-drive cases that matter.
+func pagePathForDisplay(path string) string {
+	if !isPagePath(path) {
+		return ""
+	}
+
+	return displayText(path, maxPathDisplay)
+}
+
+// isPagePath reports whether a value is safe to echo as a page path.
+func isPagePath(path string) bool {
+	if path == "" || len(path) > maxPathDisplay {
+		return false
+	}
+
+	if strings.HasPrefix(path, "/") || strings.Contains(path, `\`) {
+		return false
+	}
+
+	for _, segment := range strings.Split(path, "/") {
+		// `..` and `.` are the two segments that mean something other than a
+		// page name, and `pagePathForDisplay` is not the place that resolves
+		// them — os.Root is (AGENTS.md). A path carrying them has not been
+		// through path confinement, which is itself the finding.
+		if segment == ".." || segment == "." {
+			return false
+		}
+	}
+
+	for _, character := range path {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ConflictView is the 412 state.
+type ConflictView struct {
+	// Heading is the heading level. This state replaces the editor's preview
+	// pane, which sits under the editor's own heading, so HeadingInPage is the
+	// normal value.
+	Heading Heading
+}
+
+// ConflictNotice frames the 412 conflict diff in the editor's preview slot.
+//
+// Not an error page and not a dialog. §4.7 says the diff goes in the editor's
+// preview slot, and §7.7 says explicitly "never a modal: the editor is already a
+// split view, so a modal hides one side of the comparison". A modal here would
+// hide the buffer the reader is being asked to reconcile against, which is the
+// one thing the state exists to show side by side.
+//
+// `role="alert"` is the record's: §7.5 puts a 412 on save at assertive. It
+// announces because this element is *inserted* into the editor — a region that
+// was already in the document when the editor loaded says nothing, which is why
+// the alert is on the frame rather than on the whole editor.
+//
+// diff is the caller's, because the two-column diff with per-hunk accept/reject
+// is §4.8's and arrives in phase 6. Rendering it is the only thing this
+// component adds around it, and it renders nothing at all when it is nil so the
+// frame is testable before the diff exists.
+templ ConflictNotice(view ConflictView, diff templ.Component) {
+	<section class="notice notice--error" role="alert" aria-live="assertive" aria-labelledby={ headingID(conflictTestID) } data-testid={ conflictTestID }>
+		@stateHeading(headingID(conflictTestID), "This page changed while you were editing", view.Heading)
+		<p data-testid="error-412-message">The saved copy is newer than the one you opened. Nothing you typed has been discarded.</p>
+		if diff != nil {
+			@diff
+		}
+	</section>
+}
+
+// LoadFailure describes a page that could not be loaded (UI §4.7's `500` row).
+//
+// A value rather than a sentence, for the same reason as `components.LoginFailure`:
+// the wording is the interface's, and the only thing a caller contributes is a
+// reference. That reference is what keeps a load failure diagnosable without a
+// 500 page's worth of detail — it is the request id from the RequestID
+// middleware, it ties a reader's report to a line in the access log, and it is
+// safe to render because the server minted it and it names nothing.
+//
+// `components.LoadFailure` is declared as an alias of this type, so a route that
+// builds the phase-2 shape keeps compiling and a second answer to "what does a
+// failed load look like" never exists.
+type LoadFailure struct {
+	// Reference is the request id. Rendered only when set, and rendered through
+	// displayText: a request id that a caller sourced from a header is
+	// attacker-influenced, and it must not be able to fill the page.
+	Reference string
+	// Heading is the heading level.
+	Heading Heading
+}
+
+// LoadError is the centre slot when a page could not be produced at all.
+//
+// §4.7's rail for this state is empty, and that is the design rather than an
+// omission: the rail already names which instance and which build failed, so
+// repeating either is noise. The reference line is the whole content. A reader
+// who cannot load a page needs to be able to say *which request* failed without
+// being shown why it failed, and the difference between those two is the
+// difference between a supportable bug and an information disclosure.
+templ LoadError(failure LoadFailure) {
+	<section class="empty" aria-labelledby={ headingID(loadErrorTestID) } data-testid={ loadErrorTestID }>
+		@stateHeading(headingID(loadErrorTestID), "This page could not be loaded", failure.Heading)
+		<p data-testid="error-state-message">semiplane could not load this page. Nothing has been changed.</p>
+		if failure.Reference != "" {
+			<p class="empty-note">Reference: <code data-testid="error-state-reference">{ displayText(failure.Reference, maxReferenceDisplay) }</code></p>
+		}
+	</section>
+}
+
+// SystemMissingView is the unknown-`system_id` state.
+type SystemMissingView struct {
+	// SystemID is the gameplay system's identifier, as the campaign recorded it.
+	// Rendered as escaped text inside a <code>: a campaign's own configuration
+	// is attacker-reachable (AGENTS.md, on Obsidian Sync), so it is bounded and
+	// never interpreted.
+	SystemID string
+	// Heading is the heading level. This notice sits on the campaign overview,
+	// under the overview's own heading.
+	Heading Heading
+}
+
+// SystemMissing is the persistent notice on a campaign whose gameplay system is
+// not installed.
+//
+// §4.7 is precise about the consequence: "the wiki still serves. The Table link
+// is absent, not disabled". Nothing here disables anything — the absence of the
+// Table link is the route's business, and this notice says why it is absent.
+//
+// Not a live region, which is the one place this state departs from §4.7's
+// "both new states are assertive-adjacent". §7.5's channel table is the
+// operative rule about which regions are assertive, and it names ruleset drift,
+// game ended and connection lost — this notice is not among them. A persistent
+// condition announced on every navigation is worse than one the reader can see,
+// and this one is on the campaign overview, which is where they are already
+// looking.
+//
+// Not colour-alone either: §6.5 requires a status to pair hue with an icon or a
+// text label, and the heading is the text label.
+templ SystemMissing(view SystemMissingView) {
+	<section class="notice notice--warning" aria-labelledby={ headingID(systemMissingTestID) } data-testid={ systemMissingTestID }>
+		@stateHeading(headingID(systemMissingTestID), "Gameplay system not installed", view.Heading)
+		<p>This campaign's gameplay system (<code data-testid="system-missing-id">{ displayText(view.SystemID, maxSystemIDDisplay) }</code>) is not installed. The wiki is unaffected.</p>
+		<p>The Table is unavailable until it is installed.</p>
+	</section>
+}
+
+// RulesetDriftView is the `ruleset_version` drift state.
+type RulesetDriftView struct {
+	// RulesHref is the campaign's Rules tab, which is where a GM resolves this.
+	// Empty omits the link and leaves the refusal standing, which is the correct
+	// default: refusing is a decision, not a broken control.
+	RulesHref string
+	// Heading is the heading level. This state is the centre of `/play`.
+	Heading Heading
+}
+
+// RulesetDrift is the block on `/play` when the table's rules version does not
+// match the one it was last played under.
+//
+// §4.7's copy is used and its framing kept: "the UI states the refusal as a
+// decision, not an error", which is why the heading says what happened and the
+// paragraph says what was decided. §16.5's default is refuse, so this is the
+// ordinary state of a campaign whose rules changed, not an exceptional one.
+//
+// `role="alert"` is §4.7's own and §7.5's: a GM who expected a playable table
+// must be told plainly, and the refusal is not something a polite queue behind
+// two other announcements gets across.
+templ RulesetDrift(view RulesetDriftView) {
+	<section class="notice notice--warning" role="alert" aria-live="assertive" aria-labelledby={ headingID(rulesetDriftTestID) } data-testid={ rulesetDriftTestID }>
+		@stateHeading(headingID(rulesetDriftTestID), "This table was last played under a different rules version", view.Heading)
+		<p data-testid="ruleset-drift-message">Resuming is blocked.</p>
+		if view.RulesHref != "" {
+			<a class={ TargetClass } href={ view.RulesHref } data-testid="ruleset-drift-link">Open Rules settings</a>
+		}
+	</section>
+}
+
+// ConnectionLostView is the lost-connection state.
+type ConnectionLostView struct {
+	// Heading is the heading level.
+	Heading Heading
+}
+
+// ConnectionLost is the block that says the table's connection dropped.
+//
+// Not a toast and not a header dot. §9 says a reconnect during an open dialog
+// produces "no focus change, no toast over the dialog; the header indicator is
+// the only signal", and the condition persists until the socket is back — which
+// is §4.7's own test for why the degraded states are blocks rather than
+// announcements that fire once.
+//
+// `role="alert"` is §7.5's: the reader's view of the table has stopped being
+// current, and a dice roll that did not arrive needs saying now. Nothing here
+// moves focus, because §7.4 prohibits a background event moving it and a socket
+// is the definition of one.
+templ ConnectionLost(view ConnectionLostView) {
+	<section class="notice notice--warning" role="alert" aria-live="assertive" aria-labelledby={ headingID(connectionLostTestID) } data-testid={ connectionLostTestID }>
+		@stateHeading(headingID(connectionLostTestID), "The connection to this table was lost", view.Heading)
+		<p>Reconnecting. Nothing you typed has been lost.</p>
+	</section>
+}

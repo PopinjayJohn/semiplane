@@ -1,0 +1,109 @@
+package ui
+
+// The dialog primitive (UI §7.7, UI §8.1 tier 4, UI §11's risk table).
+//
+// A dialog is the one component in this package that is modal, which is why its
+// markup carries more state than anything else here: the panel is `hidden` until
+// something opens it, it is `aria-modal`, it is named by its own heading, and it
+// is the target of its trigger's `aria-controls`. Every one of those is a
+// *server-rendered* half of a contract whose other half is a script that does not
+// exist until phase 9 — so each attribute here is written now, against the
+// contract it has to satisfy, and asserted against the markup rather than
+// against behaviour.
+
+// DialogView is a modal layer: the trigger that opens it and the panel it opens.
+//
+// The two travel together because §7.7's contract is *between* them — the
+// trigger's `aria-controls` must name the panel's id — and two independently
+// assembled halves are two answers to "which element does this button open".
+type DialogView struct {
+	// ID is the panel's element id, and the panel's heading id is derived from
+	// it. It must be unique in the document. Required: a dialog whose id is empty
+	// cannot be pointed at, so `aria-controls` would name nothing and the button
+	// would be a focus stop that opens nothing — §7.7's "a popup that cannot open
+	// is a dead control".
+	ID string
+	// TriggerLabel is the button's visible text.
+	TriggerLabel string
+	// Title is the dialog's own heading, and therefore its accessible name.
+	// §7.7 says "labelled by their heading", so there is no separate name field:
+	// a dialog whose name differs from its heading is a dialog with two truths.
+	Title string
+	// Description is optional supporting text under the title. Rendered inside
+	// the scroll region, not as `aria-describedby`, because it is read as part of
+	// the dialog and it is short.
+	Description string
+	// Body is the dialog's content. It carries whatever controls the caller needs;
+	// a dialog's *actions* belong in here rather than in a list on this struct,
+	// because every action is a form or a button the caller already knows how to
+	// render and §7.7 says nothing about them.
+	Body templ.Component
+	// TestID is the panel's test hook.
+	TestID string
+}
+
+// Dialog renders a trigger and the modal panel it opens, as one fragment.
+//
+// `aria-modal="true"` is asserted here rather than added by the script that
+// traps focus, because the attribute is what tells assistive technology the rest
+// of the page is unreachable. A dialog that traps focus without it is a keyboard
+// trap with no announcement, which §8.1's tier-4 rules exist to prevent.
+//
+// `hidden` in the served markup, always. A dialog open on page load traps focus
+// with no script to release it — the one failure mode a modal has that no other
+// component has. Phase 9's script removes the attribute to open it.
+//
+// `tabindex="-1"` on the panel so focus can land on the dialog itself rather
+// than on its first control: §7.2's reasoning for its skip-link targets applies
+// verbatim, and a reader who hears a dialog with no name and no position loses
+// both. Negative, because §7.10 prohibits a positive `tabindex` outright and a
+// dialog that added itself to the tab order would be in it twice.
+//
+// The close button is here rather than in Body for the same reason the frame is:
+// §7.7 requires `Escape` to close and focus to return to the trigger, and a
+// dialog with no visible close is a dialog only a keyboard user can dismiss.
+templ Dialog(view DialogView) {
+	<button
+		type="button"
+		class={ TargetClass + " button" }
+		aria-haspopup="dialog"
+		aria-expanded="false"
+		aria-controls={ view.ID }
+		data-dialog-trigger={ view.ID }
+		data-testid={ view.ID + "-trigger" }
+	>
+		{ view.TriggerLabel }
+	</button>
+	<div
+		id={ view.ID }
+		class="dialog"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby={ view.ID + "-title" }
+		tabindex="-1"
+		hidden
+		data-dialog={ view.ID }
+		data-testid={ view.TestID }
+	>
+		<h2 class="dialog-title" id={ view.ID + "-title" }>{ view.Title }</h2>
+		// §11's named failure: "the 580px centre height is unforgiving —
+		// vertical overflow on a dialog", mitigated by "every dialog is
+		// height-capped and internally scrollable". The cap is a CSS property and
+		// lives in the stylesheet; what this package owns is the *region*: one
+		// element that scrolls, so the stylesheet has something to make
+		// scrollable and the title and the close button stay put while it does.
+		<div class="dialog-body" data-dialog-scroll="true">
+			if view.Description != "" {
+				<p class="dialog-description">{ view.Description }</p>
+			}
+			if view.Body != nil {
+				@view.Body
+			}
+		</div>
+		<div class="dialog-actions">
+			<button type="button" class={ TargetClass + " button" } data-dialog-close={ view.ID } data-testid={ view.ID + "-close" }>
+				Close
+			</button>
+		</div>
+	</div>
+}

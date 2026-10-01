@@ -1,0 +1,94 @@
+package ui
+
+// The disclosure primitive: a real button that shows and hides a region.
+//
+// The smallest contract in this package and the one with the least room for
+// interpretation. §4.3 settles the question this component answers — "folder
+// expand/collapse is a `<button aria-expanded>` on the row, not a tree node" —
+// and it settles it precisely because `role="tree"` obliges roving tabindex,
+// arrow semantics and typeahead for a list that changes on every navigation.
+// A disclosure is one button and one region, and a reader who has met one has
+// met all of them.
+
+// DisclosureView is a disclosure: its button, its label and its region.
+type DisclosureView struct {
+	// ID is the region's element id, and the button's `aria-controls` names it.
+	// Required, for the same reason the dialog's and the menu's are: a region
+	// nothing can point at is a region a button cannot claim to have opened.
+	ID string
+	// Summary is the button's text. Required in practice: a button whose only
+	// content is a chevron is a control whose purpose a screen reader has to
+	// guess, and §7.10 rules out hover-only affordances and unexplained shapes.
+	Summary string
+	// Content is the region's body.
+	Content templ.Component
+	// Open is the disclosure's state. A wiki outline arrives expanded, because
+	// the reader came to read a page and a collapsed outline is a second click
+	// before the thing they came for.
+	Open bool
+	// TestID is the button's test hook.
+	TestID string
+}
+
+// Disclosure renders a disclosure button and the region it controls.
+//
+// A real `<button>` and not a `<summary>`, not a link with `href="#"`, and not a
+// row with a click handler. §7.4 requires `Enter` *and* `Space` to activate
+// every control, and only a button gives both without JavaScript — which is the
+// same reason the editor is a plain textarea rather than a code editor (§4.8).
+// A `href="#"` click also moves the scroll position and adds a history entry,
+// and neither of those is what "expand" means.
+//
+// `aria-expanded` is on the button and `aria-controls` names the region, so the
+// two halves are wired by construction rather than by a caller remembering.
+// `hidden` on the region rather than a class, for the reason the tabs' panels use
+// it: `hidden` takes the subtree out of the accessibility tree and the tab order
+// together, and `aria-hidden` on a focusable element is prohibited outright by
+// §7.10.
+//
+// The region is rendered in the document whether or not it is open. §6.7's rule
+// that nothing may depend on an animation to become visible is the deeper
+// reason, and it is the same reason the shell's closed sheets are translated
+// off-screen rather than `display: none`: a reader with no script gets the
+// content, and a reader with motion turned down gets it without waiting.
+templ Disclosure(view DisclosureView) {
+	<button
+		type="button"
+		class={ TargetClass + " button disclosure-toggle" }
+		aria-expanded={ expandedAttr(view.Open) }
+		aria-controls={ view.ID }
+		data-disclosure-toggle={ view.ID }
+		data-testid={ view.TestID }
+	>
+		{ view.Summary }
+	</button>
+	if view.Open {
+		<div class="disclosure-region" id={ view.ID } data-disclosure={ view.ID } data-testid={ view.ID + "-region" }>
+			if view.Content != nil {
+				@view.Content
+			}
+		</div>
+	} else {
+		<div class="disclosure-region" id={ view.ID } hidden data-disclosure={ view.ID } data-testid={ view.ID + "-region" }>
+			if view.Content != nil {
+				@view.Content
+			}
+		</div>
+	}
+}
+
+// expandedAttr renders a boolean as the attribute value ARIA requires.
+//
+// The explicit "false"/"true" rather than a bare boolean attribute: `aria-expanded`
+// is a *tri-state* attribute whose absent value defaults to undefined rather than
+// false, and templ's boolean-attribute form omits the attribute when the value is
+// false — which would render `aria-expanded="false"` as nothing at all, and a
+// button with no `aria-expanded` is a button whose state a screen reader has to
+// infer from the region being visible.
+func expandedAttr(open bool) string {
+	if open {
+		return "true"
+	}
+
+	return "false"
+}
