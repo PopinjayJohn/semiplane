@@ -33,11 +33,40 @@ a feature that works.
 **The document does not vary by `sp_ui`, no `Vary` header is emitted, and exactly one blocking inline
 script in `<head>` resolves both root attributes before the first paint.**
 
-**No `Vary` header at all, on any route.** Not "no `Vary: Cookie`" — *no `Vary`*. The distinction
-matters for caches and intermediaries: `Vary: Accept-Encoding` on a response whose encoding was already
-negotiated is a separate claim with a separate cost, and a shell response has no reason to make any
-claim. The absence is asserted as an absence — through `Header.Values`, because `Header.Get` cannot tell
-"unset" from "set to the empty string", and an empty `Vary` is still a header a cache reads.
+**No `Vary` header naming `sp_ui` or `Cookie`, on any route** — with one exception, stated below and
+corrected after it was found to be false.
+
+The distinction that matters for caches and intermediaries: `Vary: Accept-Encoding` on a response whose
+encoding was already negotiated is a separate claim with a separate cost, and a shell response has no
+reason to make any claim. The absence is asserted as an absence — through `Header.Values`, because
+`Header.Get` cannot tell "unset" from "set to the empty string", and an empty `Vary` is still a header a
+cache reads.
+
+### The exception: the wiki route does vary by reader
+
+**Correction.** This record originally claimed "no `Vary` header at all, on any route", on the reasoning
+that the document does not vary by `sp_ui` and therefore needs no cache key for it. That reasoning is
+right about `sp_ui` and wrong in general: **the document does vary by access tier**, because the shell
+carries the reader's name and a sign-out form.
+
+Measured on a running server, on a **public** campaign so both readers get 200 and neither body is an
+error page:
+
+```
+GM      4460 bytes
+anonymous 4227 bytes
+```
+
+The difference is `data-testid="header-account"` with the reader's name, and the sign-out form. A shared
+cache keyed only on the URL would hand one reader another's name.
+
+So `Vary: Cookie` is **required on the wiki route** and is what phase 3 already shipped, with the
+correct rationale recorded then. This record's original claim would have deleted a correct header
+because a test could not see the variation it was describing.
+
+What survives is the load-bearing part: **no response varies by `sp_ui`**, which is the claim that
+matters, because `sp_ui` is the cookie a reader's own preferences arrive in and fragmenting every
+shared cache on it would buy nothing. The five-cookie byte-identity test proves that one.
 
 **The bytes are identical for every reader of a given route and campaign.** Not "equivalent" and not
 "equivalent modulo a cache key": identical, which is the property that makes the absence of `Vary`
@@ -59,8 +88,9 @@ the one script the design depends on would be the one script a policy forbids.
 
 ## Consequences
 
-No response carries a `Vary` header, so no shared cache fragments on the cookie and a GM and a player
-behind one proxy do not evict each other's shell. More importantly, the *cost* of that decision is paid
+No response carries a `Vary` header naming `sp_ui`, so no shared cache fragments on the reader's own
+theme and mode preferences. The wiki route carries `Vary: Cookie` for the reason above: its document
+genuinely differs by reader, and a cache that ignored that would serve one reader another's name. More importantly, the *cost* of that decision is paid
 in the place where it belongs: the document varies by access tier, by campaign, and — critically — by
 `include_secrets`, which is a genuine variation and is not a cache decision at all. The
 `include_secrets` variants are the reason a "the document never varies" claim would be false if stated
@@ -80,8 +110,10 @@ The invariants are asserted where they can be falsified. On the real router's se
   substring test either fails on a correct document or has to carve out the script, and a carve-out is
   exactly where a `data-ui` in an HTML comment hides. `TestTheAuditFindsAResolvedAttributeWhereverItIs`
   feeds that audit six ways of smuggling one in and requires it to object.
-- the document does not vary by `sp_ui`, byte for byte, across five cookie values;
-- no `Vary` header at all;
+- the document does not vary by `sp_ui`, byte for byte, across five cookie values — on the routes where
+  that is true, which is the account surfaces; the wiki route's variation is by access tier and is what
+  `Vary: Cookie` exists for;
+- no `Vary` header names `sp_ui`;
 - the resolver is in `<head>`, precedes the stylesheet link, and fits its budget;
 - the editable file and the served constant are byte-identical, so they cannot drift;
 - the script cannot end its own `<script>` element — the body is written unescaped, which is required
@@ -97,6 +129,13 @@ first paint is a browser pass, and §10.9 requires every *finding* from it to be
 rather than a CI step that needs a browser.
 
 ## Alternatives considered
+
+**Keep the original "no `Vary` at all" claim and delete the wiki route's header.** Rejected, and this is
+the interesting rejection of this record. The claim was derived from "the document does not vary by
+`sp_ui`", which is true, and generalised to "the document does not vary", which is false. A test asserting
+the absence of a header cannot see the variation the header was protecting — it only sees that the
+header is gone. The measurement in Context is what distinguishes them, and it is why the byte-identity
+test is the substantive one and the header-absence test is a symptom.
 
 **`Vary: Cookie` on responses whose theme is reader-specific.** Rejected: the response is not
 theme-specific. Sending it would be a false promise — `Vary` asserts the representation depends on the
