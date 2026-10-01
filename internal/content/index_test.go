@@ -1143,13 +1143,13 @@ func TestABadFileIsSkippedAndTheRestIsIndexed(t *testing.T) {
 	f := newCampaignFixture(t, "ashen-coast", domain.VisibilityPublic)
 
 	f.applyOK(f.write("lore/good.md", "The wyvern sleeps.\n"))
-	f.applyOK(f.write("lore/unreadable.md", "The wyvern sleeps.\n"))
 	f.applyOK(f.write("lore/malformed.md", "---\nkind: [a, b\ntitle: x\n---\n\nThe tide.\n"))
 
-	// Over the index cap, and written directly rather than through `write` because
-	// `write` applies the change — and the change would have to fail. A page this
-	// large cannot be produced through the content package, which is the same
-	// reason the cap exists.
+	// Two pages written straight to the filesystem, because both are ones the index
+	// must refuse and `write` would have to fail to produce them.
+	//
+	// Over the index cap. A page this large cannot be produced through the content
+	// package, which is the same reason the cap exists.
 	oversized := "The wyvern sleeps.\n" + strings.Repeat("filler ", 400_000)
 	if err := os.WriteFile(
 		filepath.Join(f.dir, "lore", "huge.md"),
@@ -1159,13 +1159,21 @@ func TestABadFileIsSkippedAndTheRestIsIndexed(t *testing.T) {
 		t.Fatalf("write the oversized page: %v", err)
 	}
 
-	// An unreadable file, asserted only where the process is not privileged
-	// enough to read it anyway. root bypasses the permission bits, so under root
-	// the file is readable and there is nothing to assert — which is why this is
-	// skipped rather than counted. The oversized page above is the deterministic
-	// half of "a file the index cannot read", and the two overlap on purpose: the
-	// contract is that the walk reports it and the pass continues, and one
-	// deterministic witness is enough to hold it.
+	if err := os.WriteFile(
+		filepath.Join(f.dir, "lore", "unreadable.md"),
+		[]byte("The wyvern sleeps.\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write the page that will be made unreadable: %v", err)
+	}
+
+	// And its mode removed, asserted only where the process is not privileged enough
+	// to read it anyway. root bypasses the permission bits, so under root the file
+	// is readable and there is nothing to assert — which is why the expectation below
+	// is built rather than written. The oversized page is the deterministic half of
+	// "a file the index cannot read", and one deterministic witness is enough to hold
+	// the contract: the walk reports it, the pass continues, and the other pages are
+	// indexed.
 	unreadableHeld := makeUnreadable(filepath.Join(f.dir, "lore", "unreadable.md"))
 	defer func() {
 		if unreadableHeld {
@@ -1181,9 +1189,8 @@ func TestABadFileIsSkippedAndTheRestIsIndexed(t *testing.T) {
 			err)
 	}
 
-	// The oversized page is always skipped. The unreadable one is skipped only
-	// when the process genuinely cannot read it, which is why the expectation is
-	// built from what the fixture achieved rather than written out.
+	// The oversized page is always skipped. The unreadable one joins it only when the
+	// process genuinely cannot read it.
 	wantSkipped := 1
 	if unreadableHeld {
 		wantSkipped++
