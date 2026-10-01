@@ -146,7 +146,7 @@ func newCampaignFixture(t *testing.T, slug string, visibility domain.Visibility)
 		dir:      dir,
 		roots:    roots,
 		store:    sharedStore,
-		index:    content.NewIndexer(roots, sharedStore, nil),
+		index:    content.NewIndexer(roots, sharedStore, nil, nil),
 	}
 }
 
@@ -1417,7 +1417,7 @@ func TestACampaignWithNoContentRootIsReported(t *testing.T) {
 //
 // A method value rather than an interface assertion on the type, because
 // `ChangeSink` is a function type and that is what the watcher holds.
-var _ content.ChangeSink = content.NewIndexer(nil, nil, nil).HandleChange
+var _ content.ChangeSink = content.NewIndexer(nil, nil, nil, nil).HandleChange
 
 // makeUnreadable removes a file's read permission and reports whether that
 // actually made it unreadable *to this process*.
