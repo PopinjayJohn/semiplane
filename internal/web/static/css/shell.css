@@ -1,0 +1,532 @@
+/* semiplane — the shell grid.
+ *
+ * Every layout constant is a custom property here, so the grid, the rails and
+ * the primitive library all read one source (UI §3.7's first task). The values
+ * come from UI §3.1's tier table and §4's diagram; each block below cites the
+ * section that fixes it.
+ *
+ * A note on the two things a reader will want to "tidy" away:
+ *
+ * 1. `minmax(0, 1fr)` and never a bare `1fr` on the centre track. A `1fr`
+ *    track's minimum is `auto`, which is `min-content`, so one long unbroken
+ *    string in a heading — a slug, a URL, a paste — sets the track's minimum
+ *    and the centre blows out past the viewport. §4 calls the `minmax(0, 1fr)`
+ *    load-bearing for exactly this. It is not a style preference.
+ *
+ * 2. `dvh` after `vh`, never instead of it. `dvh` tracks the dynamic viewport,
+ *    so a mobile browser's collapsing URL bar does not resize the shell under
+ *    the reader's thumb. `vh` is a bare fallback declaration for engines that
+ *    do not know `dvh`; the `dvh` declaration must come second so it wins
+ *    where both parse. §3.6 requires the pair and forbids a bare `vh`.
+ *
+ * `transform: scale()` appears nowhere in this file. §5.3 prohibits it: a
+ * scaled tier is a photograph of another tier, so it inherits that tier's
+ * target sizes and focus-ring widths at the wrong size. Each tier re-decides
+ * what persists (UI §3.1). */
+
+/* --- Layout constants. UI §3.1, §3.2, §3.4, §3.5 ---------------------------- */
+
+/* The width tiers. These cannot be *used* in a media query — a custom property
+ * is not substituted into a condition, so every `@media` below repeats the
+ * literal and `TestEveryMediaQueryMatchesADeclaredConstant` is what keeps the
+ * two in step. The test is the mechanism; this block is the reason it exists. */
+:root {
+  --breakpoint-sm: 40rem; /*  640px — compact ends, bottom sheets become drawers */
+  --breakpoint-md: 48rem; /*  768px — tablet portrait */
+  --breakpoint-lg: 64rem; /* 1024px — medium: the left nav becomes persistent */
+  --breakpoint-xl: 80rem; /* 1280px — large: the right rail becomes persistent */
+  --breakpoint-2xl: 96rem; /* 1536px — wide */
+
+  /* Height, not width. §3.5's short-landscape row and §3.2's compact-short
+   * column both key off it: a 390px-tall viewport cannot afford 56 + 56 of
+   * chrome. In `px` rather than `rem` because §3.5 states the condition in
+   * pixels and because the resolver compares `innerHeight`, which is CSS
+   * pixels — a constant whose unit differs from the thing it is compared
+   * against is a conversion somebody has to remember. */
+  --breakpoint-short: 480px;
+  /* §3.4's `tv-wide`. 137.5rem is 2200px, not 3840: a 4K TV reporting DPR 2
+   * sees a 1920px viewport and is unaffected, which is the whole point. */
+  --breakpoint-tv-wide: 137.5rem;
+
+  /* Chrome heights. §3.2's header row: 3.5rem default, 2.5rem short, 4rem wide,
+   * 5rem TV (§3.4). §4.2's footer: 2rem inline, 3.5rem as a compact bar,
+   * 3rem TV. */
+  --header-h: 3.5rem;
+  --header-h-short: 2.5rem;
+  --header-h-wide: 4rem;
+  --header-h-tv: 5rem;
+  --footer-h: 2rem;
+  --bottom-bar-h: 3.5rem;
+  --footer-h-tv: 3rem;
+
+  /* Rail widths. §3.1's table gives the left nav per tier and §3.2 the right
+   * rail. The rail is named `--rail-right` throughout because §3.7's
+   * `data-ui` values and §3.4's `[data-ui="tv"]` block both use that name, and
+   * a component that has to know which alias a tier used cannot query one
+   * source. */
+  --nav-left: 13rem; /* medium, §3.1 */
+  --nav-left-lg: 15rem; /* large and wide, §3.1 */
+  --nav-rail: 3.5rem; /* the collapsed icon rail, §3.2 and §3.5 */
+  --rail-right: 20rem; /* large, §3.2 */
+  --rail-right-md: 22rem; /* medium's drawer, and wide's persistent rail */
+  --rail-right-tv: 26rem; /* §3.4 */
+  --rail-right-tv-wide: 30rem; /* §3.4 */
+
+  /* Overlays. §3.1's `min(18rem, 85vw)` for the compact left drawer and §3.2's
+   * `22rem` right drawer. 85vw of 320px is 272px, so 48px of the page stays
+   * visible — the gate requires ≥40px (§10, and `TestSheetsLeaveFortyPixels`). */
+  --drawer-left: min(18rem, 85vw);
+  --drawer-right: 22rem;
+
+  /* Sheet heights. §3.2's ≤70dvh at compact and ≤85dvh at compact-short. Both
+   * are viewport fractions, not rem: a sheet that is a fixed height on a short
+   * screen is a sheet that fills it. */
+  --sheet-rail: 70dvh;
+  --sheet-rail-short: 85dvh;
+
+  /* The centre's measure. §3.2: `min(100%, 68ch)`, and 72ch at wide. The
+   * leftover is gutter, never wider prose — §3.2's height-budget note is
+   * explicit that at 1366 the surplus is about 85px a side. */
+  --measure: 68ch;
+  --measure-wide: 72ch;
+
+  /* §7.9's no-horizontal-scroll requirement is a wrapping one as much as a
+   * layout one: at 320px a single unbroken token wider than the track forces a
+   * horizontal scrollbar no matter how the tracks are sized. `overflow-wrap:
+   * anywhere` is the property that prevents it, and the test asserts it is
+   * present rather than trusting a browser pass to notice. */
+  --gutter: 1rem;
+}
+
+/* --- The grid ------------------------------------------------------------- */
+
+/* The base rule is the compact shell, and it is the base rule for a reason
+ * beyond brevity: a visitor with no script never gets `data-ui` at all, and the
+ * compact shell is the one layout that is correct at 320px with no JavaScript
+ * and no CSS custom-property switches. §3.7's no-JS consequence is "losing the
+ * cookie override but not coherence", and coherence is what this buys. */
+
+.shell {
+  display: grid;
+  grid-template-areas:
+    "header"
+    "main";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--header-h) minmax(0, 1fr);
+  /* §3.6: at compact the shell is document-scrolled — one page scroll, because
+   * a nested scroll region inside a mobile viewport fights momentum scrolling
+   * and the URL bar. So no height and no overflow here. Both arrive at medium. */
+  margin: 0;
+  /* §3.6: the bottom bar is fixed, so the document reserves its height here
+   * rather than under a grid row. Without it the last paragraph of every page
+   * sits under the bar. */
+  padding-block-end: calc(var(--bottom-bar-h) + env(safe-area-inset-bottom));
+}
+
+/* The centre is the only track that can blow out, and `minmax(0, 1fr)` above is
+ * what stops it. The wrapping below is the second half of the same guarantee,
+ * for the case where the track is already wide enough and the *content* is not
+ * (§7.9, 1.4.10). */
+.shell-main {
+  grid-area: main;
+  min-width: 0; /* a grid item's automatic minimum is its min-content width */
+  overflow-wrap: anywhere;
+  padding-inline: var(--gutter);
+  padding-block: var(--gutter);
+}
+
+.shell-header {
+  grid-area: header;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--gutter);
+  padding-inline: var(--gutter);
+  block-size: var(--header-h);
+}
+
+/* The left nav. S3 writes the markup; this is the class and the area it is
+ * assigned by, plus the attribute hook so a component may use either without
+ * the grid needing to know which. */
+.shell-nav,
+[data-shell-nav] {
+  grid-area: nav;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.shell-rail,
+[data-shell-rail] {
+  grid-area: rail;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The compact rail is a bottom sheet, and at compact the rail is not in this
+ * grid at all: head.js has moved it to `body > .shell-sheets` (UI §3.7's last
+ * task). The rules below therefore style the sheet in its host, and the grid
+ * area is inert until the node is moved back. */
+.shell-rail,
+[data-shell-rail] {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  max-block-size: var(--sheet-rail);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Closed by default and moved off-screen rather than `display: none`, so the
+   * disclosure state is a transition and the content is in the a11y tree for a
+   * script-less visitor — §7.2 forbids hiding a landmark, and a landmark that
+   * vanishes is the reader losing the utilities panel entirely. */
+  translate: 0 100%;
+  transition: translate var(--dur-3, 150ms) ease-out;
+}
+
+.shell-rail[aria-expanded="true"],
+.shell-rail[data-open="true"] {
+  translate: 0 0;
+}
+
+.shell-footer {
+  grid-area: footer;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--gutter);
+  padding-inline: var(--gutter);
+  /* §4.2: at compact the footer *becomes* the primary navigation, because a
+   * thumb cannot reach the top of an 844px screen. Fixed, and above the home
+   * indicator. */
+  position: fixed;
+  inset-block-end: 0;
+  inset-inline: 0;
+  z-index: 2;
+  block-size: calc(var(--bottom-bar-h) + env(safe-area-inset-bottom));
+  padding-block-end: env(safe-area-inset-bottom);
+  background: var(--surface-raised, Canvas);
+  border-block-start: 1px solid var(--border, CanvasText);
+}
+
+/* --- §3.5: short landscape. A height rule, so it applies at every width. ---- */
+
+/* A 390px-tall viewport cannot afford 56 + 56 of chrome, so the header
+ * collapses, the bottom bar is removed entirely, and the space the bar reserved
+ * is given back to the page. §3.5. */
+@media (max-height: 480px) {
+  :root {
+    --header-h: var(--header-h-short);
+  }
+
+  .shell {
+    padding-block-end: 0;
+  }
+
+  .shell-footer {
+    /* Removed, not hidden with a zero height: a 56px-tall element holding four
+     * links is a row of targets a remote or a thumb cannot hit, and §7.3's
+     * minimum is a floor, not an aspiration. */
+    display: none;
+  }
+}
+
+/* --- The pre-campaign variant. UI §4.6 ------------------------------------ */
+
+/* §4.6: before a campaign exists the left nav is absent, and header, centre,
+ * right rail and footer all render. The two-column form is the spec's own
+ * `grid-template-areas: "header header" "main rail" "footer footer"`, and it is
+ * expressed by removing the nav column rather than by a second grid: a grid
+ * whose areas name a region no element occupies is a grid with a hole, and the
+ * hole is invisible until a page is long enough to show it. */
+.shell--pre-campaign {
+  grid-template-areas:
+    "header header"
+    "main rail";
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* At medium and above the pre-campaign shell gains the rail column. The
+ * `--nav-left` track is declared and then left empty: an absent nav must not
+ * consume a 13rem gutter that no content ever fills, or the campaign list and
+ * the sign-in form both sit in a 900px column on a 1024px screen. The two
+ * columns are declared as one `minmax(0, 1fr) minmax(0, var(--rail-right-md))`
+ * so the centre keeps the `0` minimum that stops a long URL in a heading from
+ * pushing the rail off the screen. */
+:root[data-ui="medium"] .shell--pre-campaign,
+:root[data-ui="large"] .shell--pre-campaign,
+:root[data-ui="wide"] .shell--pre-campaign {
+  grid-template-columns: minmax(0, 1fr) var(--rail-right-md);
+}
+
+/* --- The centre's measure. §3.2 ------------------------------------------ */
+
+/* §3.2: the centre is `min(100%, 68ch)` and the surplus is gutter. The
+ * `min()` is load-bearing rather than decorative — `width: 68ch` alone is
+ * *wider* than a 320px track, and is the single most common cause of a
+ * horizontal scrollbar on a phone. */
+.shell-main > * {
+  max-inline-size: min(100%, var(--measure));
+  margin-inline: auto;
+}
+
+/* --- medium, large, wide, tv: the viewport-locked shell. UI §3.6 ---------- */
+
+/* From here up the shell owns the viewport. §3.6: `height: 100dvh; overflow:
+ * hidden` on the grid, `overflow-y: auto` on the centre and each rail, and
+ * `overscroll-behavior: contain` so a rail that reaches its end does not chain
+ * the scroll out to the page behind it — which on a trackpad is what makes a
+ * nested region feel like a trap. */
+:root[data-ui="medium"] .shell,
+:root[data-ui="large"] .shell,
+:root[data-ui="wide"] .shell,
+:root[data-ui="tv"] .shell,
+:root[data-ui="tv-wide"] .shell {
+  height: 100vh; /* fallback, §3.6 — the dvh below is the one that applies */
+  height: 100dvh;
+  overflow: hidden;
+  padding-block-end: 0;
+}
+
+:root[data-ui="medium"] .shell-main,
+:root[data-ui="large"] .shell-main,
+:root[data-ui="wide"] .shell-main,
+:root[data-ui="tv"] .shell-main,
+:root[data-ui="tv-wide"] .shell-main {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+:root[data-ui="medium"] .shell-footer,
+:root[data-ui="large"] .shell-footer,
+:root[data-ui="wide"] .shell-footer,
+:root[data-ui="tv"] .shell-footer {
+  /* Back in flow. The compact fixed bar is a phone affordance: a thumb cannot
+   * reach the top of the screen, and on a 900px-tall laptop it can. */
+  position: static;
+  inset: auto;
+  z-index: auto;
+  block-size: var(--footer-h);
+  padding-block-end: 0;
+  background: none;
+  border-block-start: none;
+}
+
+/* §3.2's height budget at 1366x768: header 56 + footer 32 = 88, leaving ~580
+ * of centre. The rows are `var(--header-h) minmax(0, 1fr) var(--footer-h)` and
+ * the centre row's `0` is the same minimum that keeps a long unbroken string
+ * from taking the shell taller than the viewport and starting a second scroll. */
+
+/* --- medium: 1024–1279. UI §3.1, §3.2 ------------------------------------ */
+
+/* The left nav is 13rem and persistent — the first tier where a nav is worth
+ * 208px. The right rail is a *drawer*: 22rem plus a scrim, and the scrim is
+ * the reason the rail is a drawer at this width rather than a column, because
+ * 208 + 352 = 560 of chrome on a 1024px screen leaves 464px of prose, and
+ * §3.2 caps the article at 68ch (~636px) precisely so it is never narrower
+ * than the reading measure wants. */
+:root[data-ui="medium"] .shell {
+  grid-template-areas:
+    "header header"
+    "nav   main"
+    "footer footer";
+  grid-template-columns: var(--nav-left) minmax(0, 1fr);
+  grid-template-rows: var(--header-h) minmax(0, 1fr) var(--footer-h);
+}
+
+:root[data-ui="medium"] .shell-rail,
+:root[data-ui="medium"] [data-shell-rail] {
+  inset: auto;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: var(--drawer-right);
+  max-block-size: none;
+  translate: 100% 0;
+}
+
+:root[data-ui="medium"] .shell-rail[aria-expanded="true"],
+:root[data-ui="medium"] .shell-rail[data-open="true"] {
+  translate: 0 0;
+}
+
+/* --- large and wide: 1280 and up. UI §3.1 --------------------------------- */
+
+/* The right rail persists from 1280, chosen so both 1366 and 1512 get three
+ * columns (§3.1's first rule). 15rem + 20rem = 560px of chrome, leaving 806px
+ * of centre at 1366 — §3.2's arithmetic — and the 68ch measure turns the
+ * surplus into gutter. */
+:root[data-ui="large"] .shell,
+:root[data-ui="wide"] .shell {
+  grid-template-areas:
+    "header header header"
+    "nav   main   rail"
+    "footer footer footer";
+  grid-template-columns: var(--nav-left-lg) minmax(0, 1fr) var(--rail-right);
+  grid-template-rows: var(--header-h) minmax(0, 1fr) var(--footer-h);
+}
+
+:root[data-ui="wide"] {
+  --header-h: var(--header-h-wide);
+  --rail-right: var(--rail-right-md);
+}
+
+/* At large and above the rail is a grid item again, so the compact fixed
+ * positioning is undone. Without this the rail would be `position: fixed` while
+ * occupying a grid area, which is to say out of flow and nowhere. */
+:root[data-ui="large"] .shell-rail,
+:root[data-ui="wide"] .shell-rail,
+:root[data-ui="large"] [data-shell-rail],
+:root[data-ui="wide"] [data-shell-rail] {
+  position: static;
+  inset: auto;
+  translate: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-block-size: none;
+}
+
+/* §3.4's TV layout. No left rail at all: D-pad traversal of a 40-entry wiki
+ * tree is punishing, and §3.4 replaces the nav with a horizontal focusable
+ * strip in the header. This is the spec's own block, with the lengths coming
+ * from the constants rather than restated. */
+:root[data-ui="tv"] .shell,
+:root[data-ui="tv-wide"] .shell {
+  grid-template-areas:
+    "header header"
+    "main   rail"
+    "footer footer";
+  grid-template-columns: minmax(0, 1fr) var(--rail-right-tv);
+  grid-template-rows: var(--header-h-tv) minmax(0, 1fr) var(--footer-h-tv);
+}
+
+:root[data-ui="tv"] {
+  --header-h: var(--header-h-tv);
+}
+
+:root[data-ui="tv-wide"] {
+  --header-h: var(--header-h-tv);
+  --rail-right: var(--rail-right-tv-wide);
+}
+
+:root[data-ui="tv"] .shell-rail,
+:root[data-ui="tv-wide"] .shell-rail,
+:root[data-ui="tv"] [data-shell-rail],
+:root[data-ui="tv-wide"] [data-shell-rail] {
+  position: static;
+  inset: auto;
+  translate: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-block-size: none;
+}
+
+/* §3.4: "The centre is capped, never allowed to run to the raw edge." */
+:root[data-ui="wide"] .shell-main > * {
+  max-inline-size: min(100%, var(--measure-wide));
+}
+
+:root[data-ui="tv"] .shell-main > *,
+:root[data-ui="tv-wide"] .shell-main > * {
+  max-inline-size: min(100%, 90ch);
+}
+
+/* --- compact-short. UI §3.2, §3.5 ---------------------------------------- */
+
+/* The one tier that is not merely a narrower compact: a 390px-tall viewport in
+ * landscape gets the 3.5rem icon rail, because a bottom sheet at 85dvh of
+ * 390px is 331px tall and the page behind it would be 59px. */
+:root[data-ui="compact-short"] .shell-rail,
+:root[data-ui="compact-short"] [data-shell-rail] {
+  max-block-size: var(--sheet-rail-short);
+}
+
+:root[data-ui="compact-short"] .shell-nav,
+:root[data-ui="compact-short"] [data-shell-nav] {
+  /* Permanent icon rail: a fixed 3.5rem column on the inline-start edge, and
+   * out of the sheet host. §3.5's row, and §3.1's exception to "rails become
+   * sheets below 1024" — the exception is short *height*, not narrow width. */
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--nav-rail);
+  z-index: 1;
+}
+
+:root[data-ui="compact-short"] .shell-main {
+  padding-inline-start: calc(var(--nav-rail) + var(--gutter));
+}
+
+/* --- The sheet host. UI §3.7's re-parenting ------------------------------- */
+
+/* `body > .shell-sheets` is created by head.js, and it exists so that a sheet
+ * is a *sibling* of the page it covers rather than a descendant. That is what
+ * makes the modal half of §4.5 expressible with one attribute: the page behind
+ * a sheet is inerted by setting `inert` on the shell, and if the sheet were
+ * inside the shell that one attribute would take the sheet's own controls with
+ * it. It is also why the move is a move: the node keeps its identity, so its
+ * scroll offset, its focus and any editor buffer inside it survive a tier
+ * change (§3.5, §7.9). */
+.shell-sheets {
+  display: contents;
+}
+
+/* Both rails are bottom sheets below 640px, and the two side edges go unused.
+ * §3.1's arithmetic: a 20rem (320px) right drawer and an 18rem (288px) left
+ * drawer cannot coexist on a 360px screen — together they exceed it by 250px —
+ * and a single 320px drawer on a 360px screen leaves a 40px sliver with no way
+ * to see the page behind the scrim. A bottom sheet keeps the page above it
+ * visible, which is the ≥40px of context the gate measures. */
+:root[data-ui="compact"] .shell-nav,
+:root[data-ui="compact"] .shell-nav[data-open="true"],
+:root[data-ui="compact-short"] .shell-nav {
+  inset: auto;
+  inset-block-end: 0;
+  inset-inline: 0;
+  inline-size: auto;
+  max-block-size: var(--sheet-rail);
+}
+
+/* --- Prohibited, and the reasons are load-bearing ------------------------- */
+
+/* §3.2's compact-short rail is a sheet anchored above the player's action bar
+ * on /play, never over it (§3.1's † and §4.9). The offset is the bottom bar's
+ * height plus the home indicator. Declared here so the bar's height is read
+ * from one place rather than repeated when §4.9 lands. */
+:root[data-ui="compact"] .shell-sheets,
+:root[data-ui="compact-short"] .shell-sheets {
+  padding-block-end: calc(var(--bottom-bar-h) + env(safe-area-inset-bottom));
+}
+
+@media (max-height: 480px) {
+  :root[data-ui="compact"] .shell-sheets,
+  :root[data-ui="compact-short"] .shell-sheets {
+    padding-block-end: 0;
+  }
+}
+
+/* §6.7: with `prefers-reduced-motion: reduce` every `--dur-*` becomes 1ms. The
+ * sheet's slide is a `transition` on a custom property S1 declares, so the one
+ * declaration below reaches every component that used it. `translate: 0 100%`
+ * is a property, not an animation, so nothing here depends on motion to become
+ * visible — §6.7's rule that nothing may. */
+@media (prefers-reduced-motion: reduce) {
+  .shell-rail,
+  .shell-nav,
+  [data-shell-rail],
+  [data-shell-nav] {
+    transition-duration: 1ms;
+  }
+}
+
+/* §6.7: forced colours drop every shadow-based separation, so the sheets and
+ * the bar get a border that survives the mode. Without it a sheet in forced
+ * colours is an edge the reader cannot see. */
+@media (forced-colors: active) {
+  .shell-rail,
+  .shell-nav,
+  [data-shell-rail],
+  [data-shell-nav],
+  .shell-footer {
+    border: 1px solid ButtonBorder;
+  }
+}
