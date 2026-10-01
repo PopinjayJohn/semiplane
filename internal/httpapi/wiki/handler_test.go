@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 
+	"golang.org/x/net/html"
+
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
@@ -414,9 +416,21 @@ func TestPageRendersForAMember(t *testing.T) {
 	// The prose arrived as text rather than as markup: an author who writes HTML
 	// in a page must get it shown or dropped, never executed, and the entity-escaped
 	// apostrophe above is the shape of that.
-	if strings.Contains(document, "<script") {
-		t.Error("the page carries a script element")
-	}
+	//
+	// This asserted `!strings.Contains(document, "<script")`, which was correct
+	// until P5 and is now too blunt: UI §3.7 puts one blocking inline script in
+	// `<head>` on every document, so the substring can no longer be absent. The
+	// assertion is narrowed to the property that was actually being tested — no
+	// script element anywhere a *page author* can reach — and it is checked on
+	// the parsed tree rather than on the markup, because a substring test passes
+	// on a document whose script tag is spelled across an attribute boundary.
+	//
+	// What it now requires is stronger than what it required: every script
+	// element in the document must be inside `<head>`, and the page's own body
+	// must contain none. The `<head>` position is the security property — a
+	// script the author controls executes wherever it appears, and a script
+	// outside `<head>` is either the author's or a mistake.
+	assertNoScriptOutsideHead(t, document)
 
 	if got := recorder.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type = %q, want text/html; charset=utf-8", got)
@@ -1200,4 +1214,121 @@ func TestCampaignRenderersResolvesPerCampaign(t *testing.T) {
 	if _, err := renderers.Renderer("no-such-campaign"); err == nil {
 		t.Error("an unknown campaign resolved a renderer")
 	}
+}
+
+// assertNoScriptOutsideHead requires that every script element in a rendered
+// document is a descendant of `<head>`.
+//
+// UI §3.7 puts exactly one blocking inline script in `<head>` — the resolver
+// that writes `data-theme` and `data-ui` before the first paint — plus the sheet
+// re-parenting that follows it, also in `<head>`. So the correct assertion is not
+// "there is no script" but "no script has left the head", which is the stronger
+// and more durable form: it fails on a script the *renderer* ever introduces,
+// whatever the shell does next.
+//
+// The check is on the parsed tree, not on the markup. A substring test is what
+// lets a `<script` spelled as `<SCRIPT`, or split by a templ attribute
+// interpolation, through a gate that appears to be watching for exactly that.
+func assertNoScriptOutsideHead(t *testing.T, document string) {
+	t.Helper()
+
+	root, err := html.Parse(strings.NewReader(document))
+	if err != nil {
+		t.Fatalf("parse rendered document: %v", err)
+	}
+
+	head := findElement(root, "head")
+
+	var walk func(node *html.Node, path string)
+	walk = func(node *html.Node, path string) {
+		if node.Type == html.ElementNode {
+			next := path + "/" + node.Data
+			if node.Data == "script" && !hasAncestor(node, "head") {
+				t.Errorf(
+					"a script element appears at %s; every script in the document must be "+
+						"a descendant of <head>. A page author who writes HTML gets it "+
+						"escaped or sanitised away (S-5.7, 0028), so a script outside the "+
+						"head is either the author's or a bug in the shell",
+					trimPath(next),
+				)
+			}
+			path = next
+		}
+
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child, path)
+		}
+	}
+	walk(root, "")
+
+	// And the head script is actually there. Asserting only its absence would
+	// pass on a document with no script at all, which is what this file asserted
+	// before P5 and which would have been satisfied by a shell that quietly
+	// stopped resolving its two root attributes — a bug no other test in the
+	// repository can see, because §3.7's contract is with a browser.
+	if head == nil {
+		t.Fatal("the rendered document has no <head>")
+	}
+
+	if countElements(head, "script") == 0 {
+		t.Error(
+			"the document's <head> carries no script; UI §3.7 requires one blocking " +
+				"inline resolver before the first paint, and its absence means " +
+				"data-theme and data-ui are never resolved",
+		)
+	}
+}
+
+// findElement returns the first element with the given tag name, or nil.
+func findElement(node *html.Node, tag string) *html.Node {
+	if node.Type == html.ElementNode && node.Data == tag {
+		return node
+	}
+
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if found := findElement(child, tag); found != nil {
+			return found
+		}
+	}
+
+	return nil
+}
+
+// hasAncestor reports whether any ancestor of node has the given tag name.
+func hasAncestor(node *html.Node, tag string) bool {
+	for ancestor := node.Parent; ancestor != nil; ancestor = ancestor.Parent {
+		if ancestor.Type == html.ElementNode && ancestor.Data == tag {
+			return true
+		}
+	}
+
+	return false
+}
+
+// countElements counts the elements with the given tag name beneath node.
+func countElements(node *html.Node, tag string) int {
+	count := 0
+
+	for current := node; current != nil; current = current.NextSibling {
+		if current.Type == html.ElementNode && current.Data == tag {
+			count++
+		}
+
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			count += countElements(child, tag)
+		}
+	}
+
+	return count
+}
+
+// trimPath shortens an element path to its last three segments, so a failure
+// message names where the script is without reproducing the whole document.
+func trimPath(path string) string {
+	segments := strings.Split(path, "/")
+	if len(segments) <= 3 {
+		return path
+	}
+
+	return "..." + strings.Join(segments[len(segments)-3:], "/")
 }

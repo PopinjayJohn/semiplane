@@ -1,18 +1,88 @@
 package components
 
-// Shell renders the document around a route slot: the five structural
-// landmarks, reduced to the four that exist before a campaign does.
+// The shell document: `<head>`, the skip links, and the grid the route's
+// centre slot sits in.
 //
-// This is the pre-campaign variant of the shell, and its shape is fixed by UI
-// §4.6: header, centre, right rail and footer all render, and the left nav is
-// absent. The `shell--pre-campaign` class is the hook the grid rules target —
-// `grid-template-areas: "header header" "main rail" "footer footer"` — and the
-// layout itself is the token layer's, not this work item's.
+// # Two variants, and why there are two
 //
-// The slots are components rather than strings so a route declares what goes
-// where without touching markup, and so a plugin page type can fill one
-// without adding a landmark (UI §7.2 forbids that).
+// `Shell` is the pre-campaign document (UI §4.6) and `CampaignShell` is the one
+// inside a campaign. They are two components rather than one component with a
+// `nav` parameter because UI §4.6 removes the navigation before a campaign
+// exists, and §7.2 then says a skip link to `#nav` appears "only where the nav
+// exists". A single component with a nullable nav would have to decide the
+// skip-link block from the same condition that decides the nav, and the one
+// bug in that pairing is a skip link pointing at an id that is not in the
+// document — a focus stop that moves focus nowhere, which is worse than no skip
+// link at all because the reader has now used one.
+//
+// The shared part is `shellDocument`, so the `<head>`, the main element and the
+// grid are one piece of markup written once. What differs is the skip-link
+// block and the navigation landmark, and both are decided by *which component
+// was called*, which is the one thing a reader of the template can see.
+//
+// # The four landmarks are not written here
+//
+// They are `components/chrome`'s: `chrome.Header`, `chrome.CampaignNav`,
+// `chrome.UtilitiesRail` and `chrome.Footer`. This file composes them and the
+// view models below convert a route's `ShellView` into each one. The markup
+// those components own was inline here until S5, and §3.7 is the reason it left:
+// every tier is a CSS variant of one canonical DOM, so the landmarks cannot vary
+// by tier or by route, and a landmark written inside a shell template is a
+// landmark whose markup is a function of which shell template called it.
+//
+// The `data-testid`s are unchanged by the substitution — `chrome`'s PR names
+// them, and `shell_render_test.go`'s fixtures predate the chrome package — which
+// is why a component can be replaced by four others and every existing
+// assertion still hold.
+import (
+	"github.com/semiplane/semiplane/internal/httpapi/shell"
+	"github.com/semiplane/semiplane/internal/web/components/chrome"
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
+// Shell renders the document around a route slot for a route that has no
+// campaign yet: the `/` campaign list and `/login`.
+//
+// UI §4.6 fixes its shape — header, centre, right rail and footer all render,
+// and the left navigation is absent — and the `shell--pre-campaign` class is the
+// hook the grid rules target, because the two-column form is a grid decision
+// (UI §3.6) and not a second template.
+//
+// The rail's *content* stays a slot. §4.4 gives this slot a different set per
+// route, and a plugin page type fills the centre while the rail keeps its own, so
+// the landmark wraps the caller's component rather than deciding what is in it.
 templ Shell(view ShellView, centre, rail templ.Component) {
+	@shellDocument(view, false, centre, rail, nil)
+}
+
+// CampaignShell renders the document around a route slot inside a campaign.
+//
+// The same document plus the campaign navigation, and with §7.2's *third* skip
+// link — "Skip to campaign navigation" → `#nav` — inserted between the content
+// and utilities links, in that order. The order is the record's and it is not
+// alphabetical: content first because the centre is what most readers want,
+// navigation second because it is the landmark a reader on a wiki-heavy campaign
+// needs second, utilities last because it is the one that persists least.
+templ CampaignShell(view ShellView, nav chrome.NavView, centre, rail templ.Component) {
+	@shellDocument(view, true, centre, rail, &nav)
+}
+
+// shellDocument is the whole shell, with the campaign variant selected by
+// `campaign` and its navigation supplied by `nav`.
+//
+// `nav` is a pointer so that "no campaign" and "a campaign with no
+// destinations" cannot be the same value at the call site: a `nil` nav on a
+// campaign route is a programming error, and `chrome.NavView`'s zero value would
+// render a navigation landmark containing nothing — §4.6's rule that a section
+// with nothing in it is absent would be satisfied by the sections while the
+// landmark itself persisted, and §7.2's "the navigation is absent before a
+// campaign exists" would have two readings on one page.
+//
+// The `campaign` flag and the `nav` pointer are deliberately redundant: the
+// pointer alone would work, but a reader of the rendered output should not have
+// to reverse a pointer to learn which variant they are looking at, and the flag
+// is what decides the skip-link block.
+templ shellDocument(view ShellView, campaign bool, centre, rail templ.Component, nav *chrome.NavView) {
 	<!DOCTYPE html>
 	<html lang="en">
 		<head>
@@ -23,59 +93,81 @@ templ Shell(view ShellView, centre, rail templ.Component) {
 			<meta name="color-scheme" content="light dark"/>
 			<title>{ view.Title }</title>
 			<link rel="stylesheet" href="/assets/app.css"/>
+			// §3.7's one blocking inline script, in `<head>` and before the
+			// stylesheet link, so `data-theme` and `data-ui` are both resolved
+			// before the first paint. It renders two script elements: the
+			// resolver itself, and the sheet re-parenting that has to wait for
+			// `document.body` to exist.
+			@shell.Resolver()
 		</head>
 		<body>
 			// §7.2 fixes the order and the position: the first focusable
-			// elements in the document, before the banner. The
-			// campaign-navigation link is absent because §4.6 removes the nav
-			// on this route, and a skip link to a landmark that is not there
-			// moves focus nowhere. Each target carries tabindex="-1" so focus
-			// lands on an element a screen reader announces rather than at the
-			// top of a scroll container.
-			<a class="skip-link target" href="#main" data-testid="skip-to-content">Skip to content</a>
-			<a class="skip-link target" href="#rail" data-testid="skip-to-utilities">Skip to utilities</a>
-			<div class="shell shell--pre-campaign" data-testid="shell">
-				// A role on each landmark rather than only the implicit ones:
-				// the structural test asserts these attributes, and
-				// `<header>`/`<main>` are the implicit roles only by
-				// specification, not by anything the markup says.
-				<header class="shell-header" role="banner" data-testid="shell-header">
-					<a class="shell-brand target" href="/" data-testid="header-home">{ view.Instance.displayName() }</a>
-					if view.Account.Username != "" {
-						<div class="shell-account" data-testid="header-account">
-							<span class="shell-account-name">{ view.Account.Username }</span>
-							// §4.1 puts an account menu in the header. Until the
-							// client layer exists there is no menu to open, and a
-							// popup that cannot open is a dead control — so the
-							// zone renders the identity and a real form instead,
-							// and the menu is the phase-9 replacement.
-							if view.SignOutHref != "" {
-								<form method="post" action={ view.SignOutHref }>
-									<button type="submit" class="target" data-testid="header-sign-out">Sign out</button>
-								</form>
-							}
-						</div>
-					}
-				</header>
-				<main id="main" class="shell-main" role="main" tabindex="-1" data-testid="shell-main">
-					@centre
-				</main>
-				<aside id="rail" class="shell-rail" role="complementary" aria-label="Utilities" tabindex="-1" data-testid="shell-rail">
-					@rail
-				</aside>
-				// §4.2's degraded row is campaign-scoped and belongs to the
-				// rail on this route (§4.4), so the footer carries only what
-				// every instance has: its build, and the status link when the
-				// route behind it exists.
-				<footer class="shell-footer" role="contentinfo" data-testid="shell-footer">
-					if view.Instance.Version != "" {
-						<span class="shell-footer-item" data-testid="footer-version">Version { view.Instance.Version }</span>
-					}
-					if view.StatusHref != "" {
-						<a class="shell-footer-item target" href={ view.StatusHref } data-testid="footer-status-link">Instance status</a>
-					}
-				</footer>
-			</div>
+			// elements in the document, before the banner. Each target carries
+			// tabindex="-1" so focus lands on an element a screen reader
+			// announces rather than at the top of a scroll container.
+			//
+			// The campaign-navigation link is present only in the campaign
+			// variant, because §7.2 says "only where the nav exists" and §4.6
+			// removes the nav before a campaign does. A skip link to a landmark
+			// that is not in the document moves focus nowhere, which costs a
+			// reader a keypress and teaches them the skip links are unreliable.
+			@ui.SkipLink("main", "Skip to content", "skip-to-content")
+			if campaign && nav != nil {
+				@ui.SkipLink("nav", "Skip to campaign navigation", "skip-to-nav")
+			}
+			@ui.SkipLink("rail", "Skip to utilities", "skip-to-utilities")
+			// §4.6: the pre-campaign grid is two columns and the campaign grid
+			// is three, and the class is what selects between them. The stylesheet
+			// owns the actual areas (UI §3.6); this is the hook and nothing more.
+			if campaign {
+				<div class="shell" data-testid="shell">
+					@chrome.Header(chromeHeader(view))
+					@chrome.CampaignNav(*nav)
+					@shellMain(centre)
+					@chrome.UtilitiesRail(rail)
+					// §4.2's degraded subsystems live in the footer on a campaign
+					// route, because the rail there is the campaign's own panels and
+					// renders none of them. Passing them here rather than nil is what
+					// keeps the reader from meeting "<h2>Not working</h2>" twice in one
+					// document — and it is also the only reason a degraded *campaign*
+					// is visible at all, since nothing else on this route renders the
+					// instance's subsystems.
+					@chrome.Footer(chromeFooter(view, view.Instance.Degraded))
+				</div>
+			} else {
+				<div class="shell shell--pre-campaign" data-testid="shell">
+					@chrome.Header(chromeHeader(view))
+					@shellMain(centre)
+					@chrome.UtilitiesRail(rail)
+					// Deliberately no `Degraded`: `InstanceRail` already renders
+					// `DegradedNotice` on this route, and the footer's copy carries
+					// the same heading. Two identical headings in one document is a
+					// §7.2 violation that no single component can see.
+					@chrome.Footer(chromeFooter(view, nil))
+				</div>
+			}
 		</body>
 	</html>
+}
+
+// shellMain is the centre slot's landmark.
+//
+// Not a `chrome` component, and the asymmetry is deliberate: the centre is the
+// one slot the *route* owns, so its landmark belongs with the shell that frames
+// it rather than with the four landmarks that surround it. The rail and the
+// footer are also slots and they *are* chrome components — because they have
+// chrome around the slot, which is the distinction.
+//
+// `target` is on it because §10.6's audit walks every element carrying a
+// `tabindex`, and this one carries `tabindex="-1"` so §7.2's first skip link
+// lands somewhere announced. The class costs nothing: the centre is at least
+// §7.3's floor in both axes at every tier, and §10.6's gate is a structural one
+// that a class on an element satisfies or does not.
+templ shellMain(centre templ.Component) {
+	// A role on each landmark rather than only the implicit ones: the structural
+	// test asserts these attributes, and `<header>`/`<main>` are the implicit
+	// roles only by specification, not by anything the markup says.
+	<main id="main" class="shell-main target" role="main" tabindex="-1" data-testid="shell-main">
+		@centre
+	</main>
 }

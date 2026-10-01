@@ -40,4 +40,23 @@ A fourth was found in phase 3:
   have one. The file is the source of truth, so a second copy of a block the parser regenerates in
   a millisecond is a second answer to "what does this page declare".
 
+Three more were found in phase 5. The first is a conflict *within* one record — the UI
+specification stating two things that cannot both hold — and the other two are decisions the
+record left to the implementation:
+
+- **0033** — §4.3 persists the collapsed navigation in `sp_ui` while §6.6 fixes `sp_ui` to two
+  fields and rules the rest out, and §4.1's campaign and mode switchers cannot be
+  server-rendered without making the document vary by `sp_ui`. In both cases the later and
+  more specific rule governs, and both resolutions are recorded rather than picked in a
+  template.
+- **0034** — TV is a `[data-ui]` mode and never a width band, because a 55-inch television and a
+  12.9-inch tablet in landscape are indistinguishable to CSS and need opposite layouts.
+  The record's own accepted failure mode — an unrecognised TV browser shows the laptop
+  layout until someone presses the switcher once — is kept rather than fixed, and the
+  user-agent allowlist stays narrow.
+- **0035** — no `Vary` header is emitted at all, and the document's independence from
+  `sp_ui` is held by asserting the *bytes* are identical rather than by asserting the
+  header's absence. The one blocking inline resolver is under a byte budget the build
+  enforces.
+
 ## The records

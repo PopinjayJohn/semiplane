@@ -1,9 +1,22 @@
 package components
 
-// The three states below are the centre and rail slots UI §4.7 designs for
-// pre-campaign routes. They are exported components rather than branches inside
-// a page so each one is a designed surface that can be asserted on its own, and
-// so the router can reuse the same rail on a route this work item does not own.
+// The two components left in this file are the right rail's *content*, and they
+// are the route's rather than the shell's — UI §4.4 gives this slot a different
+// set per route, so the landmark wraps whatever a caller passes and this is what
+// the pre-campaign routes pass.
+//
+// `FirstRun` and `LoadError` used to live here as well. They now live in
+// `components/ui` alongside the other nine of UI §4.7's states and the primitive
+// library they are set in, and they left for a reason that is about the phase
+// rather than about tidiness: §4.7's states are a *set*, and a set split across
+// two packages is two sets with one name. A future state has no obvious home,
+// and the obvious home is whichever file a reader opened first.
+//
+// What stayed here is what `ui` has no version of and could not have: the rail
+// panels are assembled from `InstanceView`, which is a route-facing model, and
+// §4.7's eleven states have no rail panel between them. So there is nothing for
+// the states package to compose here, and a copy of `InstanceRail` in `ui` would
+// be the second answer.
 
 // InstanceRail is the right rail for a pre-campaign route: what this instance
 // is, which build it is, and what is not working.
@@ -51,44 +64,5 @@ templ DegradedNotice(degraded []DegradedView) {
 			}
 		</ul>
 		<p class="panel-note">The rest of this instance is unaffected.</p>
-	</section>
-}
-
-// FirstRun is the centre slot when the account is a member of no campaigns
-// (UI §4.7's first-run row).
-//
-// A user can exist with zero campaigns — the first account is provisioned
-// before any browser reaches the server — so this is a campaign empty state and
-// not a user one (UI §4.6). The copy is two lines of fact and one action,
-// because this is a self-hosted tool and a reader standing at an empty
-// instance has already decided to use it.
-templ FirstRun(view CampaignListView) {
-	<section class="empty" aria-labelledby="first-run-heading" data-testid="first-run">
-		<h2 id="first-run-heading">No campaigns yet</h2>
-		<p>A campaign holds the pages, the assets and the table for one game. Everything in semiplane belongs to one.</p>
-		<p>Everything you add stays on this instance.</p>
-		if view.CreateHref != "" {
-			<a class="target button button--primary" href={ view.CreateHref } data-testid="first-run-cta">Register your first campaign</a>
-		}
-		if view.DocsHref != "" {
-			<a class="target" href={ view.DocsHref } data-testid="first-run-docs">Read the documentation</a>
-		}
-	</section>
-}
-
-// LoadError is the centre slot when a page could not be produced at all
-// (UI §4.7's `500` row).
-//
-// The reference is the whole content. It is what ties a reader's report to a
-// line in the access log, and §4.7 gives the rail an empty panel for this
-// state — the rail already says which instance and which build failed, so
-// repeating it would be noise.
-templ LoadError(failure LoadFailure) {
-	<section class="empty" aria-labelledby="load-error-heading" data-testid="error-state">
-		<h2 id="load-error-heading">This page could not be loaded</h2>
-		<p data-testid="error-state-message">semiplane could not load this page. Nothing has been changed.</p>
-		if failure.Reference != "" {
-			<p class="empty-note">Reference: <code data-testid="error-state-reference">{ failure.Reference }</code></p>
-		}
 	</section>
 }

@@ -1,4 +1,11 @@
+//nolint:misspell // CSS identifiers, not prose; the rationale follows the package clause
 package shell_test
+
+// This file's prose uses the UK spelling throughout. The suppression above is for
+// CSS identifiers only: `forced-colors` is spelled the US way by CSS itself, and
+// the custom-property names are the tokens' names — a linter that rewrote
+// `--border-w` to `--border-w` with a UK spelling would be asserting against a
+// token the stylesheet does not declare.
 
 import (
 	"regexp"
@@ -34,6 +41,20 @@ import (
 // by somebody tidying.
 const containOverscroll = "overscroll-behavior: contain" //nolint:misspell // A CSS property.
 
+// tokenDeclarations returns tokens.css with its comments removed.
+//
+// The same comment-stripping as `stylesheet`, and the same reason: half of what
+// tokens.css is for is explaining why, and a mechanical check has to see the
+// declarations. Its header comment also *names* protected variables such as
+// `--target-min` in prose, so a check that read the comments would find those
+// declared when nothing assigns them — which is precisely the failure this test
+// exists to catch.
+func tokenDeclarations(t *testing.T) string {
+	t.Helper()
+
+	return stripComments(t, readFile(t, "..", "..", "web", "static", "css", "tokens.css"))
+}
+
 // stylesheet reads the shell stylesheet with its comments removed, which lives
 // outside this package.
 //
@@ -46,16 +67,21 @@ const containOverscroll = "overscroll-behavior: contain" //nolint:misspell // A 
 func stylesheet(t *testing.T) string {
 	t.Helper()
 
-	raw := string(readFile(t, "..", "..", "web", "static", "css", "shell.css"))
+	return stripComments(t, readFile(t, "..", "..", "web", "static", "css", "shell.css"))
+}
+
+// stripComments removes every CSS comment from a stylesheet.
+func stripComments(t *testing.T, raw []byte) string {
+	t.Helper()
 
 	var out strings.Builder
 
 	for index := 0; index < len(raw); {
-		if start := strings.Index(raw[index:], "/*"); start >= 0 {
-			out.WriteString(raw[index : index+start])
+		if start := strings.Index(string(raw[index:]), "/*"); start >= 0 {
+			out.Write(raw[index : index+start])
 			index += start
 
-			end := strings.Index(raw[index:], "*/")
+			end := strings.Index(string(raw[index:]), "*/")
 			if end < 0 {
 				break
 			}
@@ -65,7 +91,7 @@ func stylesheet(t *testing.T) string {
 			continue
 		}
 
-		out.WriteString(raw[index:])
+		out.Write(raw[index:])
 		break
 	}
 
@@ -497,24 +523,60 @@ func TestSheetsLeaveFortyPixelsOfContext(t *testing.T) {
 // resolves to nothing, silently, and the declaration it was supposed to carry
 // does not apply. Nothing warns.
 //
-// Three names are read from the token layer rather than from this file, and
-// they are listed rather than tolerated so that the coupling is visible: the
-// token layer owns them, this stylesheet uses them behind a fallback, and a
-// reader who wonders where `--surface-raised` comes from finds the answer here.
+// The declaration set is collected from the token layer as well as from this
+// file, which is a change of mechanism and not of strength. The rule used to
+// carry a hand-maintained list of three names the token layer owns, and it
+// covered the grid's own use of `--surface-raised`, `--border` and `--dur-3`.
+// S5 then put the §5.1 scale block and the whole primitive library in this file
+// — roughly two dozen further token reads — and an allow-list does not survive
+// that: either it grows to twenty-six hand-written entries, and the next reader
+// cannot tell which are checked and which are aspirational, or it stays at three
+// and fails on correct code. Reading the other file instead means the coupling
+// is *checked* rather than *enumerated*, so a `var(--typo)` still fails and a
+// renamed token still fails, and no entry has to be maintained by hand.
+//
+// The three names stay, with their reasons, as log lines: the point of naming
+// them was that a reader who wonders where `--surface-raised` comes from finds
+// the answer here, and that is still true.
+//
+// The names in the map changed, and that is the finding rather than a detail.
+// The map used to name `--surface-raised`, `--border` and `--dur-3` as "the token
+// layer's", so the allow-list suppressed exactly the check that would have found
+// them. No layer declares either name — §6.2/§6.3 have `--surface` and
+// `--surface-sunken` with no raised step, and the duration steps are
+// `--dur-instant`/`--dur-fast`/`--dur-base`/`--dur-slow` — so both were live
+// references to nothing, and one of them fell back to `Canvas`, a forced-colors
+// system colour, which put the compact bottom bar on white in the dark theme. The
+// allow-list read as documentation and functioned as a suppression: a reader who
+// believed it would conclude those tokens exist. Deriving the set from the file
+// makes the same class of defect fail instead of passing quietly, which is the
+// only reason this map is shorter than the list it replaced.
+//
+// What it names now are the couplings a reader genuinely cannot infer from this
+// file: the one token whose *value* is a `var()` chain ending in a hook this file
+// sets, and the two that exist for the forced-colors fallback rather than for the
+// default theme.
 func TestEveryCustomPropertyTheGridUsesIsDeclared(t *testing.T) {
 	t.Parallel()
 
 	css := stylesheet(t)
 
-	ownedByTheTokenLayer := map[string]string{
-		"--surface-raised": "the token layer's raised surface, for the compact bottom bar",
-		"--border":         "the token layer's border, for the bottom bar's rule",
-		"--dur-3":          "the token layer's third duration step, for the sheet transition",
+	namedForTheReader := map[string]string{
+		"--focus-ring-offset": "the token layer defines it as var(--local-surface, var(--bg)); " +
+			"this file sets --local-surface on a solid fill, which is §6.5's inversion",
+		"--border-subtle": "the token layer's hairline; §6.5 permits it here in exactly " +
+			"one place, on the nav collapse's separator, which is not a control's only boundary",
+		"--surface-border": "the token layer's §6.7 border fallback, standing in for a " +
+			"dropped shadow in forced-colors mode",
+		"--border-w": "the token layer's width, which `prefers-contrast: more` doubles " +
+			"and forced colours restores — the reason a border here is a var and not 1px",
 	}
 
 	declared := map[string]bool{}
-	for _, match := range regexp.MustCompile(`(--[a-z0-9-]+)\s*:`).FindAllStringSubmatch(css, -1) {
-		declared[match[1]] = true
+	for _, source := range []string{css, tokenDeclarations(t)} {
+		for _, match := range regexp.MustCompile(`(--[a-z0-9-]+)\s*:`).FindAllStringSubmatch(source, -1) {
+			declared[match[1]] = true
+		}
 	}
 
 	used := map[string]bool{}
@@ -523,19 +585,17 @@ func TestEveryCustomPropertyTheGridUsesIsDeclared(t *testing.T) {
 	}
 
 	for name := range used {
+		if reason, ok := namedForTheReader[name]; ok {
+			t.Logf("%s comes from the token layer: %s", name, reason)
+		}
+
 		if declared[name] {
 			continue
 		}
 
-		if reason, ok := ownedByTheTokenLayer[name]; ok {
-			t.Logf("%s comes from the token layer: %s", name, reason)
-
-			continue
-		}
-
 		t.Errorf(
-			"%s is used but never declared; a var() with no declaration resolves "+
-				"to nothing, silently", name,
+			"%s is used but never declared in shell.css or tokens.css; a var() "+
+				"with no declaration resolves to nothing, silently", name,
 		)
 	}
 

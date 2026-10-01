@@ -181,7 +181,16 @@
    * script-less visitor — §7.2 forbids hiding a landmark, and a landmark that
    * vanishes is the reader losing the utilities panel entirely. */
   translate: 0 100%;
-  transition: translate var(--dur-3, 150ms) ease-out;
+  /* `--dur-fast`, and not a literal: §6.7 collapses every `--dur-*` to 1ms under
+   * `prefers-reduced-motion: reduce`, so a duration written as a number here is a
+   * duration the mode cannot reach. This file wrote `--dur-3`, which no layer
+   * declares — the token layer's steps are `--dur-instant`, `--dur-fast`,
+   * `--dur-base` and `--dur-slow` — so the declaration was reading a name that
+   * resolved to nothing and falling back to 150ms. The reduced-motion rule below
+   * covered it by setting `transition-duration` directly, which is why the defect
+   * was invisible; the token is fixed anyway, because a dead reference is a
+   * reference that will read as intentional. */
+  transition: translate var(--dur-fast) ease-out;
 }
 
 .shell-rail[aria-expanded="true"],
@@ -205,8 +214,17 @@
   z-index: 2;
   block-size: calc(var(--bottom-bar-h) + env(safe-area-inset-bottom));
   padding-block-end: env(safe-area-inset-bottom);
-  background: var(--surface-raised, Canvas);
-  border-block-start: 1px solid var(--border, CanvasText);
+  /* `--surface`, and this line used to say `var(--surface-raised, Canvas)`.
+   * Neither name is declared by any layer: §6.2/§6.3 have `--surface` and
+   * `--surface-sunken` and no raised step. So the compact bottom bar resolved to
+   * its fallback, and the fallback was `Canvas` — a *forced-colors system
+   * colour*. Outside forced-colors mode that resolves to the browser's default
+   * canvas, which is white: the fixed bottom bar rendered white-on-dark in the
+   * dark theme, with a `ButtonBorder`-flavoured border, and nothing said so. The
+   * declaration below is the one §4.2's bar actually wants, and the section above
+   * gives it the boundary that keeps it legible against a scrolled page. */
+  background: var(--surface);
+  border-block-start: 1px solid var(--border);
 }
 
 /* --- §3.5: short landscape. A height rule, so it applies at every width. ---- */
@@ -388,23 +406,44 @@
 /* §3.4's TV layout. No left rail at all: D-pad traversal of a 40-entry wiki
  * tree is punishing, and §3.4 replaces the nav with a horizontal focusable
  * strip in the header. This is the spec's own block, with the lengths coming
- * from the constants rather than restated. */
+ * from the constants rather than restated.
+ *
+ * **The tracks read `--rail-right` and `--header-h`, not `--rail-right-tv` and
+ * `--header-h-tv`.** §3.4's last bullet says "At 3840 CSS px
+ * (`--breakpoint-tv-wide: 137.5rem`), `--type-scale` rises to 1.75 and
+ * `--rail-right` to 30rem" — and that sentence is only true if the grid reads
+ * the property it names. This rule used to read the tier-specific constants
+ * directly, which made `:root[data-ui="tv-wide"] { --rail-right: … }` a
+ * declaration the grid never saw: the rail stayed 26rem at 3840px, a fourth
+ * wider than the record specifies, and no test failed, because the property was
+ * both declared and read *somewhere else* — `tv.css`'s navigation strip reads
+ * it, which is how `TestEveryCustomPropertyTheGridUsesIsDeclared` passed over a
+ * property that was dead where it mattered.
+ *
+ * Reading the indirection property is also what makes `tv-wide` a tier rather
+ * than a copy: `:root[data-ui="wide"] { --rail-right: var(--rail-right-md) }`
+ * already works this way, and the two tiers now differ only in the constant they
+ * assign. */
 :root[data-ui="tv"] .shell,
 :root[data-ui="tv-wide"] .shell {
   grid-template-areas:
     "header header"
     "main   rail"
     "footer footer";
-  grid-template-columns: minmax(0, 1fr) var(--rail-right-tv);
-  grid-template-rows: var(--header-h-tv) minmax(0, 1fr) var(--footer-h-tv);
+  grid-template-columns: minmax(0, 1fr) var(--rail-right);
+  grid-template-rows: var(--header-h) minmax(0, 1fr) var(--footer-h-tv);
 }
 
-:root[data-ui="tv"] {
-  --header-h: var(--header-h-tv);
-}
-
+:root[data-ui="tv"],
 :root[data-ui="tv-wide"] {
   --header-h: var(--header-h-tv);
+  --rail-right: var(--rail-right-tv);
+}
+
+/* §3.4's tv-wide row: the rail rises to 30rem. This block has to come *after*
+ * the one above for the same reason `:root` and `[data-theme]` do — equal
+ * specificity, so source order is the only thing separating them. */
+:root[data-ui="tv-wide"] {
   --rail-right: var(--rail-right-tv-wide);
 }
 
@@ -530,3 +569,1186 @@
     border: 1px solid ButtonBorder;
   }
 }
+
+/* ==========================================================================
+   THE SCALE MODEL, THE TARGET CONTRACT, AND THE PRIMITIVE LIBRARY.
+
+   Everything above this line is the grid: areas, tracks, the scroll model and
+   the per-tier switches. Everything below is what renders *inside* the grid —
+   the §5.1 scale, the §7.3 target contract, the §6.5 focus ring, the four
+   chrome landmarks' internal classes, and the §4.7 primitive library.
+
+   It is one file rather than several because §3.7's rule is that every tier is
+   a CSS variant of one canonical DOM, and a tier switch that had to cross a
+   file boundary is a switch somebody eventually forgets to apply on one side.
+   --------------------------------------------------------------------------
+   CASCADE ORDER IS LOAD-BEARING HERE.
+
+   tokens.css declares the primitive scales inside `@theme static`, which emits
+   to `@layer theme`. This file's rules are *unlayered*, and an unlayered rule
+   beats a layered one at equal specificity regardless of source order. So the
+   two redeclarations below -- the space family and the type steps -- win over
+   tokens.css without a `!important` and without depending on the `@import`
+   order in app.css. That is why `--space-scale` can be applied here at all:
+   the primitive layer owns the *base* scale, this layer applies the *tier
+   multiplier*, and a later tier switch cannot be undone by the theme.
+   ========================================================================== */
+
+/* --- §5.1: the scale model, and §5.2: the typeface ----------------------- */
+
+/* `:root` rather than a `data-ui` selector, deliberately. §5.1 applies the
+ * scales as multipliers per tier, and a tier the reader never gets — which is
+ * every tier for a visitor with no script, whose `:root` has no `data-ui` at
+ * all — still has to be the compact one. Declaring the bases here means a
+ * missing attribute resolves to the compact scale rather than to nothing. */
+:root {
+  --type-scale: 1.0625;  /* §5.1 compact: 17px base from a 16px root */
+  --space-scale: 1.125;
+  --target-min: 2.75rem; /* 44px — §5.1 and §7.3's touch minimum */
+  --target-gap: 0.5rem;  /* 8px of separation at touch, §7.3 */
+}
+
+/* `:root[data-ui=…]` and the bare `:root` have *identical* specificity, so the
+ * order of these three blocks is what makes the tier win. Putting a `:root`
+ * block below a `[data-ui]` block would silently disable the tier — the same
+ * trap tokens.css records for `:root` and `[data-theme]`. The tiers are
+ * therefore declared in increasing specificity order and the file says so,
+ * because the alternative is a comment nobody reads until the bug ships. */
+:root[data-ui="medium"],
+:root[data-ui="large"],
+:root[data-ui="wide"] {
+  --type-scale: 1;
+  --space-scale: 1;
+  --target-min: 2.25rem; /* 36px — §5.1, still 1.5× WCAG 2.2 SC 2.5.8 */
+}
+
+:root[data-ui="tv"],
+:root[data-ui="tv-wide"] {
+  --type-scale: 1.5;
+  --space-scale: 1.5;
+  --target-min: 3.5rem;  /* 56px — §7.3's movement axis, the platform norm */
+  --target-gap: 1rem;    /* 16px gutter at 10 feet, §7.3 and §10.5 */
+}
+
+:root[data-ui="tv-wide"] {
+  --type-scale: 1.75;
+  --space-scale: 1.75;
+}
+
+/* §5.2's two defaults are *system stacks*: no webfont, no FOUT, no extra
+ * bytes, no licence obligation. A campaign may prepend an `@font-face` — §4.12
+ * validates and generates that file and the generator never emits a protected
+ * name — and the system stack stays as the fallback, so a font that fails to
+ * load degrades to today's design rather than to a broken one. `--font-mono` is
+ * the one exception: code and dice expressions must stay monospaced, so §5.2
+ * marks it not overridable. */
+:root {
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-prose: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* §5.1's type scale, at `--type-scale: 1`, as `calc()` multipliers rather than
+ * nine separate tier blocks. §5.1's task says so explicitly, and the reason is
+ * that nine `font-size` declarations per tier is nine places for a tier to be
+ * forgotten: the multiplier is one number per tier and every step follows it. */
+:root {
+  --text-xs: calc(0.75rem * var(--type-scale));     /* 12 — footer legal line only */
+  --text-sm: calc(0.875rem * var(--type-scale));    /* 14 — metadata, table headers, badges */
+  --text-base: calc(1.0625rem * var(--type-scale)); /* 17 — UI chrome */
+  --text-md: calc(1.25rem * var(--type-scale));     /* 20 — article prose base, h4, lead */
+  --text-lg: calc(1.5rem * var(--type-scale));      /* 24 — h3 */
+  --text-xl: calc(1.875rem * var(--type-scale));    /* 30 — h2 */
+  --text-2xl: calc(2.25rem * var(--type-scale));    /* 36 — h1 */
+  --text-3xl: calc(3rem * var(--type-scale));       /* 48 — display, the campaign name on /play */
+}
+
+/* The space family, with §5.1's tier multiplier applied. The base scale itself
+ * is the primitive layer's (`--space-4` is `--spacing` × 4 there, and
+ * `TestSpacingScaleIsTheSpacingMultiplier` is what holds those two copies of
+ * the ratio together); this block is the *scaled* reading of it, which is a
+ * layout concern and so belongs here, per the note in tokens.css. Every step is
+ * `calc()`, so a tier switch is one number rather than thirteen. */
+:root {
+  --space-0: calc(var(--spacing) * 0 * var(--space-scale));
+  --space-1: calc(var(--spacing) * 0.25 * var(--space-scale));
+  --space-2: calc(var(--spacing) * 0.5 * var(--space-scale));
+  --space-3: calc(var(--spacing) * 0.75 * var(--space-scale));
+  --space-4: calc(var(--spacing) * 1 * var(--space-scale));
+  --space-5: calc(var(--spacing) * 1.25 * var(--space-scale));
+  --space-6: calc(var(--spacing) * 1.5 * var(--space-scale));
+  --space-8: calc(var(--spacing) * 2 * var(--space-scale));
+  --space-10: calc(var(--spacing) * 2.5 * var(--space-scale));
+  --space-12: calc(var(--spacing) * 3 * var(--space-scale));
+}
+
+/* §5.1's three properties that 1.4.4 and 1.4.12 both depend on, and which
+ * every rule above was written to make satisfiable rather than to assert:
+ * `html { font-size: 100% }` so the reader's browser zoom is the multiplier and
+ * nothing here fights it; a line height on the root so no text container has to
+ * set its own, and no text container has a fixed height anywhere in this file. */
+:root {
+  font-size: 100%;
+  font-family: var(--font-ui);
+  line-height: 1.5; /* 1.5 chrome and prose; §5.1's headings set 1.2 below */
+  color: var(--text);
+  background: var(--bg);
+  /* §3.7's no-JS consequence: a visitor whose resolver never runs still gets the
+   * operating system's polarity rather than a document pinned to one theme. */
+  color-scheme: light dark;
+}
+
+/* The inherited type size, and it is on `body` rather than on `:root` for a reason
+ * that is the whole of §5.3's first ban.
+ *
+ * `html { font-size: 100% }` is *not* negotiable: it is what makes the reader's own
+ * browser zoom the multiplier, so scaling the root would scale it twice and take
+ * 1.4.4 with it. The design's base therefore has to be applied one level down, to
+ * everything that inherits — which is what this declaration does, with
+ * `--text-base` carrying `--type-scale`.
+ *
+ * It was missing, and the viewport sweep is what found it: an element with no
+ * explicit `font-size` inherited the *user agent's* 16px rather than §5.1's
+ * `--text-base`, which is 17px at compact and 25.5px at TV. The visible symptom
+ * was small — a skip link and the shell's own text sitting a pixel below every
+ * sized control — and the structural symptom is worse: an element added later
+ * without a type token would render at the browser's default rather than at the
+ * design's, and nothing would say so. */
+body {
+  font-size: var(--text-base);
+}
+
+/* --- §7.3: the target contract, enforced by construction ------------------ */
+
+/* `.target` sets the two minimums and nothing else, so an interactive element
+ * gets §7.3's guarantee by *carrying the class* rather than by remembering two
+ * declarations. That is the whole point of the class: §7.3's wording is
+ * "enforced by construction", and the construction is this rule plus the audit
+ * that finds an interactive element without it.
+ *
+ * `--target-min` alone, never a `px` value: §7.3's table is per input method and
+ * the tier is what selects the row, so a component that hard-coded 44px would be
+ * a 44px control on a television, which is §7.3's *smallest* floor. */
+.target {
+  min-inline-size: var(--target-min);
+  min-block-size: var(--target-min);
+}
+
+/* --- §7.2: skip links ----------------------------------------------------- */
+
+/* Off-screen until focused, then pinned to the top inline-start corner. Moved
+ * with `translate` rather than `top: -100%` so the transition is composited and
+ * the element never reflows the document on focus. `position: absolute` against
+ * the initial containing block is what makes "the top corner of the page" true
+ * rather than "the top corner of the nearest positioned ancestor". */
+.skip-link {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  translate: 0 -200%;
+  z-index: 3;
+}
+
+.skip-link:focus-visible {
+  translate: 0 0;
+}
+
+/* --- §6.5: the two-tone focus ring ---------------------------------------- */
+
+/* Two tones, both required: `--focus-ring` for the ring itself, and
+ * `--focus-ring-offset` — which tokens.css defines as
+ * `var(--local-surface, var(--bg))` — for the gap between the ring and what it
+ * lands on. One tone alone disappears the moment the focused control shares a
+ * hue with the ring, which is exactly what happens on a solid accent fill.
+ *
+ * `--local-surface` is the hook, and a component sets it *once* on itself; every
+ * ring inside inherits. `--on-accent` on a solid fill is §6.5's "focus on a
+ * solid fill inverts the ring", spelled as the surface behind that control
+ * rather than as a second ring colour.
+ *
+ * `:focus-visible`, not `:focus`, because §7.4 requires `:focus-visible` for
+ * pointer tiers — a ring that appears on every mouse press is noise on a desktop.
+ * The TV exception to that is in tv.css, and it is an exception because some TV
+ * browsers never match `:focus-visible` at all. */
+:is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--border-w, 1px) solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset);
+}
+
+/* §7.10 prohibits `outline: none` without a visible replacement, and this file
+ * contains no `outline: none` at all — `TestNoRuleRemovesAFocusIndicatorWithout
+ * AReplacement` in internal/web checks that against the built stylesheet rather
+ * than trusting this comment. */
+
+/* --- The chrome landmarks' internals. UI §4.1–§4.5 ---------------------- */
+
+/* The banner's three zones. §4.1's table gives each a share of a 56px bar at
+ * every tier, so all three are `display: flex` children and the bar does the
+ * distributing; no component hard-codes a width, and a tier switch is a change
+ * to `--gutter` rather than to three components. */
+.header-campaign,
+.shell-brand {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  /* §8.3's rank 1 — the current location — must not be the first thing that
+   * clips when the account name is long. `min-width: 0` plus truncation is what
+   * keeps a 320px bar usable rather than a bar that scrolls sideways. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.header-search {
+  display: flex;
+  flex: 1 1 auto;
+  /* §3.2's "a wider field" at wide, and a field at all at medium. One rule, so
+   * the four header rows in §3.2 are a width rather than four components. */
+  min-inline-size: 0;
+  max-inline-size: 28rem;
+  margin-inline: auto;
+}
+
+.header-search-input {
+  inline-size: 100%;
+  font: inherit;
+  font-size: var(--text-base);
+  /* §7.7: a visible boundary on the control, and `--border` rather than
+   * `--border-subtle` — §6.5 forbids the subtle border as an interactive
+   * element's only boundary, because 1.4.11 is about the boundary's presence. */
+  color: var(--text);
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding-inline: var(--space-2);
+}
+
+/* The connection indicator. §4.1's rule that the state is a *word* means this
+ * is plain text, and §6.5's "never colour alone" means the colour here is
+ * decoration on a label that already says the state — a reader who cannot see
+ * the colour reads the same sentence. Never `aria-hidden`, for that reason. */
+.header-connection {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.header-theme {
+  /* §4.1's cycling button. The label names the *result* ("Theme: auto"), so the
+   * control's width changes with the value — hence no fixed width and a
+   * `flex-shrink: 0`, or the button reflows the bar on every press. */
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: none;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding-inline: var(--space-2);
+}
+
+.header-theme[aria-pressed="true"] {
+  /* §6.5 again: the pressed state is a weight change and a boundary, not a fill
+   * change alone. `auto` is never pressed, because auto is the absence of a
+   * choice rather than a choice. */
+  font-weight: 600;
+  border-color: var(--accent);
+}
+
+.shell-account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  min-inline-size: 0;
+}
+
+.shell-account-name {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The contentinfo strip. Plain inline flow at every tier above compact, and the
+ * fixed bar's row at compact — but the bar is a *child*, not the footer, so the
+ * footer's own layout does not change with the tier. */
+.shell-footer-item {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* §4.2's degraded block. `--warning` is a text and icon colour and is never a
+ * fill (§6.5: dark amber on white is the classic illegible pairing), so it goes
+ * on the 3px bar and the heading and never on a background. */
+.footer-degraded {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  border-inline-start: 3px solid var(--warning);
+  padding-inline-start: var(--space-2);
+}
+
+.footer-degraded-heading {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--warning);
+  white-space: nowrap;
+}
+
+.footer-degraded-list {
+  display: flex;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-inline-size: 0;
+}
+
+.footer-degraded-name {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.footer-degraded-detail {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* §4.2's table-route row: the clock, the connection, and a way out. */
+.footer-play {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
+.footer-play-item {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The compact bottom bar: a row of four destinations spread across the full
+ * inline size, filling the footer's fixed height. `space-around` rather than
+ * `space-between` because §7.3 wants ≥8px of separation between targets and
+ * `space-between` puts the outermost two against the screen edges, where a
+ * mis-aimed thumb lands on nothing. */
+.footer-bar {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  block-size: 100%;
+  inline-size: 100%;
+}
+
+.footer-bar-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-decoration: none;
+}
+
+/* The bar is a *duplicate* of four destinations the navigation landmark already
+ * carries from medium up (§4.2's bar exists because a thumb cannot reach the top
+ * of an 844px screen — a reason that stops being true at 1024), so it leaves the
+ * tab order entirely rather than being visually hidden. `display: none` rather
+ * than `visibility: hidden` because a `visibility: hidden` link is still in the
+ * accessibility tree in some engines, which is the failure §7.2 names for two
+ * identically-labelled navigation landmarks. */
+:root[data-ui="medium"] .footer-bar,
+:root[data-ui="large"] .footer-bar,
+:root[data-ui="wide"] .footer-bar,
+:root[data-ui="tv"] .footer-bar,
+:root[data-ui="tv-wide"] .footer-bar {
+  display: none;
+}
+
+/* §4.3's collapsible navigation: `[data-nav="collapsed"]`, a `data-` attribute
+ * the client sets on the `<nav>`.
+ *
+ * The labels go with the width, and they go *visually* — clipped, not
+ * `display: none` — because §4.3's own rule is that the icon rail costs no
+ * accessible names. Every row's accessible name is its visible text at every
+ * width, which is also what WCAG 2.5.3 asks for.
+ *
+ * `data-nav` and not a cookie field, and that is a recorded decision rather than
+ * an oversight: §4.3 puts the collapsed state in `sp_ui` while §6.6 fixes
+ * `sp_ui` to exactly two fields and says in terms "no density field — a dangling
+ * token is worse than no token". §6.6 is later and more specific, so it governs.
+ * The cost of the outcome is that the collapse resets to expanded on a new
+ * device, which is a preference rather than data and is the right thing to lose. */
+.shell-nav[data-nav="collapsed"] {
+  inline-size: var(--nav-rail);
+  padding-inline: 0;
+}
+
+.shell-nav[data-nav="collapsed"] .nav-label,
+.shell-nav[data-nav="collapsed"] .nav-kind {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The navigation's list and rows. A flat indented list rather than a tree: §4.3
+ * forbids `role="tree"` because the pattern obliges roving tabindex, arrow-key
+ * semantics and typeahead for a server-rendered list that changes on every
+ * navigation. Nested lists are the whole of the hierarchy, and they are indented
+ * in `rem` so the depth reads at 10 feet as well as at 30cm. */
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-list--nested {
+  padding-inline-start: var(--space-3);
+  /* The collapse control's `aria-controls` targets `#nav-destinations` and says
+   * the disclosure is of the *labels*, which is what changes. An indent that
+   * does not change with the collapse would make that claim false. */
+  transition: padding-inline var(--dur-fast) ease-out;
+}
+
+.nav-item {
+  margin: 0;
+}
+
+.nav-link,
+.nav-disclosure,
+.nav-collapse {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  /* §7.3's ≥8px of separation at touch, expressed once so no row can be written
+   * without it. `gap` rather than `margin-block` because adjacent rows then
+   * share the space instead of each claiming it. */
+  padding-block: calc(var(--target-gap) / 2);
+  padding-inline: var(--space-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+  text-decoration: none;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.nav-disclosure {
+  /* §7.3's minimum is satisfied by the row's own block size plus its padding,
+   * and `.target` on the element guarantees the floor rather than the arithmetic
+   * guaranteeing it. */
+  cursor: pointer;
+}
+
+.nav-collapse {
+  font-weight: 600;
+  border-block-end: var(--border-w) solid var(--border-subtle);
+  /* The one place `--border-subtle` is legitimate: this is a decorative
+   * separator, not an interactive element's boundary. §6.5 forbids it as a
+   * control's *only* boundary and permits it here; the rows above and below both
+   * carry `--border` through `.nav-link`'s focus ring. */
+  margin-block-end: var(--space-1);
+  border-radius: 0;
+}
+
+/* The icon column. Fixed so every row's label starts at the same offset, which
+ * is what makes the icon rail legible: without it the labels form a ragged edge
+ * and 40 destinations read as noise. `aria-hidden` is on the `<svg>` in the
+ * markup, never here, because §7.10 forbids `aria-hidden` on a focusable element
+ * and an SVG sprite that later grows a `<title>` would then be hidden twice. */
+.nav-icon {
+  flex: 0 0 1.25rem;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+}
+
+/* The kind badge. §4.11.3: registry-backed, data rather than a string this file
+ * chose, so a UI plugin registering a kind needs no shell change. */
+.nav-kind {
+  margin-inline-start: auto;
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+
+/* §4.5's rail wrapper and the trigger that opens it. The trigger is not inside
+ * the rail — a trigger has to be reachable while the rail is closed — so §4.1
+ * assigns it to no zone and `chrome.UtilitiesTrigger` is exported rather than
+ * inlined. */
+.rail-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  min-block-size: 0;
+}
+
+.rail-trigger {
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: none;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding-inline: var(--space-2);
+}
+
+/* --- The no-script case. UI §3.7 ------------------------------------------ */
+
+/* §3.7 promises a visitor whose resolver never ran "coherence, not a full
+ * tier". The base rule above is the compact shell, and at compact *both* rails
+ * are bottom sheets positioned off-screen — so a visitor with no script reaches
+ * the navigation through nothing at all. That is the one place the promise is
+ * not kept, and these two rules keep it.
+ *
+ * The navigation goes into flow rather than staying a sheet: a reader with no
+ * script gets the destinations, stacked above the centre, at whatever width
+ * their viewport happens to be. It is not a "tier" — it is the only state in
+ * which the navigation is not behind a disclosure that nothing can open. */
+:root:not([data-ui]) .shell-nav {
+  position: static;
+  inset: auto;
+  translate: none;
+  inline-size: auto;
+  max-block-size: none;
+  /* No `data-ui` means no `--nav-left` column, so the nav sits in the base
+   * grid's `header`/`main` stack as an ordinary block. Its `grid-area: nav` is
+   * inert at compact, and the declaration above returns it to flow. */
+  border-block-end: var(--border-w) solid var(--border);
+}
+
+/* With the navigation in flow and carrying all four destinations, the bottom bar
+ * is the *same four links twice*. §4.2 objects to exactly that from medium up,
+ * and with no tier there is no way to know whether the reader is at 360px — where
+ * the bar is the primary navigation and the nav is a sheet they cannot open — or
+ * at 1440px, where both are visible and one is redundant.
+ *
+ * The no-script case resolves to the second: the nav is guaranteed reachable,
+ * the bar is guaranteed duplicated. Which is the honest trade, because the bar's
+ * reason for existing is thumb reach, and a no-script reader on a phone is
+ * better served by a document that scrolls than by four targets that move. */
+:root:not([data-ui]) .footer-bar {
+  display: none;
+}
+
+/* --- §7.8: the table's 640px tier switch ---------------------------------- */
+
+/* Below 640px every table becomes a stacked card (§7.8). The switch is a media
+ * query rather than a `[data-ui]` rule because §7.8's boundary — 640px, which is
+ * `--breakpoint-sm` — sits *inside* the `compact` tier: a 700px tablet is
+ * `compact` by §3.1's table and still gets the stacked form. Keying it off
+ * `data-ui` would give that tablet a 700px-wide table row with six cells in it.
+ *
+ * It is here rather than in the component's own stylesheet so
+ * `TestEveryMediaQueryMatchesADeclaredConstant`, which reads only this file, keeps
+ * covering it — the same reason `--breakpoint-sm` has a name. */
+[data-table-form="stacked"] {
+  display: block;
+}
+
+[data-table-form="tabular"] {
+  display: none;
+}
+
+@media (min-width: 40rem) {
+  /* 640px, §7.8 and --breakpoint-sm */
+  [data-table-form="tabular"] {
+    display: block;
+  }
+
+  [data-table-form="stacked"] {
+    display: none;
+  }
+}
+
+/* --- The primitive library. UI §4.7's states and §15.3 steps 7–9 ---------- */
+
+/* `.target` is the minimum; these are the affordances. Every interactive
+ * element in the library carries `TargetClass` (the class constant, so it cannot
+ * be spelled by hand and drift), and this rule is where that becomes a visible
+ * control rather than a rectangle of padding. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1.2;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding-inline: var(--space-3);
+  cursor: pointer;
+}
+
+/* §6.4's polarity rule is why this fill is not the accent tint: a fill's own
+ * shape has to clear 3:1 against its page (1.4.11), not merely carry a 4.5:1
+ * label. `--local-surface` is §6.5's "focus on a solid fill inverts the ring",
+ * set once here so every ring inside the button inherits it. */
+.button--primary {
+  --local-surface: var(--on-accent);
+  color: var(--btn-primary-fg);
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg);
+  font-weight: 600;
+}
+
+/* §11's named failure, verbatim: "the 580px centre height is unforgiving —
+ * vertical overflow on a dialog". The cap is a property and lives here; what the
+ * component owns is the single scroll region this caps.
+ *
+ * `100dvh` and not `vh`: §3.6 requires the pair everywhere, and a dialog is
+ * where the two differ most — it is the one overlay a phone reader meets while
+ * the URL bar is collapsing. The subtraction is the gutter, twice, so a dialog
+ * never touches the screen edge. */
+.dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  inline-size: min(32rem, 100% - 2 * var(--space-4));
+  max-block-size: min(100dvh - 2 * var(--space-8), 100%);
+  overflow: hidden;
+  /* Not `auto`: the *body* is the scroll region (`data-dialog-scroll`), and a
+   * frame that also scrolled is two nested scroll regions inside a viewport that
+   * is already scroll-locked at medium and above (§3.6). */
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  /* `hidden` is in the served markup (§7.7), so this rule is the open state and
+   * the UA's `[hidden] { display: none }` still wins — specificity 0,1,0 against
+   * this rule's 0,1,0 with the UA sheet losing to any author rule. Declared
+   * here so the reason is on the record rather than only in the component. */
+}
+
+.dialog[hidden] {
+  display: none;
+}
+
+/* The one scroll region. `overscroll-behavior: contain` for §3.6's reason: a
+ * dialog body reaching its end must not chain-scroll the page behind it, which
+ * at medium and above is a viewport-locked shell that then appears to move. */
+.dialog-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-4);
+  min-block-size: 0;
+}
+
+/* Fixed above and below the scroll region, so the close button stays put while
+ * the body scrolls — a close control that scrolls out of reach is a dialog a
+ * keyboard user has to dismiss with Escape. */
+.dialog-title,
+.dialog-actions {
+  flex: 0 0 auto;
+  padding: var(--space-4);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.dialog-description {
+  color: var(--text-muted);
+  margin-block: 0 var(--space-3);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-block-start: 0;
+}
+
+/* §7.7: on touch and TV a menu is a full-width bottom sheet. `inset-inline: 0`
+ * with `inline-size: auto` is what makes it edge-to-edge rather than 18rem wide
+ * on a 320px screen — which is §3.1's arithmetic for the left drawer, and it
+ * applies to a menu at exactly the same widths. */
+[data-menu-sheet] {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  inline-size: auto;
+  max-block-size: var(--sheet-rail);
+  margin: 0;
+  padding: var(--space-2);
+}
+
+.menu {
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  min-inline-size: var(--target-min);
+}
+
+.menu-items {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  /* §7.3's separation, once, so no menu item can be written without it. */
+  gap: var(--target-gap);
+}
+
+/* An item is either a link or a button, never both (§7.7), and both render the
+ * same row. `.button` is on the button variant in the markup and not here, so the
+ * two do not fight over the background. */
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  padding-inline: var(--space-3);
+  font-size: var(--text-base);
+  text-decoration: none;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* Tabs: a horizontal rail. The selected tab is `--tab-selected-bg`/`-fg` *plus*
+ * a weight change, because §6.5 forbids hue as the only carrier — a selected tab
+ * that differs from an unselected one only in background colour is a control
+ * whose state a reader who cannot see colour cannot perceive at all. */
+.tabs {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.tab-list {
+  display: flex;
+  gap: var(--target-gap);
+  border-block-end: var(--border-w) solid var(--border);
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+
+.tab {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  padding-inline: var(--space-3);
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--tab-selected-fg);
+  background: var(--tab-selected-bg);
+  font-weight: 600;
+  border-block-end-color: var(--accent);
+}
+
+/* §6.7: nothing may depend on motion to become visible, so an unselected panel
+ * is `hidden` in the markup and this rule adds no `display` — the region is in
+ * the document either way and the client only flips the attribute. */
+.tab-panel {
+  padding-block-start: var(--space-4);
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+/* A disclosure's region is plain flow. The *state* is the `hidden` attribute,
+ * never a `display` rule, for §6.7's reason: a region that is only in the layout
+ * while an animation runs is a region whose content a reader may never see. */
+.disclosure-region[hidden] {
+  display: none;
+}
+
+.disclosure-toggle {
+  cursor: pointer;
+}
+
+/* §7.8's table. `min-block-size` on the cells is the row-height rule: 36px on a
+ * pointer (§7.8) and §7.3's 44px on touch, which is a `@media (pointer: coarse)`
+ * rather than a width — a wide touch tablet still needs 44px rows. */
+.table-frame {
+  overflow-x: auto;
+  /* §3.6's reason: a wide table reaching its end must not chain-scroll the
+   * centre behind it. */
+  overscroll-behavior: contain;
+}
+
+.data-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.data-table :is(th, td) {
+  min-block-size: 2.25rem; /* 36px — §7.8's pointer row height */
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  border-block-end: var(--border-w) solid var(--border);
+}
+
+@media (pointer: coarse) {
+  .data-table :is(th, td) {
+    min-block-size: var(--target-min); /* 44px — §7.3's touch minimum */
+  }
+}
+
+/* The sticky header inside the centre's scroll region, so a reader who has
+ * scrolled forty rows still knows which column they are in. `background` is
+ * required, not cosmetic: a sticky header with a transparent background shows
+ * the rows scrolling *through* it. */
+.data-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  background: var(--surface);
+  /* §6.5: the weight change is the non-colour carrier of the sort state, and
+   * `aria-sort` is on the cell (the component) rather than here. */
+  font-weight: 600;
+  z-index: 1;
+}
+
+.data-table-actions,
+.data-table-actions-head {
+  /* One overflow menu per row is §7.8's rule — "80 tab stops destroys
+   * usability" — so the column is as narrow as a target allows and nothing
+   * else. */
+  inline-size: 1%;
+  white-space: nowrap;
+}
+
+/* §7.8: the direction is a *word* in the accessible name, so the visual marker
+ * must not be hue or a caret alone either. Weight is the carrier. */
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sort-direction {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.sort-label {
+  /* The accessible name and the visible label are the same text (§4.3's rule for
+   * navigation labels, and WCAG 2.5.3's). Nothing here hides one of them. */
+}
+
+/* The stacked form. One `<dl>` per row over a `minmax(0, 1fr)` grid — never a bare
+ * fraction, for the same reason the centre track is not one. */
+.stacked-row {
+  display: block;
+  padding: var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  margin-block-end: var(--space-3);
+}
+
+.stacked-row-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.stacked-pairs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.stacked-pairs dt {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.stacked-pairs dd {
+  margin: 0 0 var(--space-2);
+}
+
+/* §4.7's notices. The bar carries the state and the heading carries the word, so
+ * neither hue nor text is the only carrier (§6.5). `--warning` and `--danger`
+ * are never fills: §6.5 says dark amber on white is the classic illegible
+ * pairing, so both go on the 3px bar and on the heading's text. */
+.notice {
+  border-inline-start: 3px solid var(--border);
+  background: var(--surface);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+.notice--warning {
+  border-inline-start-color: var(--warning);
+}
+
+.notice--error {
+  border-inline-start-color: var(--danger);
+}
+
+.notice--error :is(h2, h3, strong) {
+  color: var(--danger);
+}
+
+.notice--warning :is(h2, h3, strong) {
+  color: var(--warning);
+}
+
+/* The centre column's empty state, and its note. §4.7's rows 1–4 are not errors
+ * and must not read as errors: no `--danger` anywhere in `.empty`. */
+.empty {
+  padding-block: var(--space-6);
+  color: var(--text);
+}
+
+.empty-note,
+.field-hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* Forms. §7.7: a real `<label for>`, never a placeholder, so `.field` is a label
+ * over a control and the hint is referenced by `aria-describedby`. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-inline-size: 24rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.field :is(input, select, textarea) {
+  font: inherit;
+  font-size: var(--text-base);
+  color: var(--text);
+  background: var(--surface);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+}
+
+/* §7.2: the header's search label, and the table's actions header. Clipped rather
+ * than `display: none` because a `display: none` label is in no accessibility
+ * tree at all, and this content is a name a screen reader needs. */
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The rail's panels and the campaign list's cards. Both are `minmax(0, 1fr)`
+ * grids rather than fixed widths, so a 13rem rail and a 320px centre both work
+ * from one rule. */
+.panel {
+  background: var(--surface);
+  border: var(--border-w) solid var(--surface-border, var(--border));
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.panel--warning {
+  border-inline-start: 3px solid var(--warning);
+}
+
+.panel h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.panel-line,
+.panel-detail,
+.panel-note {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.panel-detail,
+.panel-note {
+  color: var(--text-muted);
+}
+
+.panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.panel-term {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  /* Never a bare fraction — the same §4 rule as the centre track. */
+  grid-template-columns: repeat(auto-fill, minmax(14rem, minmax(0, 1fr)));
+  gap: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: var(--border-w) solid var(--surface-border, var(--border));
+  border-radius: var(--radius-md);
+}
+
+.card-link {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.card-meta {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* The article. §3.2's measure cap is on `.shell-main > *`; this is what a reader
+ * actually looks at, and `overflow-wrap: anywhere` is the §7.9 guarantee for a
+ * long slug or a pasted URL inside the prose rather than in the centre's own box. */
+.page-body {
+  font-family: var(--font-prose);
+  font-size: var(--text-md);
+  line-height: 1.5; /* §5.1's prose leading, unitless */
+}
+
+.page-body p {
+  margin-block: 0 1em; /* §5.1: paragraph margins in em */
+}
+
+.page-body h1,
+.page-body h2,
+.page-body h3,
+.page-body h4 {
+  font-family: var(--font-ui);
+  line-height: 1.2; /* §5.1's heading leading, unitless */
+  margin-block: 1.2em 0.4em;
+}
+
+.page-body :is(h1, h2, h3, h4, h5, h6) {
+  font-size: var(--text-lg);
+}
+
+/* The centre's own `<h1>`: §5.1's `--text-2xl`, and §5.3's "no px font-size"
+ * satisfied by construction — the step is a token and the token is a multiplier. */
+.shell-main h1 {
+  font-family: var(--font-ui);
+  font-size: var(--text-2xl);
+  line-height: 1.2;
+  margin-block: 0 var(--space-4);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* --- §6.7: forced colours ------------------------------------------------- */
+
+/* tokens.css drops every shadow in forced-colors mode, which is correct — a
+ * shadow is not a colour a high-contrast mode can represent — and it leaves
+ * every surface needing a border in its place. These are the surfaces that had
+ * only a shadow. The names are the ones above, so this block cannot drift from
+ * the rules it is compensating for.
+ *
+ * `ButtonBorder` rather than a token of ours: §6.7's rule is that forced-colors
+ * falls back to the *system's* colours, and a custom property of ours would
+ * resolve to our colour in a mode whose entire point is that our colours are
+ * being replaced. */
+@media (forced-colors: active) {
+  .dialog,
+  .menu,
+  .panel,
+  .card,
+  .notice,
+  .stacked-row,
+  .data-table :is(th, td),
+  .footer-bar,
+  .header-search-input,
+  .field :is(input, select, textarea) {
+    border: 1px solid ButtonBorder;
+  }
+
+  .button--primary,
+  .tab[aria-selected="true"] {
+    /* A forced-colors mode replaces backgrounds, so the *label* is what has to
+     * survive. `ButtonText` is the pair to `ButtonFace`. */
+    color: ButtonText;
+  }
+
+  /* `.target`'s two minimums are lengths, not colours, and forced-colors does not
+   * change them — but the ring does, and tokens.css already routes it to
+   * `Highlight`. Nothing here overrides that. */
+}
+
+/* --- §6.7: reduced motion and preferred contrast ------------------------- */
+
+/* tokens.css collapses every `--dur-*` to 1ms under `prefers-reduced-motion:
+ * reduce`, and it checks that as a *set* so a fifth duration added later cannot
+ * be the one that keeps animating. These two rules are the transitions declared
+ * in this file, and they read the tokens, so they are already covered — restated
+ * here only to make the direction explicit: nothing in this file declares a
+ * duration of its own, and nothing declares `@keyframes`, so no content in the
+ * phase becomes visible on a timer.
+ *
+ * `prefers-contrast: more` and `forced-colors` are likewise handled in
+ * tokens.css, because §6.7's four rules are about tokens. Neither is ever used
+ * to infer a form factor — §3.3 names that explicitly, and tv.css is the only
+ * file that reads a form-factor signal. */
