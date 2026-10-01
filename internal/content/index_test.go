@@ -1261,8 +1261,15 @@ func TestAnAnonymousSearchReturnsNoPrivateRow(t *testing.T) {
 
 	// The positive, first and explicitly. A member of the private campaign must
 	// receive the marker in all three fields, or every negative below is vacuous.
+	// The username carries the fixture's counter for the same reason the slug
+	// does: `TestMain` opens one database for the whole package, so `go test
+	// -count=3` runs this test three times against it and a fixed username
+	// collides with its own previous iteration. The slug was already unique per
+	// fixture; the username was the one that was not, and the failure it produced
+	// read as a persistence bug rather than as a fixture that assumed it was the
+	// only thing in the database.
 	reader, err := private.store.CreateUser(t.Context(), domain.User{
-		Username:     "reader",
+		Username:     "reader-" + private.slug,
 		PasswordHash: "not-a-real-hash",
 	})
 	if err != nil {
@@ -1303,8 +1310,10 @@ func TestAnAnonymousSearchReturnsNoPrivateRow(t *testing.T) {
 	// A second user who is a member of the *public* campaign and not of this one.
 	// Without a genuinely non-member, every case below would be a member wearing a
 	// different label, and the test would prove nothing about the predicate.
+	// Unique per fixture, for the reason `reader` above gives: one database, many
+	// iterations.
 	outsider, err := public.store.CreateUser(t.Context(), domain.User{
-		Username:     "outsider",
+		Username:     "outsider-" + public.slug,
 		PasswordHash: "not-a-real-hash",
 	})
 	if err != nil {
