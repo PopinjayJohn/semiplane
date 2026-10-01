@@ -9,6 +9,7 @@ import (
 	campaignroutes "github.com/semiplane/semiplane/internal/httpapi/campaigns"
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	wikiroutes "github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/web"
 )
@@ -82,6 +83,7 @@ func NewRouter(
 	registry *observability.Registry,
 	accountRoutes *accountroutes.Router,
 	backing Store,
+	wikiRoute *wikiroutes.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
@@ -97,15 +99,27 @@ func NewRouter(
 	// a route added to mountCampaignRoutes inherits the S-8 matrix by being
 	// listed there rather than by remembering to wrap itself.
 	//
-	// No route is mounted yet — the wiki surface is P3, the write path P6 — but
-	// the chain is wired now so that the first one is a one-line addition and a
-	// reviewer can see the ordering that matters: Resolve outermost, so the
-	// RequireRead beneath it can read the tier it is deciding on.
+	// The ordering is load-bearing: Resolve outermost, so the RequireRead beneath
+	// it reads the tier it is deciding on.
+	//
+	// The pattern is `/c/{slug}/` and **not** `/c/`, and the difference is a bug
+	// that is invisible until a campaign route exists. `net/http` sets a path
+	// value from the pattern that matched, and the inner mux does not match
+	// until this middleware has already run — so mounted at `/c/`, no wildcard is
+	// named at the point `Resolve` reads it, the tier stays TierNone, and
+	// RequireRead answers 404 for *every* request under `/c/`, including a page
+	// that exists and a reader who is entitled to it.
+	//
+	// That is not hypothetical: it was the state of this function until the wiki
+	// route landed, and the only test covering it passed, because 404-for-
+	// everything is indistinguishable from the correct answer while no campaign
+	// route is registered. `wikiroutes.TestTheCampaignMountMustCarryTheSlug`
+	// asserts both directions and is the guard.
 	campaignMux := http.NewServeMux()
-	mountCampaignRoutes(campaignMux)
+	mountCampaignRoutes(campaignMux, wikiRoute)
 
 	if backing != nil {
-		mux.Handle("/c/", campaignroutes.Resolve(backing)(
+		mux.Handle("/c/{slug}/", campaignroutes.Resolve(backing)(
 			middleware.Chain(campaignMux, campaignroutes.RequireRead),
 		))
 	}
@@ -142,10 +156,16 @@ func NewRouter(
 
 // mountCampaignRoutes registers the handlers under `/c/{slug}`.
 //
-// Empty in this phase, and the emptiness is deliberate rather than a placeholder
-// left unfilled: this is the list P3 and P6 extend, and a route mounted outside
-// it would bypass the gates entirely. A request under /c/ matching nothing
-// falls through to the mux's own 404, whose body is identical to the answer for
-// a campaign that does not exist — which is the property the S-8 matrix needs and
-// the reason nothing is mounted ahead of its gate.
-func mountCampaignRoutes(_ *http.ServeMux) {}
+// One list, so a route added here is behind the gates and a route added anywhere
+// else is not. That is the whole enforcement mechanism (ADR 0024): the failure
+// mode of forgetting a gate is a private page answering 200, and the way to make
+// that unexpressible is for there to be one place to add a route.
+//
+// A nil wikiRoute registers nothing rather than panicking, so a router built for
+// a read-only or content-less instance still serves the liveness routes and the
+// account surfaces.
+func mountCampaignRoutes(mux *http.ServeMux, wikiRoute *wikiroutes.Handler) {
+	if wikiRoute != nil {
+		wikiroutes.Mount(mux, wikiRoute)
+	}
+}

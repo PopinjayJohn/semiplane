@@ -1,0 +1,37 @@
+<blockquote>
+<p>The beam still turns.</p>
+<p>— The keeper’s log, volume nine</p>
+</blockquote>
+
+<p>A nested list, a nested quote, and a table, all inside a disclosure:</p>
+<ul>
+<li>one</li>
+<li>two</li>
+</ul>
+<blockquote>
+<p>And a quote inside the disclosure.</p>
+</blockquote>
+
+<h1 id="code">Code</h1>
+<p>A fenced block with a language, which is the one place a class value is
+author-chosen:</p>
+<pre><code class="language-go">func Light(lamp *Lamp) error {
+	return lamp.Wick()
+}
+</code></pre>
+<p>A fenced block with no language:</p>
+<pre><code>[[The Lighthouse]]
+</code></pre>
+<p>A block whose content would be markup if it were not escaped:</p>
+<pre><code class="language-html">&lt;div class=&#34;not-really&#34;&gt;this is code, not a div&lt;/div&gt;
+&lt;script&gt;alert(1)&lt;/script&gt;
+</code></pre>
+<p>A code span: <code>[[The Lighthouse]]</code>, and <code>{{dice:1d20+5}}</code>, and <code>![[chart.png]]</code>.</p>
+<p>An indented block:</p>
+<pre><code>![[chart.png]]
+</code></pre>
+<h1 id="everything-at-once">Everything at once</h1>
+<p>A paragraph with <a class="wikilink" data-ext="wikilink" data-ref-index="0">The Lighthouse</a>, an embed <span class="embed" data-ext="embed" data-ref-index="1"></span>, a
+<span class="dice" data-ext="dice" data-ref-index="2" data-arg="1d20+5"></span> and a <span class="statblock" data-ext="statblock" data-ref-index="3" data-arg="Goblin"></span> in it, then a break, then more.</p>
+<hr>
+<p>The end.</p>

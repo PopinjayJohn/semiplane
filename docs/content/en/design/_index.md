@@ -71,6 +71,12 @@ record — they are listed here:
   shell cannot be styled before the CSS toolchain exists. The toolchain moves to
   the foundations phase and the shell becomes its own phase. See
   [0013]({{ "decisions/0013-templ/" | relURL }}).
+- **The architecture record's `pages` table lists a `front_matter` column, and
+  the table does not have one.** The filesystem is the source of truth, so the
+  front matter is already in the file; a second copy of a block the parser
+  regenerates in a millisecond is a second copy that can disagree with the
+  first, and the failure is a per-page disagreement with no error anywhere. See
+  [0027]({{ "decisions/0027-no-front-matter-column-and-the-index-is-a-cache/" | relURL }}).
 - Diagrams render as code blocks. They are readable as source, which is how they
   were written.
 

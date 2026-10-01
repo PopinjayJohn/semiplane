@@ -198,6 +198,7 @@ func fullRouter(backing httpapi.Store) http.Handler {
 		observability.NewRegistry(),
 		&accounts.Router{Store: backing},
 		backing,
+		nil,
 	)
 }
 
@@ -355,6 +356,7 @@ func TestRouterWithoutAStoreStillServesLiveness(t *testing.T) {
 		observability.NewRegistry(),
 		nil,
 		nil,
+		nil,
 	)
 
 	for path, want := range map[string]int{
@@ -371,22 +373,72 @@ func TestRouterWithoutAStoreStillServesLiveness(t *testing.T) {
 	}
 }
 
-// TestUnmatchedCampaignPathIsNotFoundNotAuthorised: /c/ is mounted behind the
-// access gates, and with no campaign route registered the answer is a 404 whose
-// body is the not-found body — the same answer for a slug nobody registered.
+// TestUnmatchedCampaignPathIsNotFoundNotAuthorised: the campaign subtree is
+// mounted behind the access gates, and a path inside it that matches no route
+// answers 404 with the not-found body — the same answer for a slug nobody
+// registered.
 func TestUnmatchedCampaignPathIsNotFoundNotAuthorised(t *testing.T) {
 	t.Parallel()
 
 	st := newWiringStore()
 	handler := fullRouter(st)
 
-	for _, path := range []string{"/c/greyhaven", "/c/greyhaven/wiki/Page", "/c/no-such-campaign/wiki/Page"} {
+	paths := []string{
+		"/c/greyhaven/wiki/Page",
+		"/c/greyhaven/edit/Page",
+		"/c/greyhaven/secrets/Page",
+		"/c/no-such-campaign/wiki/Page",
+		"/c/greyhaven/",
+	}
+
+	for _, path := range paths {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, getRequest(t, path, nil))
 
 		if recorder.Code != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", path, recorder.Code)
 		}
+	}
+}
+
+// TestCampaignSubtreeRedirectIsIdenticalForEverySlug: `/c/{slug}` canonicalises
+// to `/c/{slug}/`, and `net/http` adds that redirect for any pattern ending in
+// a slash.
+//
+// The redirect happens in the mux, *before* the access gate runs, and its
+// Location is derived from the request path alone. That is the property worth
+// pinning: an existing campaign and a campaign nobody registered must produce
+// the same redirect, or the redirect becomes an existence oracle for every
+// private campaign on the instance — the one leak a 404-shaped answer was
+// specifically arranged to prevent (ADR 0024).
+func TestCampaignSubtreeRedirectIsIdenticalForEverySlug(t *testing.T) {
+	t.Parallel()
+
+	handler := fullRouter(newWiringStore())
+
+	seen := map[string]int{}
+
+	for _, slug := range []string{"greyhaven", "no-such-campaign", "anything-at-all"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, getRequest(t, "/c/"+slug, nil))
+
+		if recorder.Code != http.StatusTemporaryRedirect {
+			t.Errorf("GET /c/%s = %d, want 307", slug, recorder.Code)
+		}
+
+		seen[slug] = recorder.Code
+
+		// The Location is the canonical form of the path that was asked for, and
+		// nothing else. If it ever varied with whether the campaign exists, this
+		// is where it would show.
+		if want := "/c/" + slug + "/"; recorder.Header().Get("Location") != want {
+			t.Errorf("GET /c/%s redirected to %q, want %q",
+				slug, recorder.Header().Get("Location"), want)
+		}
+	}
+
+	if seen["greyhaven"] != seen["no-such-campaign"] {
+		t.Error("an existing campaign and an absent one answer the redirect differently")
 	}
 }
 

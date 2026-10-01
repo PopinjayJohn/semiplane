@@ -1,0 +1,71 @@
+package components
+
+// The wiki page: one page of a campaign, inserted into the shell's centre slot.
+//
+// This is a placeholder that establishes the seam, not the final article. P5
+// restyles the shell and P6 fills in the surrounding chrome — the campaign
+// navigation, the table of contents, the sibling list, the rail that describes
+// the campaign rather than the instance. What is here is the part that has to be
+// right before any of that exists: one `<h1>` naming the page, the sanitised body
+// in the position the stylesheet will style, and the error state under the same
+// heading so a reader who cannot load a page is still told which page failed.
+//
+// The view model is declared here rather than in viewmodels.go because that file
+// is not this work item's to edit, and a route that owns its markup but not its
+// model would otherwise have no way to be built. It moves to viewmodels.go with
+// the rest of them when the next change touches that file; nothing outside this
+// package depends on where it is.
+
+// WikiPageView is the centre slot for `/c/{slug}/wiki/{path}`.
+type WikiPageView struct {
+	// Shell is the chrome. Its Instance field also fills the right rail, so a
+	// caller sets it once.
+	Shell ShellView
+	// Heading is what the page calls itself: its base name. Always set, including
+	// on the failure state — a reader who cannot load a page needs to be told which
+	// page they were trying to load.
+	Heading string
+	// Body is the page's sanitised HTML with its references' addresses written
+	// in. Empty when Failure is set.
+	Body string
+	// Failure replaces the body with the error state when the page could not be
+	// produced. A pointer, so "a page with no prose" and "a page that could not be
+	// loaded" cannot be the same value.
+	Failure *LoadFailure
+}
+
+// WikiPage is the centre slot for a campaign's page.
+templ WikiPage(view WikiPageView) {
+	@Shell(view.Shell, WikiArticle(view), InstanceRail(view.Shell.Instance))
+}
+
+// WikiArticle is the page itself: the heading, then either the body or the error
+// state under it.
+//
+// The heading belongs to the route rather than to the state, which is what makes
+// "exactly one <h1> per page" (UI §7.2) structural here the way it is on the
+// campaign list: a reader who lands on the error state still gets told where they
+// are, and the state below it does not have to carry an `<h1>` of its own.
+//
+// The rail is the instance rail rather than an empty slot: UI §4.4 gives a
+// campaign route a rail that describes the campaign, and that panel is P6's. An
+// empty `<aside>` would be a landmark with nothing in it, which is worse than a
+// panel describing the instance, and a shell that could render an empty rail is a
+// shell where "is this the campaign shell?" has two right answers.
+templ WikiArticle(view WikiPageView) {
+	<h1 id="page-heading" data-testid="page-title">{ view.Heading }</h1>
+	if view.Failure != nil {
+		@LoadError(*view.Failure)
+	} else {
+		// @templ.Raw is the one unescaped interpolation in this package, and the
+		// input is required to be the render pipeline's sanitised output and
+		// nothing else. Escaping it instead would show a reader the page's markup,
+		// which is a page nobody can read; and letting anything other than
+		// sanitised HTML reach it would undo the two layers `content/policy.go`
+		// exists to provide. The route is the only caller, and it gets this value
+		// from `content.Renderer.Render` and from nowhere else.
+		<div class="page-body" data-testid="page-body">
+			@templ.Raw(view.Body)
+		</div>
+	}
+}

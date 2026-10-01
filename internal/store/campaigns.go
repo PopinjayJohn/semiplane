@@ -19,6 +19,8 @@ const (
 
 	selectCampaignBySlug = "SELECT " + campaignColumns + " FROM campaigns WHERE slug = ?"
 
+	selectCampaignByID = "SELECT " + campaignColumns + " FROM campaigns WHERE id = ?"
+
 	// A viewer's campaign list is built from their memberships, so the join is
 	// the query rather than a second round trip: campaign_members_user_id_idx
 	// finds the rows and the slug index orders them.
@@ -29,6 +31,9 @@ const (
 	selectCampaignsForUser = "SELECT " + prefixedCampaignColumns +
 		" FROM campaigns AS c JOIN campaign_members AS m ON m.campaign_id = c.id" +
 		" WHERE m.user_id = ? ORDER BY c.slug"
+
+	// The instance-wide listing, for startup and the watcher. See Campaigns.
+	selectCampaigns = "SELECT " + campaignColumns + " FROM campaigns ORDER BY slug"
 
 	deleteCampaign = "DELETE FROM campaigns WHERE id = ?"
 )
@@ -160,17 +165,35 @@ func (s *Store) CampaignsForUser(ctx context.Context, userID int64) ([]domain.Ca
 	return campaigns, nil
 }
 
-// DeleteCampaign removes a campaign and, by cascade, its memberships.
+// DeleteCampaign removes a campaign and, by cascade, its memberships and its
+// pages.
 //
 // `campaign_state` has no foreign key to it -- migration 0005 explains why, and
 // records the rebuild that will add one -- so a deleted campaign leaves its live
 // game state behind. That gap belongs to the work item that owns that table, and
 // it is why this is the only deletion here that is knowingly incomplete.
+//
+// The pages cascade does leave something behind, and this rebuilds it. `pages_fts`
+// is a virtual table with no foreign key reaching it and no trigger maintaining it
+// (migration 0007 explains both), so the index keeps entries for rows the cascade
+// removed. They join to nothing and can never be returned -- which is why this is
+// housekeeping rather than a leak -- but they occupy the index forever. A rebuild
+// is one statement, and it doubles as the check that the index still agrees with
+// `pages`: an external-content FTS5 table answers no query of its own, so a
+// rebuild that changed anything would mean the writer had drifted.
 func (s *Store) DeleteCampaign(ctx context.Context, id int64) error {
-	return s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, deleteCampaign, id)
+	what := fmt.Sprintf("delete campaign %d", id)
 
-		return translateWrite(err, fmt.Sprintf("delete campaign %d", id))
+	return s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, deleteCampaign, id); err != nil {
+			return translateWrite(err, what)
+		}
+
+		if _, err := tx.ExecContext(ctx, rebuildPagesFTS); err != nil {
+			return translateWrite(err, what)
+		}
+
+		return nil
 	})
 }
 
@@ -231,4 +254,65 @@ func scanCampaignFields(row rowScanner) (domain.Campaign, error) {
 // rowScanner is what *sql.Row and *sql.Rows both satisfy.
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+// Campaigns lists every registered campaign, ordered by slug.
+//
+// The instance-wide read, and it exists because something has to enumerate
+// campaigns rather than resolve one. Two callers need it now or soon, and neither
+// can be served by CampaignsForUser:
+//
+//   - Startup opens each campaign's `os.Root`, and it must open the ones nobody
+//     has signed in to. A campaign whose root is never opened serves a 500 on its
+//     first page request, which is how "the wiki is broken" happens.
+//   - The watcher (P4) registers a watch per campaign, and a watcher that only
+//     saw the campaigns a particular user belongs to would index nothing.
+//
+// Ordered by slug because both callers are building something out of the list —
+// a watch set, a map — and a deterministic order is what lets a caller diff two
+// reads and know nothing moved. The slug index provides the order, so this is
+// the same scan with no sort.
+func (s *Store) Campaigns(ctx context.Context) ([]domain.Campaign, error) {
+	const what = "list campaigns"
+
+	rows, err := s.db.QueryContext(ctx, selectCampaigns)
+	if err != nil {
+		return nil, translateRead(err, what)
+	}
+
+	// closeRows for the reason PagesForCampaign gives: an unchecked close on a
+	// single-connection pool is a cursor left open, which blocks the next query
+	// rather than erroring.
+	defer closeRows(rows, what)
+
+	campaigns := make([]domain.Campaign, 0, 16)
+
+	for rows.Next() {
+		campaign, err := scanCampaignFields(rows)
+		if err != nil {
+			return nil, translateRead(err, what)
+		}
+
+		campaigns = append(campaigns, campaign)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, translateRead(err, what)
+	}
+
+	return campaigns, nil
+}
+
+// CampaignByID reads one campaign by its id.
+//
+// The companion to CampaignBySlug, for the two callers that hold an id and not a
+// name. A URL names a campaign by slug (S-9.1); a page row, a membership and the
+// `campaign_state` row all carry an id, and resolving one of those to a slug
+// needs this rather than a listing filtered in Go — which would read every
+// campaign to find one and would make the answer depend on how many there are.
+func (s *Store) CampaignByID(ctx context.Context, id int64) (domain.Campaign, error) {
+	return scanCampaign(
+		s.db.QueryRowContext(ctx, selectCampaignByID, id),
+		fmt.Sprintf("read campaign %d", id),
+	)
 }
