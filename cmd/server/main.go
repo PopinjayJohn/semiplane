@@ -13,11 +13,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/semiplane/semiplane/internal/campaignroots"
 	"github.com/semiplane/semiplane/internal/config"
+	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/httpapi"
 	"github.com/semiplane/semiplane/internal/httpapi/accounts"
+	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
+	"github.com/semiplane/semiplane/internal/web/components"
 )
 
 // usageText is written on a usage error and on an explicit `help`. Kept in one
@@ -171,9 +175,82 @@ func runServer(_ []string) error {
 	// signature change in one of the three when the other two are untouched.
 	var httpStore httpapi.Store = db
 
+	// The wiki read path. `contentRoots` holds one `os.Root` per campaign, which
+	// is the confinement boundary for every path the route reads — the route
+	// takes a `Get(slug)` and cannot be handed a path at all.
+	//
+	// A campaign whose row exists but whose vault is not mounted is *degraded*,
+	// not fatal (S-4.5): the other campaigns keep serving and the instance stays
+	// up. One unmounted disk must not take the whole thing down.
+	contentRoots, degraded, rootsErr := campaignroots.Open(ctx, db, logger)
+	if rootsErr != nil {
+		return fmt.Errorf("open campaign content roots: %w", rootsErr)
+	}
+
+	// Indexed: the entry is 128 bytes and this runs on every boot.
+	for i := range degraded {
+		entry := &degraded[i]
+
+		// Error, not warn. S-4.5 is explicit that a campaign that cannot be
+		// watched or read is a fault an operator must see, and a warn line on a
+		// boot with an unmounted vault is a line nobody reads.
+		logger.Error("campaign.content_root_unusable",
+			slog.String("slug", entry.Slug),
+			slog.String("path", entry.Path),
+			slog.String("error", entry.Err.Error()),
+		)
+	}
+
+	if len(degraded) > 0 {
+		logger.Warn("instance degraded: some campaigns have no readable content",
+			slog.Int("degraded_campaigns", len(degraded)),
+			slog.Any("slugs", degraded.Slugs()),
+		)
+	}
+
+	// One renderer per campaign, not per request: a `*content.Renderer` holds a
+	// built goldmark pipeline and an immutable sanitiser policy, and both are safe
+	// for concurrent use, so this is one allocation per campaign rather than one
+	// per request. Built here from the campaigns the store just listed, because a
+	// renderer for a campaign with no root would be a renderer nothing can reach.
+	renderers := make(wiki.CampaignRenderers, len(degraded))
+
+	registered := mustListCampaigns(ctx, db)
+
+	// Indexed: domain.Campaign is 128 bytes, and a renderer map keyed by slug
+	// wants the slug, not the row.
+	for i := range registered {
+		if _, openErr := contentRoots.Get(registered[i].Slug); openErr != nil {
+			continue
+		}
+
+		renderers[registered[i].Slug] = content.NewRenderer(registered[i].Slug, pageKinds{})
+	}
+
+	wikiRoute := &wiki.Handler{
+		Roots:     contentRoots,
+		Renderers: renderers,
+		Kinds:     pageKinds{},
+		Pages:     pageLister{roots: contentRoots, db: db},
+		// P10 replaces this. Until then `[!secret]` content is **not** redacted,
+		// and this is the one place on the request path that fact is written down.
+		Redactor:    content.NoSecrets(),
+		Cache:       content.NewCache(renderCacheEntries),
+		Logger:      logger,
+		Instance:    components.InstanceView{},
+		SignOutHref: "/logout",
+	}
+
 	server := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           httpapi.NewRouter(logger, cfg, registry, accountRoutes, httpStore),
+		Addr: cfg.Addr,
+		Handler: httpapi.NewRouter(
+			logger,
+			cfg,
+			registry,
+			accountRoutes,
+			httpStore,
+			wikiRoute,
+		),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

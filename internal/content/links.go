@@ -501,6 +501,13 @@ type PageIndex struct {
 	// under holds every directory a page sits in, so a reference's first segment
 	// can be asked whether the home campaign has one by that name.
 	under map[string]struct{}
+
+	// pages is the rows the index was built from, kept so Pages does not have to
+	// reconstruct them from a map of names. Cloned on the way in and on the way
+	// out, because a caller mutating the slice it handed over would change what
+	// this index reports — and an index that changes under a lookup is worse than
+	// no index.
+	pages []domain.Page
 }
 
 // NewPageIndex indexes pages for link resolution.
@@ -521,6 +528,7 @@ func NewPageIndex(pages []domain.Page) PageIndex {
 		paths:  make(map[string]struct{}, len(pages)),
 		byBase: make(map[string][]string, len(pages)),
 		under:  make(map[string]struct{}, len(pages)),
+		pages:  slices.Clone(pages),
 	}
 
 	for at := range pages {
@@ -542,6 +550,17 @@ func NewPageIndex(pages []domain.Page) PageIndex {
 	}
 
 	return index
+}
+
+// Pages returns the rows the index was built from, in the order they were
+// given.
+//
+// Exists so a caller that *built* the index can hand the same rows to
+// something else without walking twice. It is not a general accessor: the
+// index is a lookup structure, and a caller wanting a page's title should
+// keep the rows it already has rather than derive them from a map of names.
+func (index PageIndex) Pages() []domain.Page {
+	return slices.Clone(index.pages)
 }
 
 // HasPath reports whether the campaign has a page at rel.

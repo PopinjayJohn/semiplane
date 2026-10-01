@@ -204,15 +204,20 @@ cmd/server/       thin main: config, wiring, signals. The composition root.
 internal/config/  env parsing, no project deps
 internal/domain/  pure types and rules, no I/O
 internal/store/   persistence and migrations (forward-only)
-internal/content/ os.Root confinement, front matter, render, cache, watcher
+internal/content/ os.Root confinement, front matter, render, sanitise, links, cache
+  ├─ root.go        the confinement boundary; `os.Root` is the authority
+  ├─ ext/           the `[[wikilink]]`, `![[embed]]`, `{{statblock}}`, `{{dice}}` extensions
+  └─ redact.go      the S-5.7 seam. P10 replaces NoSecrets()
 internal/realtime/hub, campaign state, protocol codec
 internal/plugin/  registry; explicit registration, NO init()
 internal/httpapi/ handlers, routing, middleware
-  ├─ middleware/ chain: RequestID, Recoverer, RealIP, Log, Timeout
+  ├─ middleware/ RequestID, Recoverer, RealIP, Log, Timeout
   ├─ auth/       credential primitives only — no database, no config
   ├─ identity/   session cookie → domain.Requestor, on the request context
   ├─ campaigns/  the S-8 access gates, and campaign registration
-  └─ accounts/   the sign-in and campaign-list routes
+  ├─ accounts/   the sign-in and campaign-list routes
+  └─ wiki/       the read path, and the S-5.7 redaction ordering
+internal/campaignroots/ opens one os.Root per campaign at startup
 internal/web/     templ components and static assets
 docs/             Hugo documentation site (its own project root)
 demo-vault/       the demo campaigns (phase 11)
@@ -273,7 +278,25 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   creates an administrator, because a password in the environment cannot be withdrawn from.
   See [0025](docs/content/en/decisions/0025-no-first-account-bootstrap-environment-variable.md).
 - **Never `html.WithUnsafe()`.** Never. With a public tier and Obsidian sync as an input, this
-  is a security boundary.
+  is a security boundary. Two layers enforce it: goldmark never interprets raw HTML, and bluemonday
+  is an allowlist that strips the rest. A **block-level** raw HTML element therefore loses its text
+  — CommonMark behaviour, and the test that says so is
+  `TestRawHTMLBlockTextIsDropped`. Do not "fix" it by enabling unsafe HTML.
+  [0028](docs/content/en/decisions/0028-render-output-is-permission-neutral.md)
+- **Redaction runs on the source, before the render.** A redactor that ran after would leave the
+  unredacted text in the renderer's buffers, the sanitiser's input and the cache. The seam is
+  `content.Redactor`, and `content.NoSecrets()` is a pass-through that **removes nothing** until
+  phase 10 — its name reads like a guarantee and it is the opposite.
+  [0029](docs/content/en/decisions/0029-redaction-operates-on-the-source.md)
+- **A cross-campaign wikilink is `[[/campaign/Page]]`**, with the leading slash, and is never
+  inlined. The slash is what makes the relative reading and the cross-campaign reading mutually
+  exclusive. `[[Other/Foo]]` is a *relative* link inside the home campaign.
+  [0026](docs/content/en/decisions/0026-cross-campaign-wikilinks-are-vault-absolute.md)
+- **The page index is a walk of the content root** until the watcher maintains `pages`. The
+  filesystem is the source of truth, so a walk *is* the index; reading an unwritten table is what
+  made every wikilink render broken. `pages` has **no `front_matter` column** — a second copy of a
+  regenerable block is a second answer.
+  [0027](docs/content/en/decisions/0027-no-front-matter-column-and-the-index-is-a-cache.md)
 - **Obsidian Sync is untrusted input.** Shared vaults, community plugins, compromised devices.
   Validate all YAML — front matter is attacker-reachable — and resolve all paths inside
   `os.Root`.

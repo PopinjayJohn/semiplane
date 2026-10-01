@@ -238,6 +238,10 @@ var (
 	// that can appear is a decimal integer. Bounding it means a `data-` value that
 	// somehow carried a space or a quote is dropped rather than passed on.
 	digits = regexp.MustCompile(`^\d+$`)
+
+	// brokenMarkerValue is the only value `data-broken` may carry. Anchored, so
+	// `true-ish` and `TRUE` are both stripped rather than half-matched.
+	brokenMarkerValue = regexp.MustCompile(`^true$`)
 )
 
 // pageElements is every element a rendered page may contain.
@@ -414,16 +418,35 @@ func applyAttributePolicy(policy *bluemonday.Policy) {
 
 	policy.AllowAttrs("align").Matching(bluemonday.CellAlign).OnElements("th", "td")
 
-	// The extensions' `data-` attributes, and only those three.
+	// The extensions' `data-` attributes, and only those four.
 	//
 	// `AllowDataAttributes()` is deliberately *not* called. It is one call, and it
 	// allows every `data-*` attribute on every element — a much wider door than it
 	// looks, because a `data-` attribute is inert until some code reads it, and the
 	// failure mode of the wide version is that a later phase adds a client that
 	// reads one, at which point vault content can drive that client. Naming the
-	// three attributes the renderer actually writes makes adding a fourth a change
-	// to this file, in review, rather than a consequence of a library default.
+	// attributes the renderer actually writes makes adding a fifth a change to
+	// this file, in review, rather than a consequence of a library default.
 	policy.AllowAttrs("data-ext").Matching(extensionNames).OnElements("a", "span")
 	policy.AllowAttrs("data-ref-index").Matching(digits).OnElements("a", "span")
 	policy.AllowAttrs("data-arg").OnElements("span")
+
+	// `data-broken` marks a reference the resolver could not satisfy, so the
+	// stylesheet can render it as a dead link rather than as a working one.
+	//
+	// The alternative is a link that 404s: the resolver gives an unresolved
+	// reference a real href, because the page may be created later by a sync, and
+	// a 404 inside a campaign the reader is already authorised for is a worse
+	// answer than a link that looks dead. So the marker is not cosmetic: without
+	// it, a reader clicking a broken wikilink gets the not-found page and cannot
+	// tell that from clicking a working one.
+	//
+	// The value is constrained to `true` and nothing else. A marker whose value a
+	// vault could choose would be a second, author-controlled vocabulary on the
+	// same element, and there is no reader that needs more than one spelling.
+	// bluemonday's `Matching` takes a regexp, so "exactly true" is an anchored
+	// one; the alternative, allowing the attribute bare, would let a vault write
+	// `data-broken="maybe"`, which no stylesheet matches and which therefore
+	// renders as a link that is neither broken nor fine.
+	policy.AllowAttrs("data-broken").Matching(brokenMarkerValue).OnElements("a")
 }

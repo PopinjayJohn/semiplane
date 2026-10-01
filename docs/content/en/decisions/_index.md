@@ -34,4 +34,10 @@ here:
 All three are also listed in the
 [known staleness]({{ "design/" | relURL }}#known-staleness) note on the design records index.
 
+A fourth was found in phase 3:
+
+- **0027** — the overview's `pages` table lists a `front_matter` column, and the table does not
+  have one. The file is the source of truth, so a second copy of a block the parser regenerates in
+  a millisecond is a second answer to "what does this page declare".
+
 ## The records

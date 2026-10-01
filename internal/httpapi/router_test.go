@@ -32,7 +32,7 @@ func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler 
 		TrustedProxies: nil,
 	}
 
-	return httpapi.NewRouter(logger, cfg, registry, nil, nil)
+	return httpapi.NewRouter(logger, cfg, registry, nil, nil, nil)
 }
 
 // TestReadyzReportsCounters is the §13.2 promise: the counters are exposed on
