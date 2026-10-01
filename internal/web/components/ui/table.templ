@@ -1,0 +1,340 @@
+package ui
+
+// The table component and its stacked form (UI §7.8).
+//
+// §7.8 is four rules and each of them is a structural decision rather than a
+// style: a row is at least 44px tall at touch and 36px on a pointer, the header
+// is sticky inside the centre's scroll region, sort is a button in a scoped
+// header rather than a clickable `<th>`, and row actions live in one overflow
+// menu rather than four always-visible buttons — because "80 tab stops destroys
+// usability", and a token list is forty rows before it is a list.
+//
+// THE TWO FORMS ARE ONE DOCUMENT
+// ------------------------------
+// Below 640px every table becomes a stacked card: each row an `<article>` with
+// `<dl>` pairs and its own overflow menu. That is not a second component with a
+// second set of fields — it is the same `Columns` and `Rows`, walked a second
+// time, and both forms are in every response with the stylesheet choosing which
+// one is displayed. Rendering both is deliberate: it means the stacked form is
+// exercised by the same tests on every run rather than only on the viewport
+// somebody happened to sweep, and §10.3's viewport sweep is agent-assisted and
+// does not run in CI. `data-table-form` is the hook the CSS selects on, and the
+// stylesheet switches on `[data-ui]` rather than on a media query, because
+// §3.7's rule is that the tier is one root attribute and CSS only.
+
+// TableSort is the sort state of a column.
+type TableSort int
+
+const (
+	// SortUnsorted is a sortable column that is not currently sorted: it renders
+	// a sort button and `aria-sort="none"`.
+	//
+	// The zero value, because UI §7.8 designs sortable tables and a column built
+	// without a thought should be one a reader can sort. The alternative default —
+	// a plain header — produces a table where only the column already sorted can
+	// be re-sorted, which is a table with a sort control that is not a control.
+	SortUnsorted TableSort = iota
+	// SortAscending is an ascending sort.
+	SortAscending
+	// SortDescending is a descending sort.
+	SortDescending
+	// SortAbsent is a column with no sort control at all: no button and no
+	// `aria-sort`. For the actions column, and for a column whose values have no
+	// order — a placement's current hit points, a page's `kind`.
+	SortAbsent
+)
+
+// The two form names. They are also the middle of every generated id, because
+// both forms are in every response and an element id has to be unique in a
+// document — a row's overflow menu appearing in the tabular cell and again in the
+// stacked card would otherwise be the same element twice.
+const (
+	tabularForm = "tabular"
+	stackedForm = "stacked"
+)
+
+// sortAttr is a column's `aria-sort` value, or empty for a column that has no
+// sort control at all.
+//
+// The attribute goes on the `<th>`, not on the button inside it: `aria-sort` is
+// defined on the header cell, and a screen reader announces it as part of the
+// column's identity rather than as the state of a control.
+//
+// ARIA's "none" is the *sortable and currently unsorted* state, which is why it is
+// distinct from SortAbsent here rather than being conflated with it: a column with
+// no control claims nothing, and one with a control claims it is not in use. An
+// unrecognised value falls to the same claim-nothing branch as SortAbsent, because
+// a hand-built value is a caller's mistake and the honest answer for a column is a
+// plain header.
+func sortAttr(sort TableSort) string {
+	switch sort {
+	case SortUnsorted:
+		return "none"
+	case SortAscending:
+		return "ascending"
+	case SortDescending:
+		return "descending"
+	case SortAbsent:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// sortable reports whether a column has a sort control.
+func sortable(sort TableSort) bool {
+	return sort != SortAbsent
+}
+
+// sorted reports whether a column is currently in a sort order, which is what
+// separates `aria-sort="ascending"` from `aria-sort="none"` in prose as well as
+// in the markup.
+func sorted(sort TableSort) bool {
+	return sort == SortAscending || sort == SortDescending
+}
+
+// TableColumn is one column.
+type TableColumn struct {
+	// Key is the column's identity: it is what a cell carries as `data-cell`, so
+	// the stacked and tabular forms of a row can be compared without depending
+	// on the column's position or its label.
+	Key string
+	// Label is the column's visible header text, and — with the scope — what a
+	// screen reader announces for each cell.
+	Label string
+	// Sort is the column's sort state. A sorted or unsorted-sortable column
+	// renders a button; see sortable.
+	Sort TableSort
+}
+
+// TableRow is one row.
+type TableRow struct {
+	// ID is the row's identity, unique within the table. It becomes `data-row` on
+	// both forms and the tail of this row's overflow menu's element id, so it
+	// cannot be blank in practice and a caller that leaves it empty gets a
+	// visible `data-row=""` in the document rather than a silent duplicate.
+	ID string
+	// Label is the row's own name — a page's title, a placement's name, an
+	// account's username. Optional, and it earns its place twice: it names the
+	// stacked card and it is what makes the overflow menu say "Actions for
+	// Greyhaven" rather than "Actions", forty times over.
+	Label string
+	// Cells are the row's values, positionally matched to the view's Columns.
+	// A row shorter than its columns is not an error: the missing cells render
+	// empty in both forms, which is what keeps the two forms identical by
+	// construction rather than by the caller keeping two lists in step.
+	Cells []string
+	// Actions are this row's overflow-menu items, rendered in one cell in the
+	// tabular form and in the stacked card's own menu. §7.8's rule about the
+	// overflow cell is why there is exactly one menu and not a list of buttons.
+	Actions []MenuItem
+}
+
+// TableView is a table and its stacked form.
+type TableView struct {
+	// ID is the table's identity. It is the prefix for every generated id in
+	// both forms — the overflow menu's trigger, its popup, its test hooks — so a
+	// document can hold two tables without either one's ids colliding with the
+	// other's. Required, for the same reason the others are.
+	ID string
+	// Label is the table's accessible name.
+	Label string
+	// Caption is the visible caption. A visible `<caption>` is also the
+	// accessible name, so Label is for the case where the design has no room for
+	// one; when both are set the caption wins, because it is what a sighted reader
+	// reads too.
+	Caption string
+	// Columns are the columns, in order. Both forms walk this slice, which is
+	// why they cannot disagree about which cells exist.
+	Columns []TableColumn
+	// Rows are the rows, in order.
+	Rows []TableRow
+	// TestID is the tabular form's test hook.
+	TestID string
+}
+
+// Table renders a table and its stacked form from the same columns and rows.
+//
+// `<caption>` inside the `<table>` rather than a heading above it, because a
+// caption is what a screen reader announces on entering the table and it moves
+// with the table when the stacked form replaces it. When no caption is given the
+// table is named by `aria-label` instead — one name, never two, because two
+// names for a region is the same defect as two `<h1>`s.
+//
+// `scope="col"` on every header cell. A `<th>` without a scope announces its
+// label on every cell it happens to sit above in a naive reader, which for a
+// four-column table means four labels per cell and no way to tell which is which.
+//
+// The stacked form is an `<article>` per row with an `<dl>`, not a `<table>` with
+// `display: block` and `content` pseudo-elements: §7.8 requires the `<dl>` pairs,
+// and the pseudo-element approach puts every cell's content in the accessibility
+// tree as unlabelled text, which is worse than the horizontal scrollbar it
+// replaced.
+templ Table(view TableView) {
+	<div class="table-frame" data-table-form={ tabularForm }>
+		<table class="data-table" aria-label={ view.Label } data-table={ view.ID } data-testid={ view.TestID }>
+			if view.Caption != "" {
+				<caption>{ view.Caption }</caption>
+			}
+			<thead>
+				<tr>
+					for _, column := range view.Columns {
+						<th scope="col" class="data-table-head" data-column={ column.Key } if sortable(column.Sort) {
+							aria-sort={ sortAttr(column.Sort) }
+						}>
+							if sortable(column.Sort) {
+								<button
+									type="button"
+									class={ TargetClass + " button sort-button" }
+									data-sort={ column.Key }
+									data-testid={ view.ID + "-sort-" + column.Key }
+								>
+									<span class="sort-label">{ column.Label }</span>
+									if sorted(column.Sort) {
+										// The direction as text, not as an arrow.
+										// §6.5: never colour alone, and an arrow is
+										// no better — a triangle points up whether it
+										// means ascending or "click to sort ascending",
+										// and a screen reader announces it as
+										// "graphic".
+										<span class="sort-direction" data-testid={ view.ID + "-sort-" + column.Key + "-direction" }>{ sortWord(column.Sort) }</span>
+									}
+								</button>
+							} else {
+								<span class="sort-label">{ column.Label }</span>
+							}
+						</th>
+					}
+					if anyRowHasActions(view) {
+						<th scope="col" class="data-table-head data-table-actions-head">
+							<span class="visually-hidden">Actions</span>
+						</th>
+					}
+				</tr>
+			</thead>
+			<tbody>
+				for _, row := range view.Rows {
+					<tr data-row={ row.ID }>
+						for index, column := range view.Columns {
+							<td data-cell={ column.Key }>{ cellText(row.Cells, index) }</td>
+						}
+						if anyRowHasActions(view) {
+							<td class="data-table-actions">
+								@rowMenu(view.ID, tabularForm, row)
+							</td>
+						}
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+	<div class="table-frame" data-table-form={ stackedForm }>
+		for _, row := range view.Rows {
+			<article class="stacked-row" data-row={ row.ID } if row.Label != "" {
+					aria-labelledby={ view.ID + "-" + row.ID + "-title" }
+				}>
+				if row.Label != "" {
+					<p class="stacked-row-title" id={ view.ID + "-" + row.ID + "-title" }>{ row.Label }</p>
+				}
+				<dl class="stacked-pairs">
+					for index, column := range view.Columns {
+						<dt data-cell-term={ column.Key }>{ column.Label }</dt>
+						<dd data-cell={ column.Key }>{ cellText(row.Cells, index) }</dd>
+					}
+				</dl>
+				if len(row.Actions) > 0 {
+					@rowMenu(view.ID, stackedForm, row)
+				}
+			</article>
+		}
+	</div>
+}
+
+// cellText is one cell's text, taken positionally from a row's cells.
+//
+// Positional rather than keyed because `TableRow.Cells` is a slice, and a keyed
+// lookup would need a map per cell. Both forms index it the same way, which is
+// the mechanism by which the tabular and stacked renderings of a row cannot
+// disagree: they are the same expression evaluated against the same slice.
+//
+// Bounds-checked and empty rather than panicking: a row with fewer cells than
+// columns is a caller's shape mistake, and the right response in a rendering
+// function is a blank cell a reader sees as missing data — not a 500 on every
+// request that reaches it. Bounded through displayText for the same reason the
+// rest of the package bounds: a cell's contents come from a campaign's Markdown.
+func cellText(cells []string, index int) string {
+	if index >= len(cells) {
+		return ""
+	}
+
+	return displayText(cells[index], maxCellDisplay)
+}
+
+// sortWord is the sort direction as the word a reader hears.
+//
+// Empty for a column that is not currently in an order, because "unsorted" is
+// what `aria-sort="none"` already says and printing it twice is noise.
+func sortWord(sort TableSort) string {
+	switch sort {
+	case SortAscending:
+		return "ascending"
+	case SortDescending:
+		return "descending"
+	case SortUnsorted, SortAbsent:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// rowMenu is one row's overflow menu.
+//
+// The trigger's visible label is "Actions" and it repeats once per row, which is
+// exactly the repetition `MenuView.Name` exists for: the popup is named "Actions
+// for Greyhaven" so a reader who has just opened it knows which row they are about
+// to act on. Both ids carry the table, the row *and* the form, because the same
+// row renders a menu in each of the two forms and a duplicated element id is a
+// label that resolves to the wrong thing.
+templ rowMenu(tableID, form string, row TableRow) {
+	@MenuButton(MenuView{
+		ID:     rowMenuID(tableID, form, row),
+		Label:  "Actions",
+		Name:   overflowName(row),
+		Items:  row.Actions,
+		TestID: rowMenuID(tableID, form, row) + "-trigger",
+	})
+}
+
+// rowMenuID is the generated element id of one row's overflow menu in one form.
+//
+// A function rather than a local inside rowMenu, because templ reads a bare Go
+// statement in a templ block as text and would write it into the document —
+// which is how a fragment of Go source ends up in a reader's page.
+func rowMenuID(tableID, form string, row TableRow) string {
+	return tableID + "-" + row.ID + "-" + form + "-actions"
+}
+
+// overflowName is the accessible name of one row's overflow menu.
+func overflowName(row TableRow) string {
+	if row.Label == "" {
+		return "Actions"
+	}
+
+	return "Actions for " + row.Label
+}
+
+// anyRowHasActions reports whether the table has an actions column at all.
+//
+// One column for the whole table rather than per row, so the header does not line
+// up with a body that has no buttons in some of its rows. A table where only some
+// rows are actionable has an actions column with blanks in it, which is correct:
+// a row with no actions is a row with nothing to overflow.
+func anyRowHasActions(view TableView) bool {
+	for _, row := range view.Rows {
+		if len(row.Actions) > 0 {
+			return true
+		}
+	}
+
+	return false
+}

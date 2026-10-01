@@ -1,0 +1,130 @@
+package ui
+
+// The menu-button primitive (UI §7.7, WAI-ARIA's menu-button pattern).
+//
+// A menu is the one primitive whose *whole purpose* is a popup, which makes its
+// `aria-expanded`/`aria-controls` pair the load-bearing part: §7.7's rule that
+// "a popup that cannot open is a dead control" is a statement about these two
+// attributes and about nothing else. They are server-rendered and asserted here
+// rather than set by a script, because a script that sets them after the fact
+// has already lost — the control is in the DOM and unusable for the interval.
+
+// MenuItemKind says whether a menu item navigates or acts.
+//
+// A closed enum rather than two optional fields, because the two shapes must not
+// be mixed: an item that is both a link and a button is an item whose behaviour
+// depends on which handler a later change happened to write, and a menu is
+// exactly where that difference is invisible until someone is using it.
+type MenuItemKind int
+
+const (
+	// MenuItemLink navigates. Rendered as an `<a href>`, because a middle-click,
+	// a copy-link and "open in a new tab" all work, and because a navigation that
+	// only works on click is a navigation a keyboard-and-switch user cannot make.
+	MenuItemLink MenuItemKind = iota
+	// MenuItemAction does something in place. Rendered as a `<button>`, because
+	// it has no address and pretending otherwise gives it a status line and a
+	// middle-click that do nothing.
+	MenuItemAction
+)
+
+// MenuItem is one entry in a menu.
+type MenuItem struct {
+	// Label is the item's text, and its accessible name. Never an icon alone:
+	// §7.10 prohibits a hover-only affordance and §6.5's rule against colour or
+	// shape as the sole carrier of meaning applies with more force to a menu item
+	// than anywhere else, because the menu is invisible until it is opened.
+	Label string
+	// Href is where a MenuItemLink goes. Ignored for a MenuItemAction, and
+	// rendered as a button for one.
+	Href string
+	// Kind is the item's shape.
+	Kind MenuItemKind
+}
+
+// MenuView is a menu button and the menu it opens.
+type MenuView struct {
+	// ID is the menu's element id, and the trigger's `aria-controls` names it.
+	// The trigger's own id is derived from it. Required, for the same reason a
+	// dialog's is: a popup that cannot be pointed at cannot be opened.
+	ID string
+	// Label is the trigger's visible text. Short by design — it is 44px wide at
+	// minimum and it is repeated once per row wherever §7.8's overflow cell puts
+	// one.
+	Label string
+	// Name overrides the menu's accessible name. Empty means the menu is named
+	// by its trigger, which is WAI-ARIA's default and what a standalone menu
+	// wants. Set it where the trigger text repeats — "Actions" forty times in a
+	// table — and the menu says "Actions for Greyhaven" instead, which is the
+	// only way a reader who lands in the menu knows which row they are in.
+	Name string
+	// Items are the menu's entries, in the order they render.
+	Items []MenuItem
+	// TestID is the trigger's test hook.
+	TestID string
+}
+
+// MenuButton renders a trigger and the menu it opens, as one fragment.
+//
+// Three attributes and no script: `aria-haspopup="menu"` so the reader knows a
+// popup is coming and that the arrow keys will mean something, `aria-expanded`
+// for the open state, and `aria-controls` for which element "open" refers to.
+// §7.7's keyboard requirements — arrows between items, `Escape` to close,
+// focus returned to the trigger — are phase 9's, and they are all operations on
+// these three attributes.
+//
+// `hidden` on the menu for the same reason as the dialog's panel: a menu in the
+// document at load is a list of links a reader tabs through and cannot tell apart
+// from the page. §7.2 forbids a landmark that vanishes, and this is not a
+// landmark — it is a popup that has not been asked for.
+//
+// The `data-menu-sheet` attribute on the popup is the §7.7 touch and TV rule:
+// "on touch and TV a menu is a full-width bottom sheet, not a popover anchored to
+// a 44px trigger". The attribute is the hook the stylesheet selects on, so the
+// decision stays in CSS where the tier already is and no script has to know it.
+templ MenuButton(view MenuView) {
+	<button
+		type="button"
+		class={ TargetClass + " button" }
+		id={ view.ID + "-trigger" }
+		aria-haspopup="menu"
+		aria-expanded="false"
+		aria-controls={ view.ID }
+		data-testid={ view.TestID }
+	>
+		{ view.Label }
+	</button>
+	<div
+		id={ view.ID }
+		class="menu"
+		role="menu"
+		hidden
+		data-menu-sheet={ view.ID }
+		data-testid={ view.ID + "-menu" }
+		if view.Name != "" {
+			aria-label={ view.Name }
+		} else {
+			aria-labelledby={ view.ID + "-trigger" }
+		}
+	>
+		<ul class="menu-items">
+			for _, item := range view.Items {
+				<li role="none">
+					// data-menu-item rather than a test hook: items repeat once per
+					// entry, and a hook that appears more than once in a document
+					// selects nothing — the convention `components.CampaignList`
+					// already follows for its campaign rows.
+					if item.Kind == MenuItemLink {
+						<a role="menuitem" class={ TargetClass + " menu-item" } href={ item.Href } data-menu-item={ item.Label }>
+							{ item.Label }
+						</a>
+					} else {
+						<button type="button" role="menuitem" class={ TargetClass + " button menu-item" } data-menu-item={ item.Label }>
+							{ item.Label }
+						</button>
+					}
+				</li>
+			}
+		</ul>
+	</div>
+}
