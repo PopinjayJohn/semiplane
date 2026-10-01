@@ -1,0 +1,96 @@
+package chrome
+
+// glyph is one of the navigation's icon shapes.
+//
+// Six shapes, hand-written, no dependency: the alternative at this phase is a
+// sprite sheet or an icon component in `components/ui`, and neither exists yet.
+// They are `currentColor`, so they follow the text token like any other piece of
+// text, and each is `aria-hidden` because the row's own text label is the
+// accessible name — a name announced twice is worse than one announced once.
+//
+// The set is deliberately small. §4.3's icon rail needs a shape per destination
+// and per folder, and a shape for the collapse control; anything more is a
+// decision about which kind badge reads better in 20px, which is not a decision
+// this work item owns. `components/ui` may replace navIcon wholesale.
+//
+// The package's own doc comment lives in chrome.go, below its package clause for
+// the reason that file explains. So does the gap between the package clause and
+// this one, which is why every `.templ` file in this package opens the same way.
+type glyph int
+
+const (
+	// glyphCampaigns is the switcher: a grid, because it lists more than one.
+	glyphCampaigns glyph = iota
+	// glyphWiki is the page tree: a document.
+	glyphWiki
+	// glyphTable is the live tabletop: a gridded field.
+	glyphTable
+	// glyphSearch is a magnifier.
+	glyphSearch
+	// glyphAdmin is the settings surface: sliders.
+	glyphAdmin
+	// glyphPage is one page of the wiki tree.
+	glyphPage
+	// glyphFolder is a folder: the Campaigns and Wiki sections, and every
+	// folder in the tree, since a folder is a row that reveals a list.
+	glyphFolder
+	// glyphCollapse is the collapse control. It is the *state* the control is in
+	// now — expanded — and the client replaces the shape when it collapses,
+	// alongside the label and `aria-expanded`. There is no second shape here
+	// because a shape the client can name has to be reachable from the client,
+	// and a Go constant is not.
+	glyphCollapse
+)
+
+// navIcon draws one of the navigation's shapes.
+//
+// `aria-hidden` with `focusable="false"` rather than either alone: the attribute
+// is what removes the shape from the accessibility tree, and `focusable` is what
+// keeps a legacy SVG from becoming a focus stop of its own — §7.10 prohibits
+// `aria-hidden` on a focusable element, and the two attributes together are how
+// that is guaranteed rather than assumed.
+templ navIcon(shape glyph) {
+	if shape == glyphCampaigns {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="currentColor"/>
+		</svg>
+	} else if shape == glyphWiki {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="2"/>
+			<path d="M9 12h6M9 16h6" fill="none" stroke="currentColor" stroke-width="2"/>
+		</svg>
+	} else if shape == glyphTable {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M3 6h18v12H3z" fill="none" stroke="currentColor" stroke-width="2"/>
+			<path d="M3 10h18M9 6v12M15 6v12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+		</svg>
+	} else if shape == glyphSearch {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z" fill="none" stroke="currentColor" stroke-width="2"/>
+			<path d="M16.5 16.5 21 21" fill="none" stroke="currentColor" stroke-width="2"/>
+		</svg>
+	} else if shape == glyphAdmin {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M4 7h9M19 7h1M4 12h1M11 12h9M4 17h7M17 17h3" fill="none" stroke="currentColor" stroke-width="2"/>
+			<circle cx="16" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+			<circle cx="8" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+			<circle cx="14" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+		</svg>
+	} else if shape == glyphPage {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M6 3h9l3 3v15H6z" fill="none" stroke="currentColor" stroke-width="2"/>
+			<path d="M15 3v3h3" fill="none" stroke="currentColor" stroke-width="2"/>
+		</svg>
+	} else if shape == glyphFolder {
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M3 6h6l2 2h10v11H3z" fill="none" stroke="currentColor" stroke-width="2"/>
+		</svg>
+	} else {
+		// glyphCollapse, and the only case left. An explicit default rather than
+		// an if-chain that simply runs out: a shape added to the enum without one
+		// here would render an empty `<svg>`, which is a row with a hole in it.
+		<svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+			<path d="M14 6 8 12l6 6" fill="none" stroke="currentColor" stroke-width="2"/>
+		</svg>
+	}
+}

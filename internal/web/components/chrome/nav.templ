@@ -1,0 +1,240 @@
+package chrome
+
+// CampaignNav is the campaign navigation: `role="navigation"` and, exactly,
+// `aria-label="Campaign"` (UI §4.3, §7.2).
+//
+// # The label is exact, and it is distinct
+//
+// UI §7.2's contract is `nav[navigation][aria-label="Campaign"]`, written as an
+// attribute rather than described, because the document has a *second* navigation
+// landmark at compact: the footer's bottom bar, labelled "Primary" (UI §4.2). Two
+// unlabelled or identically-labelled navigation landmarks make landmark
+// navigation useless, which §7.2 calls a gate failure rather than a style nit —
+// and §10.2's audit checks that landmarks are present *and distinctly labelled*.
+// "Campaign" and "Primary" are therefore both load-bearing strings, and the test
+// asserts the pair rather than the presence of two labels.
+//
+// # The sections, in §4.3's order
+//
+// Campaigns · Wiki · Table · Search · Admin, each of them optional. A section
+// with nothing in it is absent rather than empty, for the same reason the whole
+// navigation is absent before a campaign exists (UI §4.6): a section above no
+// links is a promise of a destination it does not have. Table is one link and
+// never a list, because a campaign has at most one live tabletop and UI §1.2
+// names the absence of a Games list as a hard rule.
+//
+// # No headings
+//
+// The navigation precedes `<main>` in the document, so a heading in here would be
+// read before the page's own `<h1>`, and UI §7.2's "heading levels never skip"
+// would hold only in the sense that nothing skips. The landmark's name identifies
+// the region; the section names are text, not structure.
+//
+// # Per tier
+//
+//	compact        bottom sheet, 18rem, opened by a disclosure in the banner
+//	compact-short  a permanent 3.5rem icon rail, landscape only (UI §3.5)
+//	medium         13rem persistent, not user-collapsible (UI §4.3)
+//	large, wide    15rem, user-collapsible to a 3.5rem icon rail
+//
+// The collapse is a `data-nav="collapsed"` attribute the client sets on this
+// element, and its default here is *expanded*: the state that works without a
+// client is the one that renders, and a navigation that starts collapsed hides
+// every destination behind a control that cannot open. It is also why every row
+// keeps its full name as text at the rail width — the label is hidden visually
+// and never removed, so the icon rail costs no accessible names. UI §4.3's "at
+// ≤1279 it is not user-collapsible" is the client's rule rather than this
+// component's, because the tier is not knowable from here.
+templ CampaignNav(view NavView) {
+	// `tabindex="-1"` so UI §7.2's third skip link lands somewhere a screen
+	// reader announces rather than at the top of a scroll container, and
+	// `.target` because §10.6's audit walks every element carrying a tabindex and
+	// this one is in that set. The class costs nothing: the navigation is 13rem
+	// wide and taller than §7.3's floor in both axes already.
+	<nav
+		id={ navID }
+		class="shell-nav target"
+		role="navigation"
+		aria-label="Campaign"
+		tabindex="-1"
+		data-testid="shell-nav"
+	>
+		// The first focus stop inside the navigation, and the first thing a
+		// reader who has collapsed the rail needs. A disclosure of the labels
+		// rather than of the destinations, because what changes is the width the
+		// labels occupy.
+		<button
+			type="button"
+			class="target nav-collapse"
+			aria-expanded="true"
+			aria-controls={ destinationsID }
+			data-chrome="nav-collapse"
+			data-testid="nav-collapse"
+		>
+			@navIcon(glyphCollapse)
+			<span class="nav-label">Collapse navigation</span>
+		</button>
+		// Nested lists of links, never `role="tree"` (UI §4.3): a tree pattern
+		// obliges roving tabindex, arrow-key semantics and typeahead — machinery
+		// that buys nothing for a server-rendered list changing on every
+		// navigation, and that would need re-implementing for every disclosure.
+		// This way every row is a tab stop, with no JavaScript at all, and the
+		// cost §4.3 names — a long tab sequence — is what the skip link is for.
+		<ul id={ destinationsID } class="nav-list" data-testid="nav-destinations">
+			if len(view.Campaigns) > 0 {
+				<li class="nav-item">
+					@navDisclosure("Campaigns", "nav-campaigns", glyphCampaigns, campaignsListID)
+					@campaignsList(view.Campaigns, campaignsListID)
+				</li>
+			}
+			if view.hasWiki() {
+				<li class="nav-item">
+					@navDisclosure("Wiki", "nav-wiki", glyphWiki, wikiListID)
+					@navLevel(view.Wiki.Children, wikiListID, wikiPath)
+				</li>
+			}
+			// One link, never a list. A campaign has at most one live tabletop, so
+			// there is nothing to enumerate. Absent — not disabled — for an
+			// anonymous reader, and absent for a campaign whose gameplay system
+			// is not installed (UI §4.7's `system_id` row).
+			if view.TableHref != "" {
+				<li class="nav-item">
+					@navLink("Table", "nav-table", view.TableHref, glyphTable)
+				</li>
+			}
+			if view.SearchHref != "" {
+				<li class="nav-item">
+					@navLink("Search", "nav-search", view.SearchHref, glyphSearch)
+				</li>
+			}
+			// The whole of the GM-only surface, and empty for a player and for an
+			// anonymous reader: UI §4.3's "edit affordances are absent, not
+			// disabled", met by an empty address rather than by a permission check
+			// inside a template.
+			if view.AdminHref != "" {
+				<li class="nav-item">
+					@navLink("Admin", "nav-admin", view.AdminHref, glyphAdmin)
+				</li>
+			}
+		</ul>
+	</nav>
+}
+
+// navLink is one destination: an icon, a name, and an address.
+//
+// The name is a text node and never an `aria-label`, which reads as the opposite
+// of UI §4.3's wording for the icon rail and is deliberate. §4.3 keeps the full
+// name in `aria-label` and hides the tooltip, because a tooltip is decoration. A
+// text label the stylesheet hides at the rail width is *also* read once, and it
+// has two properties an `aria-label` does not: the accessible name is the visible
+// text at every width, which is what WCAG 2.5.3 asks for, and there is no second
+// copy of the name in the markup for the two to disagree with. The `aria-hidden`
+// is on the icon instead, which is genuinely presentational.
+templ navLink(name, testID, href string, shape glyph) {
+	<a class="nav-link target" href={ href } data-testid={ testID }>
+		@navIcon(shape)
+		<span class="nav-label">{ name }</span>
+	</a>
+}
+
+// navDisclosure is a row that reveals a list: the Campaigns section, the Wiki
+// section, and every folder in the wiki tree (UI §4.3's "a `<button
+// aria-expanded>` on the row, not a tree node").
+//
+// The two sections carry a `data-testid` and the folders do not, because the
+// folders repeat once per folder and a hook that appears more than once in a
+// document is a hook nothing can select. The conditional attribute is how the
+// difference is expressed without an empty `data-testid=""` on every folder.
+//
+// `aria-expanded="true"` is the state that works without a client, and it is why
+// the revealed list is in the document rather than fetched: a folder rendered
+// collapsed over nothing is a promise the template cannot keep until phase 9.
+templ navDisclosure(name, testID string, shape glyph, region string) {
+	<button
+		type="button"
+		class="target nav-disclosure"
+		aria-expanded="true"
+		aria-controls={ region }
+		data-chrome="disclosure"
+		if testID != "" {
+			data-testid={ testID }
+		}
+	>
+		@navIcon(shape)
+		<span class="nav-label">{ name }</span>
+	</button>
+}
+
+// campaignsList is the reader's own campaigns, which is the only list of its kind
+// in the interface: not a list of tables, and not a list of games (UI §1.2).
+//
+// Each row carries the section's own icon, which repeats down the list and looks
+// redundant at 13rem. It is there for the icon rail: §4.3's 3.5rem column hides
+// the labels, and a row with no icon renders as nothing at all — a link a reader
+// can see and not find. "Nothing renders empty" beats a tidier list.
+//
+// `data-slug` on each row rather than a testid, for the reason
+// `components/campaigns.templ` gives: the rows repeat, and a hook that appears
+// more than once in a document is a hook nothing can select.
+templ campaignsList(campaigns []CampaignRef, region string) {
+	<ul id={ region } class="nav-list nav-list--nested">
+		for _, campaign := range campaigns {
+			<li class="nav-item" data-slug={ campaign.Slug }>
+				<a class="nav-link target" href={ campaign.href() }>
+					@navIcon(glyphCampaigns)
+					<span class="nav-label">{ campaign.label() }</span>
+				</a>
+			</li>
+		}
+	</ul>
+}
+
+// navLevel is one level of the wiki tree, and the recursion ends where a node has
+// no children.
+//
+// The list carries the id its row's `aria-controls` points at, on every level
+// rather than only on the ones with a disclosure above them, so the two never
+// have to be kept in step by hand.
+//
+// `path` is the id prefix for the folders of this level and is not the list's own
+// id, because a list is named after the section that owns it (`nav-wiki-list`) and
+// a folder is named after where it sits in the tree (`wiki-1-0`). Reusing one for
+// both produced ids like `wiki-nav-wiki-list1`, which are unique and unreadable.
+templ navLevel(nodes []PageNode, region, path string) {
+	<ul id={ region } class="nav-list nav-list--nested">
+		@navItems(nodes, path)
+	</ul>
+}
+
+// navItems is the rows of one level. Split out from navLevel so the recursion has
+// one body and the id-bearing list has one body, instead of a body that renders
+// each row twice to get the two attributes right.
+templ navItems(nodes []PageNode, path string) {
+	for index, node := range nodes {
+		<li class="nav-item" data-page={ node.Href }>
+			if len(node.Children) == 0 {
+				// A leaf is a link and nothing else. The kind badge is the
+				// registry's label for the page's kind and never a string this
+				// package chose (UI §4.11.3), so a UI plugin registering a kind
+				// needs no shell change.
+				<a class="nav-link target" href={ node.Href }>
+					@navIcon(glyphPage)
+					<span class="nav-label">{ node.Title }</span>
+					if node.Kind != "" {
+						<span class="nav-kind">{ node.Kind }</span>
+					}
+				</a>
+			} else {
+				@navFolder(node, path, index)
+			}
+		</li>
+	}
+}
+
+// navFolder is a folder row and the level it reveals. Its own id becomes the
+// prefix of the level below it, which is what makes every region's id unique
+// without a counter or a lookup table.
+templ navFolder(node PageNode, path string, index int) {
+	@navDisclosure(node.Title, "", glyphFolder, navNodeID(path, index))
+	@navLevel(node.Children, navNodeID(path, index), navNodeID(path, index))
+}

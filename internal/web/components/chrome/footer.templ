@@ -1,0 +1,147 @@
+package chrome
+
+// Footer is the contentinfo landmark: `role="contentinfo"`, 32px inline, and
+// exactly one per page, the table route included (UI §4.2).
+//
+// # Why there is a navigation inside a contentinfo
+//
+// UI §4.2 makes the compact footer *become* the primary navigation — a fixed
+// bottom bar with Wiki · Search · Table · More — and UI §7.2 then says both
+// navigation landmarks must carry distinguishing labels. The two requirements
+// are only compatible if the compact bar is a `<nav>` *inside* the `<footer>`
+// rather than the footer itself: a footer whose role is `navigation` is no
+// longer contentinfo, and UI §4.6 is explicit that the persistent header and
+// footer requirement is never violated. So `role="contentinfo"` is unconditional
+// and the bar is a second landmark inside it, labelled "Primary" against the
+// navigation's "Campaign".
+//
+// # Per tier
+//
+//	compact        fixed bottom bar, 3.5rem + env(safe-area-inset-bottom)
+//	compact-short  removed entirely, and the space it held is given back
+//	medium upward   inline, 2rem, in the grid's footer row
+//
+// The space reservation is the stylesheet's (`padding-block-end` on `.shell`),
+// not this component's: a component that reserved its own height would reserve
+// it twice once the bar became a grid row, and at compact-short the reservation
+// has to disappear with the bar, which only a stylesheet that knows the tier can
+// do.
+templ Footer(view FooterView) {
+	<footer class="shell-footer" role="contentinfo" data-testid="shell-footer">
+		// The instance strip: what this build is, and where an operator goes
+		// when something is wrong. §4.2 wants the status link on every tier,
+		// because plan §13.2 names four subsystems that fail silently and a GM
+		// has to see `secret.reconcile_capped` without a shell.
+		if view.Version != "" {
+			<span class="shell-footer-item" data-testid="footer-version">Version { view.Version }</span>
+		}
+		if view.StatusHref != "" {
+			<a class="shell-footer-item target" href={ view.StatusHref } data-testid="footer-status-link">Instance status</a>
+		}
+		// Plain text, and deliberately not a live region: a number that changes
+		// on a timer is a screen-reader loop, and nothing in §7.5's table is
+		// announced from the footer.
+		if view.Latency != "" {
+			<span class="shell-footer-item" data-testid="footer-latency">{ view.Latency }</span>
+		}
+		// §4.2: the degraded-campaign banner lives here permanently, not as a
+		// toast. A content root that has gone missing is an ongoing condition,
+		// and a banner that announces itself once and then leaves is a banner
+		// about a different problem. Not a live region for the same reason
+		// `components.DegradedNotice` is not: it would fire on every navigation
+		// for a state the reader can see.
+		if len(view.Degraded) > 0 {
+			@footerDegraded(view.Degraded)
+		}
+		// On the table route the four destinations are replaced by the player's
+		// row, and the replacement is not optional: a thumb cannot reach the
+		// top of an 844px screen, and the bar exists because of that.
+		if view.Play != nil {
+			@footerPlay(*view.Play)
+		} else if !view.Bar.empty() {
+			@footerBar(view.Bar)
+		}
+	</footer>
+}
+
+// footerDegraded is the footer's standing warning. Heading levels never skip
+// (UI §7.2) and the centre's `<h1>` is above it, so this is an `<h2>`: the
+// reader reaches the footer's warning having already met one subheading in the
+// rail at worst, and a level that skipped would be the validator's complaint.
+templ footerDegraded(degraded []DegradedView) {
+	<div class="footer-degraded" data-testid="footer-degraded">
+		<h2 class="footer-degraded-heading">Not working</h2>
+		<ul class="footer-degraded-list">
+			for _, item := range degraded {
+				<li>
+					<span class="footer-degraded-name">{ item.Name }</span>
+					if item.Detail != "" {
+						<span class="footer-degraded-detail">{ item.Detail }</span>
+					}
+				</li>
+			}
+		</ul>
+	</div>
+}
+
+// footerBar is the compact bottom bar's four destinations, and the second
+// navigation landmark in the document (UI §4.2, §7.2).
+//
+// Hidden from medium up by the stylesheet, which is a different thing from
+// CSS-hiding a *panel*. UI §4.5's server-side absence rule is about content a
+// viewer is not entitled to, and these four links are not: at medium and above
+// every one of them is already in the navigation landmark, so at the wider
+// tiers this bar duplicates destinations the reader can already reach. That is
+// why the tier switch is allowed to be a stylesheet's decision and why the
+// destinations are server-rendered on every tier.
+//
+// Empty addresses render no link — Table is absent for an anonymous reader and
+// for a campaign whose gameplay system is not installed — and if all four are
+// empty `Footer` renders no bar at all, which is the pre-campaign case.
+templ footerBar(destinations BarDestinations) {
+	<nav
+		id="footer-bar"
+		class="footer-bar"
+		role="navigation"
+		aria-label="Primary"
+		data-testid="footer-bar"
+	>
+		if destinations.Wiki != "" {
+			<a class="footer-bar-item target" href={ destinations.Wiki } data-nav-dest="wiki">Wiki</a>
+		}
+		if destinations.Search != "" {
+			<a class="footer-bar-item target" href={ destinations.Search } data-nav-dest="search">Search</a>
+		}
+		if destinations.Table != "" {
+			// One link, never a list. A campaign has at most one live tabletop,
+			// so there is nothing to enumerate, and UI §1.2 names the absence of
+			// a Games list as a hard rule.
+			<a class="footer-bar-item target" href={ destinations.Table } data-nav-dest="table">Table</a>
+		}
+		if destinations.More != "" {
+			<a class="footer-bar-item target" href={ destinations.More } data-nav-dest="more">More</a>
+		}
+	</nav>
+}
+
+// footerPlay is the table route's row: the game clock, the connection, and a way
+// out.
+//
+// The connection is plain text here and is deliberately not a second live
+// region. UI §4.1 puts the indicator in the header and UI §9 calls that the only
+// signal for a reconnect, so announcing the same fact from two places would
+// read it out twice on the one page where it happens most often. The client
+// writes this text from the same update that writes the header's.
+templ footerPlay(bar PlayBar) {
+	<div class="footer-play" data-testid="footer-play">
+		if bar.Clock != "" {
+			<span class="footer-play-item" data-testid="footer-clock">{ bar.Clock }</span>
+		}
+		if label := bar.Connection.label(); label != "" {
+			<span class="footer-play-item" data-testid="footer-play-connection">{ label }</span>
+		}
+		if bar.LeaveHref != "" {
+			<a class="footer-play-item target" href={ bar.LeaveHref } data-testid="footer-leave">Leave table</a>
+		}
+	</div>
+}

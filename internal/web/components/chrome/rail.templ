@@ -1,0 +1,85 @@
+package chrome
+
+// UtilitiesRail is the right rail: `role="complementary"` and, exactly,
+// `aria-label="Utilities"` (UI §4.5).
+//
+// # The rail persists last and collapses first
+//
+// That is UI §3.1's first rule and it is the reason for this component's
+// per-tier behaviour. The rail is the utility panel; on the table route it holds
+// the initiative tracker, which a GM needs *glanceable*, so it persists from 1280
+// — the breakpoint chosen so both 1366 and 1512 get three columns — and every
+// narrower tier turns it into something the reader opens deliberately:
+//
+//	below 640    bottom sheet, ≤70dvh, and ≤85dvh at compact-short
+//	640–1279     right drawer, 22rem, with a scrim
+//	1280 upward  persistent, 20rem at large and 22rem at wide, own scroll
+//
+// A bottom sheet below 640 rather than a side drawer, because §3.1's arithmetic
+// does not allow otherwise: a 20rem right drawer and an 18rem left drawer
+// together exceed a 360px screen by 250px, and one 320px drawer on a 360px screen
+// leaves a 40px sliver and no way to see the page behind the scrim.
+//
+// # What is a slot and what is not
+//
+// The panels are the route's, not the chrome's: §4.4 gives this slot a different
+// set per route, and a plugin page type fills the centre while the rail keeps its
+// own. So the content arrives as a component and the landmark wraps it. §4.5's
+// rule that a tier's panels are *absent* for a viewer below that tier is
+// therefore the caller's, by omission: a panel nobody passes is not in the
+// document, which is the stronger form of the rule and the one no CSS class can
+// undo.
+//
+// Nothing here owns focus when the rail is a sheet or a drawer, and that is
+// §4.5's other half: as a layer it traps focus, Escape closes it, focus returns
+// to the trigger, and the page behind it is `inert`. The client owns that, and the
+// hooks are already in the markup: `role="complementary"` is how head.js finds
+// this element to re-parent into the sheet host at compact (§3.7), the
+// stylesheet reads `aria-expanded` or `data-open` on the rail itself to decide
+// whether it is off-screen, and the trigger carries the same `aria-expanded` so
+// the two never disagree.
+templ UtilitiesRail(panels templ.Component) {
+	// `tabindex="-1"` so UI §7.2's utilities skip link lands on something a
+	// screen reader announces, and `.target` because §10.6's audit walks every
+	// element carrying a tabindex and this one is in that set. The class costs
+	// nothing: the rail is 20rem wide and as tall as its grid area.
+	<aside
+		id={ railID }
+		class="shell-rail target"
+		role="complementary"
+		aria-label="Utilities"
+		tabindex="-1"
+		data-shell-rail
+		data-testid="shell-rail"
+	>
+		<div class="rail-panels" data-testid="rail-panels">
+			@panels
+		</div>
+	</aside>
+}
+
+// UtilitiesTrigger is the control that opens the utilities rail, and it is
+// exported rather than inlined because it does not belong to the rail.
+//
+// A trigger has to be reachable while the rail is closed, which means it cannot
+// be inside it, and UI §4.1 does not assign it to one of the banner's zones —
+// the banner's zones are campaign, search, connection, theme and user. The
+// report names where it goes; this is the markup either placement needs, with
+// `aria-expanded` already false, which is the state that works without a client:
+// the rail's own stylesheet starts it off-screen at every tier below 1280, and a
+// trigger that claims to have opened something is a focus stop that lies.
+//
+// Two placements, and both are §-consistent: the banner's right zone, or the
+// compact bar's "More" destination. On the table route the compact bar is the
+// player's action row instead, where the Token chip already opens the Tokens
+// sheet — which is this rail.
+templ UtilitiesTrigger(region string) {
+	<button
+		type="button"
+		class="target rail-trigger"
+		aria-expanded="false"
+		aria-controls={ region }
+		data-chrome="rail-toggle"
+		data-testid="rail-trigger"
+	>Utilities</button>
+}
