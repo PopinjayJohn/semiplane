@@ -465,6 +465,55 @@ func TestNewDirectoryPagesAreSeen(t *testing.T) {
 	)
 }
 
+// TestANewDirectoryIsWatchedBeforeItIsRead is the ordering `scanSubtree` exists to
+// get right, asserted deterministically rather than by racing the kernel.
+//
+// Adopting a directory that appeared mid-run is two halves of one operation: put
+// a watch on it, and read what is inside it. A page created in the window between
+// those two halves is in neither — the listing was taken before it existed, and
+// the event that would have reported it was never generated, because nothing was
+// watching the directory yet. Nothing recovers that page later either: `Reverify`
+// reconciles *directories* against the tree and never pages against the index, so
+// the page is not indexed until a full rescan the integrator has no reason to run.
+//
+// The window is small and the writer is ordinary — `mkdir lore` followed by a
+// write into `lore`, a sync client dropping a folder and its contents together —
+// which is exactly why it survives review and shows up as flakiness in every test
+// that creates a directory and writes into it without waiting.
+//
+// The page is created by `Add` rather than by the test, because `Add` *is* the
+// moment the window closes: it is the last thing that happens before the listing
+// is taken, so a writer placed there lands inside the window by construction. Under
+// the wrong order the page is invisible forever and this test fails; under the
+// right one it is in the listing and is reported. That makes the ordering itself
+// the assertion, with no sleeps, no timing and no dependence on how quickly the
+// kernel or a loaded runner happens to deliver an event.
+func TestANewDirectoryIsWatchedBeforeItIsRead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "lore")
+
+	notifier := newDroppingNotifier(t, nested, "Gate.md")
+
+	// Built against an *empty* root, and the directory appears afterwards, so the
+	// startup reconcile cannot have reported anything and the only route its
+	// contents can take is the `Create` event below — the path a real sync
+	// client's dropped folder takes.
+	fx := newWatchFixtureWith(t, map[string]string{"gilded-cage": dir}, notifier)
+
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatalf("mkdir lore: %v", err)
+	}
+
+	notifier.events <- fsnotify.Event{Name: nested, Op: fsnotify.Create}
+
+	fx.sink.await(t,
+		"the page that landed between a new directory's listing and its watch",
+		isPage("gilded-cage", "lore/Gate.md"),
+	)
+}
+
 // TestStagingFileRenameIsSilent is the assertion that keeps an atomic save from
 // arriving as a rename.
 //
@@ -1747,6 +1796,68 @@ func (n *leakyNotifier) lose(dir string) {
 	n.lost = dir
 }
 
+// droppingNotifier is a `scriptedNotifier` that materialises a page inside a
+// nominated directory at the moment it is asked to watch it.
+//
+// That instant is the last one before the directory is enumerated, which makes it
+// the narrowest deterministic version of the write a real adopter must not lose:
+// a sync client that drops a folder and its contents in a single burst, timed to
+// land exactly on the seam between "watch it" and "look inside it". The watcher
+// reports the page from the listing or from the event, and a page in neither is a
+// page nothing will ever report.
+type droppingNotifier struct {
+	*scriptedNotifier
+
+	// dir is the absolute directory whose `Add` drops the page, and name the file
+	// to drop. Both are compared cleaned, because the watcher hands the notifier
+	// cleaned absolute paths.
+	dir  string
+	name string
+
+	// t fails the test from `Add`, which runs on the watcher's event goroutine.
+	// `Errorf` rather than `Fatalf` because `Fatalf` from a goroutine other than
+	// the test's does not end the test, and this must not end it either: the
+	// assertion that follows is the one that should report the loss.
+	t *testing.T
+}
+
+// newDroppingNotifier returns a scripted notifier that writes `name` into `dir`
+// as it watches it.
+func newDroppingNotifier(t *testing.T, dir, name string) *droppingNotifier {
+	t.Helper()
+
+	return &droppingNotifier{
+		scriptedNotifier: &scriptedNotifier{
+			events: make(chan fsnotify.Event),
+			errors: make(chan error),
+		},
+		dir:  dir,
+		name: name,
+		t:    t,
+	}
+}
+
+// Add watches the directory, and drops the page into it on the way past.
+func (n *droppingNotifier) Add(dir string) error {
+	if err := n.scriptedNotifier.Add(dir); err != nil {
+		return err
+	}
+
+	if filepath.Clean(dir) != filepath.Clean(n.dir) {
+		return nil
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(dir, n.name),
+		[]byte("# Dropped while the directory was being watched\n"),
+		0o600,
+	); err != nil {
+		n.t.Errorf("drop %s into %s as it is watched: %v", n.name, dir, err)
+	}
+
+	return nil
+}
+
 // scriptedNotifier is a Notifier driven entirely by its test.
 type scriptedNotifier struct {
 	events chan fsnotify.Event
@@ -1816,4 +1927,5 @@ var (
 	_ content.Notifier = exhaustingNotifier{}
 	_ content.Notifier = (*scriptedNotifier)(nil)
 	_ content.Notifier = (*leakyNotifier)(nil)
+	_ content.Notifier = (*droppingNotifier)(nil)
 )

@@ -1,7 +1,7 @@
 ---
-title: "0032 — Five index signals beyond the architecture record's list"
-description: "§13.2 fixes the observability contract and phase 4 adds to it, because the alternative was a hole in S-12.3 rather than a smaller surface."
-lede: "The page indexer emits five event names the architecture record does not list. That is a deviation from an immutable record, so it is corrected here. The alternative was not silence — it was emitting through `slog` at the call site, which is where `slog.Any` accepts anything."
+title: "0032 — Six signals beyond the architecture record's list"
+description: "§13.2 fixes the observability contract and phase 4 adds six names to it, because the alternative was a hole in S-12.3 rather than a smaller surface."
+lede: "The content pipeline emits six event names the architecture record does not list. That is a deviation from an immutable record, so it is corrected here. The alternative was not silence — it was emitting through `slog` at the call site, which is where `slog.Any` accepts anything."
 weight: 223
 date: "2026-10-01"
 status: "accepted"
@@ -38,7 +38,7 @@ than a missing one, because it sends an operator to look at the renderer.
 
 ## Decision
 
-Five event names are added, and the deviation is recorded here rather than by editing §13.2.
+Six event names are added, and the deviation is recorded here rather than by editing §13.2.
 
 | Name | Level | Counted | Meaning |
 |---|---|---|---|
@@ -47,6 +47,21 @@ Five event names are added, and the deviation is recorded here rather than by ed
 | `index.page_degraded` | warn | yes | Indexed, but its front matter was inert (S-3.3) |
 | `index.rename_source_left` | warn | yes | A rename left the old row; the prune removes it |
 | `index.renamed` | debug | no | A subtree moved; routine work |
+
+And one on the watcher's side, added by the same phase for the same reason:
+
+| Name | Level | Counted | Meaning |
+|---|---|---|---|
+| `content.settle_failed` | warn | yes | The settle filter could not `stat` a path for a reason other than its absence |
+
+That one is worth its own paragraph, because it is the case where the alternative was
+the worst kind of quiet. S-4.3's confirmation requires two `stat` samples, and a `stat`
+fails for three different reasons that must not be confused: **the path is gone** (a
+settled removal, delivered as `OpRemove`), **the path cannot be read** (a permission
+change, an EIO, a mount that vanished), and the second is *not* a removal. Treating them
+as the same thing means a page silently stops being indexed and nothing in the log says
+so — which from outside is indistinguishable from a vault nobody is editing. The
+settle filter reports the second case and drops the path; the next rescan repairs it.
 
 The deviation is accepted on two conditions. First, every one of them is emitted through
 `observability.Index`, a typed surface in the one package that decides what a log line may carry —

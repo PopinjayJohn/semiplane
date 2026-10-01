@@ -1011,6 +1011,33 @@ func scanSubtree(
 	onDir func(rel string) error,
 	onPage func(page string),
 ) (refused int, err error) {
+	// The watch goes on **before** the directory is read, and the order is the
+	// whole point rather than an implementation detail. A directory that arrived
+	// mid-run is adopted exactly once: whatever the listing below sees is
+	// reported from the listing, and whatever happened after the watch was added
+	// arrives as an event. Read first and add second leaves a window between the
+	// two in which a page is in neither — it was created after the listing was
+	// taken and before the watch existed — and nothing will ever report it: the
+	// event is already gone and the next `Reverify` only reconciles *directories*
+	// against the tree, never pages. That window is not theoretical. A test that
+	// does `mkdir lore && write lore/Gate.md` loses the page whenever the write
+	// lands inside it, and in production it is the ordinary `mkdir -p` + write, or
+	// a sync client dropping a folder and its contents in one go.
+	//
+	// The cost is a duplicate: a page created between the `Add` and the listing is
+	// both in the listing and the event queue. `emit` documents duplicates as
+	// expected and cheap, and the alternative to one is a silently lost page, so
+	// the duplicate is the right trade.
+	//
+	// `addErr` rather than the named `err`: the shadow check and the
+	// sloppy-reassign check disagree about whether this may reuse it, and a name
+	// that satisfies neither is not worth the argument. It is the watch that
+	// failed, and `addErr` says so.
+	addErr := onDir(rel)
+	if addErr != nil {
+		return 0, addErr
+	}
+
 	target, err := root.At(rel)
 	if err != nil {
 		return 0, fmt.Errorf("open %s to watch it: %w", rel, err)
@@ -1030,13 +1057,6 @@ func scanSubtree(
 
 	if closeErr != nil {
 		return 0, fmt.Errorf("close %s: %w", rel, closeErr)
-	}
-
-	// The directory itself first, so its own events are covered before its
-	// children's are looked for. Adding the leaves before the root would leave a
-	// window in which a file created in between is reported by nobody.
-	if err := onDir(rel); err != nil {
-		return 0, err
 	}
 
 	for _, entry := range entries {
