@@ -15,6 +15,13 @@ import (
 
 // newTestRouter returns a router over a fresh registry, with a logger that
 // discards output so a test run is not full of request lines.
+//
+// The account and campaign subsystems are left nil. These tests are about the
+// middleware chain and the liveness routes, and wiring a store in would make
+// every one of them a database test. The nil-tolerance is itself a property worth
+// relying on here: the independently-runnable invariant from architecture §15 is
+// that the server answers /healthz, and that must hold for a router with nothing
+// else attached.
 func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler {
 	t.Helper()
 
@@ -25,7 +32,7 @@ func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler 
 		TrustedProxies: nil,
 	}
 
-	return httpapi.NewRouter(logger, cfg, registry)
+	return httpapi.NewRouter(logger, cfg, registry, nil, nil)
 }
 
 // TestReadyzReportsCounters is the §13.2 promise: the counters are exposed on

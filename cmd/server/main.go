@@ -15,6 +15,7 @@ import (
 
 	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/httpapi"
+	"github.com/semiplane/semiplane/internal/httpapi/accounts"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
 )
@@ -23,17 +24,35 @@ import (
 // place so a new subcommand cannot be added without updating what the operator
 // is told exists.
 //
-// `admin create` is deliberately absent. The plan puts it in this phase, but it
-// cannot be built here: it needs the `users` table (phase 2's I2) and a
-// password-hashing decision that is a new dependency (phase 2's I3). Shipping a
-// command that parses a password and then cannot store it is worse than not
-// shipping it, so it lands with the schema that backs it.
+// The subcommand and flag names, as constants because each appears in every
+// dispatch that accepts it. A literal repeated across three switches is a
+// literal that eventually gets a typo in one of them, and a typo in a subcommand
+// name is a command that silently does not exist.
+const (
+	subcommandServe = "serve"
+	subcommandAdmin = "admin"
+	subcommandHelp  = "help"
+
+	flagHelpShort = "-h"
+	flagHelpLong  = "--help"
+
+	adminSubcommandCreate   = "create"
+	adminSubcommandCampaign = "campaign"
+)
+
+// The admin subcommands are listed rather than detailed; `semiplane admin help`
+// carries their flags. A subcommand is named here or nowhere, so an operator who
+// runs `semiplane admin` is never told it does not exist.
 const usageText = `semiplane — self-hosted TTRPG wiki and virtual tabletop
 
 Usage:
   semiplane                     run the server (the default)
   semiplane serve               run the server
+  semiplane admin create        add an account
+  semiplane admin campaign add  register a campaign
   semiplane help                show this message
+
+Run "semiplane admin help" for the admin subcommands' flags.
 
 Configuration is documented at https://popinjayjohn.github.io/semiplane/install/.
 `
@@ -73,11 +92,11 @@ func run(args []string) error {
 	subcommand, rest := splitSubcommand(args)
 
 	switch subcommand {
-	case "", "serve":
+	case "", subcommandServe:
 		return runServer(rest)
-	case "admin":
+	case subcommandAdmin:
 		return runAdmin(rest)
-	case "help", "-h", "--help":
+	case subcommandHelp, flagHelpShort, flagHelpLong:
 		fmt.Fprint(os.Stdout, usageText)
 
 		return nil
@@ -97,25 +116,6 @@ func splitSubcommand(args []string) (string, []string) {
 	return args[0], args[1:]
 }
 
-// runAdmin dispatches an admin subcommand. Nothing is registered yet — see
-// usageText for why — but the dispatch shape is here so the first subcommand is
-// a case rather than a restructure, and so `semiplane admin` fails with a usage
-// error rather than silently starting a server.
-func runAdmin(args []string) error {
-	if len(args) == 0 {
-		return usagef("admin has no subcommands yet")
-	}
-
-	switch args[0] {
-	case "help", "-h", "--help":
-		fmt.Fprint(os.Stdout, usageText)
-
-		return nil
-	default:
-		return usagef("unknown admin subcommand %q", args[0])
-	}
-}
-
 func runServer(_ []string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
@@ -125,14 +125,17 @@ func runServer(_ []string) error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
+	// Cancelled on SIGINT or SIGTERM, which is what starts the graceful drain
+	// below. Created before the store is opened so a signal arriving during
+	// startup reaches a context the open is already watching.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// The composition root. Everything is constructed here, in dependency
 	// order, and passed down explicitly: no package-level state, no init()
 	// registration, no lookup of a global. A test can therefore build the same
 	// wiring the binary does, and a phase that adds a subsystem adds it to this
 	// function rather than to a hidden initialiser somewhere.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -146,16 +149,31 @@ func runServer(_ []string) error {
 		}
 	}()
 
-	// The process's one counter registry. Nothing in phase 1 increments
-	// anything yet — the watcher, cache, secrets, hub and plugin phases each
-	// register their own — so every §13.2 signal currently reads zero on
-	// /readyz, which is how a subsystem that never wired itself up becomes
-	// visible rather than invisible.
+	// The process's one counter registry. The watcher, cache, secrets, hub and
+	// plugin phases each register their own, so a §13.2 signal still reads zero
+	// on /readyz until then — which is how a subsystem that never wired itself up
+	// becomes visible rather than invisible.
 	registry := observability.NewRegistry()
+
+	// The account routes: sign in, sign out, and the campaign list. Constructed
+	// here rather than in the router because it is where the store meets the
+	// components, and both are already in hand.
+	accountRoutes := &accounts.Router{
+		Store:  db,
+		Logger: logger,
+		Secure: cfg.IsProduction(),
+	}
+
+	// One handle, satisfying the union the HTTP surface needs. Stated as the
+	// interface type rather than passed as *store.Store so the wiring asserts at
+	// compile time that the store still satisfies the account routes, the access
+	// gates and the session resolver — which is the check that catches a
+	// signature change in one of the three when the other two are untouched.
+	var httpStore httpapi.Store = db
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.NewRouter(logger, cfg, registry),
+		Handler:           httpapi.NewRouter(logger, cfg, registry, accountRoutes, httpStore),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
