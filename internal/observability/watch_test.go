@@ -448,6 +448,7 @@ func TestWatchMethodsCannotAcceptContent(t *testing.T) {
 		"Recovered":         {},
 		"RescanFallback":    {},
 		"StableReadTimeout": {},
+		"SettleFailed":      {},
 		"RenderError":       {},
 	}
 
@@ -570,21 +571,26 @@ func TestWatchStripsPathErrorNoise(t *testing.T) {
 	}
 }
 
-// TestWatchRegistersEveryCounter is the S-12.1 assertion for `/readyz`: all six
-// names are present, which is what makes an unwired signal a visible zero
-// rather than an absent key.
+// TestWatchRegistersEveryCounter is the S-12.1 assertion for `/readyz`: every
+// name is present, which is what makes an unwired signal a visible zero rather
+// than an absent key.
 func TestWatchRegistersEveryCounter(t *testing.T) {
 	t.Parallel()
 
 	registry := observability.NewRegistry()
 	observability.NewWatch(registry, slog.Default())
 
+	// Five are §13.2's; `content.settle_failed` is the sixth, added by the settle
+	// filter's phase under ADR 0032. Held here rather than derived from
+	// `AllEventNames` so that dropping one from this surface fails the test
+	// instead of silently shrinking it.
 	want := []observability.EventName{
 		observability.EventWatchAddFailed,
 		observability.EventWatchDegraded,
 		observability.EventWatchRecovered,
 		observability.EventWatchRescanFallback,
 		observability.EventContentStableReadTimeout,
+		observability.EventContentSettleFailed,
 		observability.EventContentRenderError,
 	}
 

@@ -109,6 +109,7 @@ type Watch struct {
 	recovered         *Counter
 	rescanFallback    *Counter
 	stableReadTimeout *Counter
+	settleFailed      *Counter
 	renderError       *Counter
 
 	// mu guards state. It is not held while logging: a handler that blocks
@@ -132,6 +133,7 @@ func NewWatch(registry *Registry, logger *slog.Logger) *Watch {
 		recovered:         NewCounter(string(EventWatchRecovered)),
 		rescanFallback:    NewCounter(string(EventWatchRescanFallback)),
 		stableReadTimeout: NewCounter(string(EventContentStableReadTimeout)),
+		settleFailed:      NewCounter(string(EventContentSettleFailed)),
 		renderError:       NewCounter(string(EventContentRenderError)),
 		state:             make(map[string]watchState),
 	}
@@ -143,6 +145,7 @@ func NewWatch(registry *Registry, logger *slog.Logger) *Watch {
 			Register(watch.recovered).
 			Register(watch.rescanFallback).
 			Register(watch.stableReadTimeout).
+			Register(watch.settleFailed).
 			Register(watch.renderError)
 	}
 
@@ -255,6 +258,30 @@ func (w *Watch) StableReadTimeout(ctx context.Context, campaignID, path string) 
 	Event(ctx, w.logger, EventContentStableReadTimeout, slog.LevelWarn, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
+	})
+}
+
+// SettleFailed reports a path the settle filter could not `stat` for a reason
+// other than its absence.
+//
+// The absence case is a settled removal and is not reported here: a file that was
+// deleted is a change, and it is delivered as one. This is the other branch —
+// EACCES after a permission change, EIO, a vanished mount — where the filter has
+// no answer and drops the path. The page stays unindexed until the next rescan,
+// which is a repairable state, but *silently* unindexed is not: from outside it is
+// indistinguishable from a vault nobody is editing.
+//
+// Warn, and deliberately not merged into `StableReadTimeout`. That one means the
+// confirmation ran out of budget on a file it could see; this one means the
+// filter could not look at the file at all. Different causes, different fixes,
+// and an operator reading the first would not think to check the filesystem.
+func (w *Watch) SettleFailed(ctx context.Context, campaignID, path string, err error) {
+	w.settleFailed.Inc()
+
+	Event(ctx, w.logger, EventContentSettleFailed, slog.LevelWarn, EventAttributes{
+		CampaignID: campaignID,
+		Path:       path,
+		Detail:     errorClass(err),
 	})
 }
 

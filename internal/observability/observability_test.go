@@ -24,7 +24,7 @@ func TestAllEventNamesAreUniqueAndComplete(t *testing.T) {
 	// without updating the test, which is the intended alarm — and, if the addition
 	// came with no record, this failure is the only thing standing between an
 	// unrecorded deviation and a shipped one.
-	const wantCount = 23
+	const wantCount = 24
 
 	if len(names) != wantCount {
 		t.Errorf("AllEventNames() has %d entries, want %d", len(names), wantCount)

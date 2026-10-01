@@ -55,6 +55,18 @@ const (
 	// broken page silently.
 	EventContentRenderError EventName = "content.render_error"
 
+	// EventContentSettleFailed is a `stat` the settle filter could not complete
+	// for any reason other than the path not being there.
+	//
+	// Not one of §13.2's names, and recorded as such in ADR 0032. It exists
+	// because the alternative was the worst kind of quiet: the settle filter
+	// cannot distinguish "this file is gone" from "this file's permissions
+	// changed" or "this filesystem returned EIO", and it must treat the first as
+	// a settled removal. Treating the second and third the same way means a page
+	// silently stops being indexed with nothing in the log to say so, which is
+	// indistinguishable from a vault nobody is editing.
+	EventContentSettleFailed EventName = "content.settle_failed"
+
 	// EventCacheHit and EventCacheMiss are cache outcomes, by tier. A
 	// permanently zero include_secrets hit rate means the GM's view is being
 	// regenerated on every request.
@@ -158,6 +170,7 @@ var eventNames = []EventName{
 	EventWatchRescanFallback,
 	EventContentStableReadTimeout,
 	EventContentRenderError,
+	EventContentSettleFailed,
 	EventCacheHit,
 	EventCacheMiss,
 	EventConflict412,
