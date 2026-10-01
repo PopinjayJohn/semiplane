@@ -200,6 +200,13 @@ type contentPipeline struct {
 	debouncer *content.Debouncer
 	indexer   *content.Indexer
 
+	// supervisor owns S-4.5's degraded mode: the slow-timer re-verify and the
+	// rescan fallback. It is a field rather than something `newContentPipeline`
+	// starts and forgets, because the pipeline's `Close` has to stop it, and a
+	// supervisor nothing holds a reference to is a goroutine that outlives the
+	// process's request to stop.
+	supervisor *content.Supervisor
+
 	// campaigns are the campaigns this pipeline watches and indexes: the ones whose
 	// content root this process opened, in slug order. A campaign without one is
 	// absent from all three components, and its pages are answered by the route as
@@ -278,6 +285,41 @@ func newContentPipeline(
 
 	pipeline.watcher = watcher
 
+	// The supervisor is constructed last because it needs all three of the
+	// components above, and started last because a re-verify that runs before the
+	// watch set exists would report every campaign as dropped.
+	//
+	// Started here rather than by the caller because "the pipeline runs its own
+	// degraded-mode policy" is a property of the pipeline, and a caller that
+	// remembers to start it is a caller that can forget.
+	supervisor := content.NewSupervisor(
+		roots,
+		pipeline.indexer,
+		watcher,
+		signals.watch,
+		content.SupervisorTimings{},
+	)
+
+	if err := supervisor.Start(ctx); err != nil {
+		// A wiring fault, not a campaign in trouble: the supervisor's own
+		// comment says `Start` errors only for a bad argument. Both dependents
+		// are already running, so they are closed here rather than left to a
+		// defer that is about to be skipped.
+		watchErr := watcher.Close()
+		pipeline.debouncer.Close()
+
+		if watchErr != nil {
+			return nil, errors.Join(
+				fmt.Errorf("start the content supervisor: %w", err),
+				fmt.Errorf("close the content watcher: %w", watchErr),
+			)
+		}
+
+		return nil, fmt.Errorf("start the content supervisor: %w", err)
+	}
+
+	pipeline.supervisor = supervisor
+
 	return pipeline, nil
 }
 
@@ -296,6 +338,18 @@ func newContentPipeline(
 // be the same manufactured failure from the other end: an `os.Root`-confined `stat`
 // and a database write against handles that have already been shut.
 func (p *contentPipeline) Close() error {
+	// Supervisor, then watcher, then settle filter.
+	//
+	// The supervisor first because it is the only component that *calls* the other
+	// two: closing it while its timer is mid-pass would leave a pass reindexing
+	// through a watcher that is shutting down. The watcher before the settle
+	// filter because the reverse order leaves a live watcher arming deadlines in a
+	// filter whose scheduler has gone — a timer that can never fire and never
+	// expires.
+	// `Supervisor.Close` returns nothing and is idempotent by construction, so
+	// there is no error to join here — only the watcher's.
+	p.supervisor.Close()
+
 	watchErr := p.watcher.Close()
 
 	p.debouncer.Close()
