@@ -168,6 +168,9 @@ func runServer(_ []string) error {
 		Store:  db,
 		Logger: logger,
 		Secure: cfg.IsProduction(),
+		// Set below, once the content roots are open: the instance view carries
+		// which campaigns are degraded, and at this point nothing is known. A
+		// zero value here would report every campaign healthy.
 	}
 
 	// One handle, satisfying the union the HTTP surface needs. Stated as the
@@ -239,6 +242,13 @@ func runServer(_ []string) error {
 		}
 	}
 
+	// Both shell routes carry the same instance view, and it is assigned from
+	// the one computation both of them need. Assigned here rather than at
+	// construction because the account routes are built before any content root
+	// exists, and a degraded campaign is only knowable once they have all been
+	// tried.
+	accountRoutes.Instance = instanceView(cfg, degraded)
+
 	if len(degraded) > 0 {
 		logger.Warn("instance degraded: some campaigns have no readable content",
 			slog.Int("degraded_campaigns", len(degraded)),
@@ -301,6 +311,7 @@ func runServer(_ []string) error {
 		renderers,
 		pageKinds{},
 		pageLister{db: db},
+		accountRoutes.Instance,
 		logger,
 	)
 

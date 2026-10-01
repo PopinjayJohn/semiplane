@@ -17,6 +17,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/auth"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
+	"github.com/semiplane/semiplane/internal/web/components"
 )
 
 // wiringStore is a fake satisfying httpapi.Store — the union the router takes.
@@ -191,12 +192,41 @@ const wiringHandlerTimeout = 20 * time.Second
 
 // fullRouter builds the router exactly as the composition root does: an account
 // Router and one store, with no middleware added by the test.
+//
+// `instance` is passed rather than defaulted to a zero value because a zero
+// `components.InstanceView` reports the instance **healthy** — an empty
+// `Degraded` slice means healthy by construction. Every audit that runs over the
+// routes this builds would therefore skip the degraded notice entirely, which is
+// how a vocabulary bug in that notice's copy can sit in the tree while the gate
+// reporting zero findings is green.
+//
+// The default is a *degraded* instance, so a fixture that does not think about it
+// is auditing the surface where a mistake is most likely.
 func fullRouter(backing httpapi.Store) http.Handler {
+	return fullRouterWithInstance(backing, degradedInstanceView())
+}
+
+// degradedInstanceView is an instance with one campaign that cannot be read.
+//
+// Matches the shape `cmd/server.instanceView` produces for a campaign whose
+// content root vanished (S-4.5), so the audit sees the same markup a real
+// degraded instance renders.
+func degradedInstanceView() components.InstanceView {
+	return components.InstanceView{
+		Degraded: []components.DegradedView{{
+			Name:   "Campaign greyhaven",
+			Detail: "its content root is not readable, so its pages cannot load",
+		}},
+	}
+}
+
+// fullRouterWithInstance builds the router with an explicit instance view.
+func fullRouterWithInstance(backing httpapi.Store, instance components.InstanceView) http.Handler {
 	return httpapi.NewRouter(
 		slog.New(slog.DiscardHandler),
 		config.Config{HandlerTimeout: wiringHandlerTimeout},
 		observability.NewRegistry(),
-		&accounts.Router{Store: backing},
+		&accounts.Router{Store: backing, Instance: instance},
 		backing,
 		nil,
 	)

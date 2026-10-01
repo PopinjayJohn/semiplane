@@ -27,6 +27,10 @@ type Config struct {
 	// self-hosted server: the only proxy in a typical deployment is the one on
 	// the same host, configured by the operator.
 	TrustedProxies []string
+	// InstanceName is the name this instance presents in its header and rail.
+	// Empty falls back to the product name, so an unconfigured install still
+	// renders a coherent page rather than a blank heading.
+	InstanceName string
 }
 
 // Load reads configuration from the process environment, applying defaults for
@@ -79,6 +83,7 @@ func Load() (Config, error) {
 		Environment:     stringFromEnv("SEMIPLANE_ENV", "development"),
 		ContentRootBase: contentRootBase,
 		TrustedProxies:  listFromEnv("SEMIPLANE_TRUSTED_PROXIES"),
+		InstanceName:    stringFromEnv("SEMIPLANE_INSTANCE_NAME", ""),
 	}, nil
 }
 
