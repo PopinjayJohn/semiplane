@@ -160,17 +160,35 @@ func (s *Store) CampaignsForUser(ctx context.Context, userID int64) ([]domain.Ca
 	return campaigns, nil
 }
 
-// DeleteCampaign removes a campaign and, by cascade, its memberships.
+// DeleteCampaign removes a campaign and, by cascade, its memberships and its
+// pages.
 //
 // `campaign_state` has no foreign key to it -- migration 0005 explains why, and
 // records the rebuild that will add one -- so a deleted campaign leaves its live
 // game state behind. That gap belongs to the work item that owns that table, and
 // it is why this is the only deletion here that is knowingly incomplete.
+//
+// The pages cascade does leave something behind, and this rebuilds it. `pages_fts`
+// is a virtual table with no foreign key reaching it and no trigger maintaining it
+// (migration 0007 explains both), so the index keeps entries for rows the cascade
+// removed. They join to nothing and can never be returned -- which is why this is
+// housekeeping rather than a leak -- but they occupy the index forever. A rebuild
+// is one statement, and it doubles as the check that the index still agrees with
+// `pages`: an external-content FTS5 table answers no query of its own, so a
+// rebuild that changed anything would mean the writer had drifted.
 func (s *Store) DeleteCampaign(ctx context.Context, id int64) error {
-	return s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, deleteCampaign, id)
+	what := fmt.Sprintf("delete campaign %d", id)
 
-		return translateWrite(err, fmt.Sprintf("delete campaign %d", id))
+	return s.Write(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, deleteCampaign, id); err != nil {
+			return translateWrite(err, what)
+		}
+
+		if _, err := tx.ExecContext(ctx, rebuildPagesFTS); err != nil {
+			return translateWrite(err, what)
+		}
+
+		return nil
 	})
 }
 

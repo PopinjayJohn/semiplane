@@ -54,6 +54,21 @@ var (
 	// no column for a raw token to arrive in, and an empty hash is the shape that
 	// mistake takes when one is made.
 	ErrInvalidTokenHash = errors.New("store: auth session token hash is empty")
+
+	// ErrInvalidPagePath means a page was offered without a path. The empty string
+	// is refused because `(campaign_id, '')` is a row no file can ever correspond
+	// to: it would appear in every campaign listing, be indexed for search, and
+	// answer a page request with a page whose path is not one. The form of a path
+	// -- its separators, its confinement -- is the content package's rule (S-3.5),
+	// and this is not a second one.
+	ErrInvalidPagePath = errors.New("store: page path is empty")
+
+	// ErrInvalidSearchQuery means the search box held nothing that could be
+	// searched for: empty, or nothing but punctuation. It exists so a handler can
+	// answer 400 with errors.Is instead of matching a driver's message, and
+	// because a query that cannot match is a mistake in the request rather than a
+	// fault worth a 500.
+	ErrInvalidSearchQuery = errors.New("store: search query has no usable terms")
 )
 
 // SQLite extended result codes, from sqlite3.h. SQLite assigns each one once and
