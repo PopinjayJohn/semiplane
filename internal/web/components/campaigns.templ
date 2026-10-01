@@ -1,0 +1,55 @@
+package components
+
+// campaignsPageName is this route's own name in a document title (UI §7.2's
+// first part). The plural is what the reader is looking at, not the singular
+// entity they will find inside it.
+const campaignsPageName = "Campaigns"
+
+// CampaignListPage renders the / document: the campaigns this account is a
+// member of, or the designed first run, or the error state.
+//
+// This is the whole integration surface for the route. Nothing here reads a
+// request, a store or a cookie, so the accessibility contract can be proven
+// against fixtures before the route exists.
+templ CampaignListPage(view CampaignListView) {
+	@Shell(pageChrome(view.Shell, campaignsPageName), CampaignList(view), InstanceRail(view.Shell.Instance))
+}
+
+// CampaignList is the centre slot for /: the heading, then exactly one of the
+// three states below it.
+//
+// The heading belongs to the route rather than to the state, which is what
+// makes "exactly one <h1> per page" (UI §7.2) structural here instead of a
+// thing each state has to remember. A reader who lands on the error page still
+// gets told where they are.
+templ CampaignList(view CampaignListView) {
+	<h1 data-testid="campaigns-heading">Campaigns</h1>
+	if view.Failure != nil {
+		@LoadError(*view.Failure)
+	} else if len(view.Campaigns) == 0 {
+		@FirstRun(view)
+	} else {
+		<ul class="card-list" data-testid="campaign-list">
+			for _, card := range view.Campaigns {
+				// data-slug rather than a data-testid: a testid on every row
+				// would be the same string several times over, and a hook that
+				// appears more than once is a hook nothing can select. The slug
+				// is the row's identity, and it is what the link carries.
+				<li class="card" data-slug={ card.Slug }>
+					<a class="card-link target" href={ "/c/" + card.Slug }>{ card.Name }</a>
+					// No data-testid on the metadata lines: they repeat once per
+					// campaign, and a hook that appears more than once in a
+					// document is a hook nothing can select. data-slug on the row
+					// is the locator, and the mapping from a domain role to these
+					// words is asserted on NewCampaignCard directly.
+					if card.Role != "" {
+						<p class="card-meta">{ card.Role }</p>
+					}
+					if card.Visibility != "" {
+						<p class="card-meta">{ card.Visibility }</p>
+					}
+				</li>
+			}
+		</ul>
+	}
+}
