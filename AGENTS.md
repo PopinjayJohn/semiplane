@@ -298,7 +298,8 @@ deliberately omits.
 
 ## MCP servers
 
-Configured in `kilo.json`.
+Configured in `kilo.json`, and mirrored for OpenCode in `.opencode/opencode.jsonc`.
+Both point at the committed `.kilo/skills`, so the skills have one source of truth.
 
 - **playwright** — 25 `browser_*` tools, Chromium, `--isolated`. Diagnostic
   use; anything that must persist belongs in a committed test.
