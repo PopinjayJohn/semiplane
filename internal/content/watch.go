@@ -1168,6 +1168,23 @@ func (w *Watcher) reconcile(ctx context.Context, route watchRoute) VerifyReport 
 		report.Dropped++
 	}
 
+	// Forgetting the dropped paths, so the next pass does not drop them again.
+	//
+	// Without this the bookkeeping and the notifier disagree in the *other*
+	// direction: `dropWatch` asks the notifier to stop watching a directory the
+	// watcher still believes it watches, so the next `reconcile` finds the same
+	// directory in `watchedUnder`, finds it absent from `desired` again, drops it
+	// again, and reports `Dropped: 1` for as long as the process runs. A
+	// supervisor that treats a drop as "reindex once" then reindexes on every
+	// verify pass forever, and a report whose `Dropped` never reaches zero cannot
+	// be read as "nothing is wrong".
+	//
+	// Cleared here rather than inside `dropWatch` because `dropWatch` is also
+	// called on a `Remove` event, where the bookkeeping is removed by the event
+	// path and a second deletion would be a no-op at best and a double decrement
+	// at worst.
+	w.forgetUnder(route, desired)
+
 	return report
 }
 
@@ -1315,6 +1332,27 @@ func (w *Watcher) forgetCampaign(ctx context.Context, route watchRoute) int {
 // what shutdown produces, and both mean the same thing, which is that there is
 // no watch to remove. Anything else is a watch that is still there and will have
 // to be re-added, which is `watch.add_failed`'s meaning.
+// forgetUnder removes from the watcher's bookkeeping every directory under a
+// campaign's root that the reconciliation no longer wants.
+//
+// `desired` is the set of directories the last walk found, keyed by absolute
+// path. Anything this watcher claims and `desired` does not name is a watch that
+// should not exist, and leaving it claimed is what makes a drop repeat on every
+// pass.
+func (w *Watcher) forgetUnder(route watchRoute, desired map[string]watchTarget) {
+	stale := w.watchedUnder(route)
+
+	w.mu.Lock()
+
+	for _, dir := range stale {
+		if _, keep := desired[dir]; !keep {
+			delete(w.watched, dir)
+		}
+	}
+
+	w.mu.Unlock()
+}
+
 func (w *Watcher) dropWatch(ctx context.Context, route watchRoute, absolute string) {
 	err := w.notifier.Remove(absolute)
 	if err == nil || errors.Is(err, fsnotify.ErrNonExistentWatch) ||
