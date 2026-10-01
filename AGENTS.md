@@ -139,7 +139,7 @@ onward, and `main` stays green between phases.
 ```
 main
 └── phase/NN-slug                    one per phase, one PR to main
-    ├── phase/NN-slug/<work-item>    one per sub-agent, one PR to the phase branch
+    └── NN-slug/<work-item>          one per sub-agent, one PR to the phase branch
 ```
 
 - A phase branch is cut from `main` when the previous phase's PR has merged. Never from a stale
@@ -148,6 +148,13 @@ main
 - A phase branch merges to `main` only when its Definition of Done is met in full.
 - Sub-agents open a PR against the **phase branch**. Never push to `main`, never open a PR
   against `main`.
+- **A work-item branch drops the `phase/` prefix.** `phase/02-identity/domain-types` cannot
+  exist: git stores a branch as a file under `refs/heads/`, so `refs/heads/phase/02-identity`
+  is a file and cannot simultaneously be the directory holding
+  `refs/heads/phase/02-identity/domain-types`. It is a directory/file conflict in the ref
+  namespace and `git branch` refuses it outright. `02-identity/domain-types` has no such
+  ancestor ref and works. Never "tidy" this back.
+  [0023](docs/content/en/decisions/0023-work-item-branch-names-drop-the-phase-prefix.md).
 
 ### Definition of Done — a phase
 
@@ -201,6 +208,11 @@ internal/content/ os.Root confinement, front matter, render, cache, watcher
 internal/realtime/hub, campaign state, protocol codec
 internal/plugin/  registry; explicit registration, NO init()
 internal/httpapi/ handlers, routing, middleware
+  ├─ middleware/ chain: RequestID, Recoverer, RealIP, Log, Timeout
+  ├─ auth/       credential primitives only — no database, no config
+  ├─ identity/   session cookie → domain.Requestor, on the request context
+  ├─ campaigns/  the S-8 access gates, and campaign registration
+  └─ accounts/   the sign-in and campaign-list routes
 internal/web/     templ components and static assets
 docs/             Hugo documentation site (its own project root)
 demo-vault/       the demo campaigns (phase 11)
@@ -251,7 +263,15 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
 
 - **Path confinement is `os.Root`**, per campaign, created at registration. Never
   `filepath.Clean` plus a prefix check. It applies to writes *and* to every path in front
-  matter.
+  matter. A campaign's content root is created **mode 0700**: a directory any account on
+  the host can read is a campaign any account on the host can read, bypassing §S-8 entirely.
+- **No access is 404, never 403.** A private campaign and a campaign that does not exist answer
+  identically — same status, same body — or a 403 becomes an existence oracle. Authorisation is
+  a gate the route mounts (`campaigns.RequireRead` / `RequirePlay` / `RequireEdit`), never a
+  check inside a handler. See [0024](docs/content/en/decisions/0024-authorisation-gates-mount-not-per-handler.md).
+- **The first account is a command, not an environment variable.** No bootstrap config value
+  creates an administrator, because a password in the environment cannot be withdrawn from.
+  See [0025](docs/content/en/decisions/0025-no-first-account-bootstrap-environment-variable.md).
 - **Never `html.WithUnsafe()`.** Never. With a public tier and Obsidian sync as an input, this
   is a security boundary.
 - **Obsidian Sync is untrusted input.** Shared vaults, community plugins, compromised devices.

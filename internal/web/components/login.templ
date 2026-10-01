@@ -1,0 +1,48 @@
+package components
+
+// loginPageName is this route's own name in a document title (UI §7.2's first
+// part). "Sign in" is the verb a reader is performing; "Login" is the route's
+// name and nobody performs it.
+const loginPageName = "Sign in"
+
+// LoginPage renders the /login document.
+//
+// This is the whole integration surface for the route: build the LoginView,
+// call this, render the component into the response. Nothing here reads a
+// request, a store or a cookie, which is what lets the accessibility contract
+// be proven against fixtures before the route exists.
+templ LoginPage(view LoginView) {
+	@Shell(pageChrome(view.Shell, loginPageName), LoginForm(view), InstanceRail(view.Shell.Instance))
+}
+
+// LoginForm is the centre slot for /login: one heading, the reason the last
+// attempt failed if there is one, and the credentials form.
+//
+// The form posts to /login, which is also the GET route, so a failed attempt
+// re-renders rather than redirecting: the reason is in the response, and
+// redirecting would put it in the query string and in the browser history.
+templ LoginForm(view LoginView) {
+	<h1 data-testid="login-heading">Sign in</h1>
+	if message := view.Failure.message(); message != "" {
+		// Assertive rather than polite: this is the answer to what the reader
+		// just did, arriving in the same response as the form. A polite region
+		// can be missed entirely by someone already reading the page.
+		<p class="notice notice--error" role="alert" data-testid="login-error">{ message }</p>
+	}
+	<form class="stack form" method="post" action="/login" data-testid="login-form">
+		<div class="field">
+			<label for="login-username">Username</label>
+			<input id="login-username" class="target" type="text" name="username" autocomplete="username" required value={ view.Username } data-testid="login-username"/>
+		</div>
+		<div class="field">
+			<label for="login-password">Password</label>
+			// No value attribute at all. A password echoed into a response is
+			// a password in the browser cache and in every proxy that saw it.
+			<input id="login-password" class="target" type="password" name="password" autocomplete="current-password" required data-testid="login-password"/>
+		</div>
+		if view.ReturnTo != "" {
+			<input type="hidden" name="next" value={ view.ReturnTo } data-testid="login-return-to"/>
+		}
+		<button class="target button button--primary" type="submit" data-testid="login-submit">Sign in</button>
+	</form>
+}

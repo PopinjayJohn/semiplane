@@ -303,7 +303,8 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 	return nil
 }
 
-// nowFunc is indirected so a test can pin applied_at. A migration timestamp is
-// the one place where a clock reading ends up in the database, and it is
-// otherwise impossible to assert against.
+// nowFunc is the package's single clock, indirected so a test can pin it. A
+// timestamp is the one place where a clock reading ends up in the database, and it
+// is otherwise impossible to assert against; funnelling every read through one
+// variable is what keeps a second time.Now from creeping in beside it.
 var nowFunc = time.Now

@@ -1,0 +1,81 @@
+package components
+
+// Shell renders the document around a route slot: the five structural
+// landmarks, reduced to the four that exist before a campaign does.
+//
+// This is the pre-campaign variant of the shell, and its shape is fixed by UI
+// §4.6: header, centre, right rail and footer all render, and the left nav is
+// absent. The `shell--pre-campaign` class is the hook the grid rules target —
+// `grid-template-areas: "header header" "main rail" "footer footer"` — and the
+// layout itself is the token layer's, not this work item's.
+//
+// The slots are components rather than strings so a route declares what goes
+// where without touching markup, and so a plugin page type can fill one
+// without adding a landmark (UI §7.2 forbids that).
+templ Shell(view ShellView, centre, rail templ.Component) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			// §3.7: a visitor with no script still gets the operating
+			// system's polarity instead of a page pinned to one theme.
+			<meta name="color-scheme" content="light dark"/>
+			<title>{ view.Title }</title>
+			<link rel="stylesheet" href="/assets/app.css"/>
+		</head>
+		<body>
+			// §7.2 fixes the order and the position: the first focusable
+			// elements in the document, before the banner. The
+			// campaign-navigation link is absent because §4.6 removes the nav
+			// on this route, and a skip link to a landmark that is not there
+			// moves focus nowhere. Each target carries tabindex="-1" so focus
+			// lands on an element a screen reader announces rather than at the
+			// top of a scroll container.
+			<a class="skip-link target" href="#main" data-testid="skip-to-content">Skip to content</a>
+			<a class="skip-link target" href="#rail" data-testid="skip-to-utilities">Skip to utilities</a>
+			<div class="shell shell--pre-campaign" data-testid="shell">
+				// A role on each landmark rather than only the implicit ones:
+				// the structural test asserts these attributes, and
+				// `<header>`/`<main>` are the implicit roles only by
+				// specification, not by anything the markup says.
+				<header class="shell-header" role="banner" data-testid="shell-header">
+					<a class="shell-brand target" href="/" data-testid="header-home">{ view.Instance.displayName() }</a>
+					if view.Account.Username != "" {
+						<div class="shell-account" data-testid="header-account">
+							<span class="shell-account-name">{ view.Account.Username }</span>
+							// §4.1 puts an account menu in the header. Until the
+							// client layer exists there is no menu to open, and a
+							// popup that cannot open is a dead control — so the
+							// zone renders the identity and a real form instead,
+							// and the menu is the phase-9 replacement.
+							if view.SignOutHref != "" {
+								<form method="post" action={ view.SignOutHref }>
+									<button type="submit" class="target" data-testid="header-sign-out">Sign out</button>
+								</form>
+							}
+						</div>
+					}
+				</header>
+				<main id="main" class="shell-main" role="main" tabindex="-1" data-testid="shell-main">
+					@centre
+				</main>
+				<aside id="rail" class="shell-rail" role="complementary" aria-label="Utilities" tabindex="-1" data-testid="shell-rail">
+					@rail
+				</aside>
+				// §4.2's degraded row is campaign-scoped and belongs to the
+				// rail on this route (§4.4), so the footer carries only what
+				// every instance has: its build, and the status link when the
+				// route behind it exists.
+				<footer class="shell-footer" role="contentinfo" data-testid="shell-footer">
+					if view.Instance.Version != "" {
+						<span class="shell-footer-item" data-testid="footer-version">Version { view.Instance.Version }</span>
+					}
+					if view.StatusHref != "" {
+						<a class="shell-footer-item target" href={ view.StatusHref } data-testid="footer-status-link">Instance status</a>
+					}
+				</footer>
+			</div>
+		</body>
+	</html>
+}

@@ -1,0 +1,454 @@
+package httpapi_test
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/semiplane/semiplane/internal/config"
+	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/httpapi"
+	"github.com/semiplane/semiplane/internal/httpapi/accounts"
+	"github.com/semiplane/semiplane/internal/httpapi/auth"
+	"github.com/semiplane/semiplane/internal/observability"
+	"github.com/semiplane/semiplane/internal/store"
+)
+
+// wiringStore is a fake satisfying httpapi.Store — the union the router takes.
+//
+// It exists because of a bug this file is here to prevent: the router mounted the
+// account routes and the campaign gates but never put `identity.Authenticate` in
+// the chain, so every request resolved as anonymous. Each package's own tests
+// passed, because each mounted the middleware itself and therefore never noticed
+// that the composition root had not. A wiring test is the only kind that sees it,
+// and it exists here rather than as an assertion on the router's internals
+// because the failure was observable only through a real request.
+type wiringStore struct {
+	users     map[string]domain.User
+	sessions  map[string]store.AuthSession
+	campaigns map[string]domain.Campaign
+	members   map[int64]domain.Role
+}
+
+func newWiringStore() *wiringStore {
+	return &wiringStore{
+		users:     map[string]domain.User{},
+		sessions:  map[string]store.AuthSession{},
+		campaigns: map[string]domain.Campaign{},
+		members:   map[int64]domain.Role{},
+	}
+}
+
+func (f *wiringStore) UserByUsername(_ context.Context, username string) (domain.User, error) {
+	user, ok := f.users[username]
+	if !ok {
+		return domain.User{}, store.ErrNotFound
+	}
+
+	return user, nil
+}
+
+func (f *wiringStore) CreateUser(ctx context.Context, user domain.User) (domain.User, error) {
+	f.users[user.Username] = user
+
+	return user, nil
+}
+
+func (f *wiringStore) CreateSession(
+	_ context.Context,
+	session store.AuthSession,
+) (store.AuthSession, error) {
+	f.sessions[session.TokenHash] = session
+
+	return session, nil
+}
+
+func (f *wiringStore) DeleteSession(_ context.Context, tokenHash string) error {
+	delete(f.sessions, tokenHash)
+
+	return nil
+}
+
+func (f *wiringStore) SessionByTokenHash(
+	_ context.Context,
+	tokenHash string,
+) (store.AuthSession, error) {
+	session, ok := f.sessions[tokenHash]
+	if !ok {
+		return store.AuthSession{}, store.ErrNotFound
+	}
+
+	return session, nil
+}
+
+func (f *wiringStore) UserByID(_ context.Context, id int64) (domain.User, error) {
+	for _, user := range f.users {
+		if user.ID == id {
+			return user, nil
+		}
+	}
+
+	return domain.User{}, store.ErrNotFound
+}
+
+func (f *wiringStore) CampaignsForUser(_ context.Context, _ int64) ([]domain.Campaign, error) {
+	campaigns := make([]domain.Campaign, 0, len(f.members))
+
+	for campaignID := range f.members {
+		// Indexed rather than ranged: domain.Campaign is 128 bytes and only the
+		// ID is read while matching.
+		for i := range f.campaigns {
+			if f.campaigns[i].ID == campaignID {
+				campaigns = append(campaigns, f.campaigns[i])
+
+				break
+			}
+		}
+	}
+
+	return campaigns, nil
+}
+
+func (f *wiringStore) MembershipsForUser(
+	_ context.Context,
+	userID int64,
+) ([]domain.Membership, error) {
+	memberships := make([]domain.Membership, 0, len(f.members))
+
+	for campaignID, role := range f.members {
+		memberships = append(memberships, domain.Membership{
+			CampaignID: campaignID, UserID: userID, Role: role,
+		})
+	}
+
+	return memberships, nil
+}
+
+func (f *wiringStore) CampaignBySlug(_ context.Context, slug string) (domain.Campaign, error) {
+	campaign, ok := f.campaigns[slug]
+	if !ok {
+		return domain.Campaign{}, store.ErrNotFound
+	}
+
+	return campaign, nil
+}
+
+func (f *wiringStore) Membership(
+	_ context.Context,
+	campaignID, userID int64,
+) (domain.Membership, error) {
+	role, ok := f.members[campaignID]
+	if !ok {
+		return domain.Membership{}, store.ErrNotFound
+	}
+
+	return domain.Membership{CampaignID: campaignID, UserID: userID, Role: role}, nil
+}
+
+func (f *wiringStore) CreateCampaign(
+	_ context.Context,
+	campaign domain.Campaign,
+) (domain.Campaign, error) {
+	if _, exists := f.campaigns[campaign.Slug]; exists {
+		return domain.Campaign{}, store.ErrConflict
+	}
+
+	campaign.ID = int64(len(f.campaigns) + 1)
+	f.campaigns[campaign.Slug] = campaign
+
+	return campaign, nil
+}
+
+func (f *wiringStore) CreateMembership(
+	_ context.Context,
+	membership domain.Membership,
+) (domain.Membership, error) {
+	f.members[membership.CampaignID] = membership.Role
+
+	return membership, nil
+}
+
+func (f *wiringStore) DeleteCampaign(context.Context, int64) error { return nil }
+
+// wiringHandlerTimeout is the budget the wiring tests give the handler.
+//
+// Generous on purpose, and the value is chosen rather than copied. Signing in
+// runs PBKDF2-HMAC-SHA256 at 600,000 iterations (ADR 0021), which is roughly half
+// a second of CPU by design and several seconds under `-race`. A one-second
+// budget — the value the middleware tests use, and the right one for them because
+// none of them hash anything — answers 504 before the credential check finishes,
+// so the wiring tests got a timeout rather than the behaviour they were asserting.
+//
+// The real default is 25s (config.HandlerTimeout), which is ample for one
+// password verification. Asserted rather than assumed: a test that passes with an
+// artificially short budget is not testing the chain a deployment runs.
+const wiringHandlerTimeout = 20 * time.Second
+
+// fullRouter builds the router exactly as the composition root does: an account
+// Router and one store, with no middleware added by the test.
+func fullRouter(backing httpapi.Store) http.Handler {
+	return httpapi.NewRouter(
+		slog.New(slog.DiscardHandler),
+		config.Config{HandlerTimeout: wiringHandlerTimeout},
+		observability.NewRegistry(),
+		&accounts.Router{Store: backing},
+		backing,
+	)
+}
+
+// TestSignInThroughTheRouterProducesAWorkingSession is the end-to-end wiring
+// assertion: post credentials, follow the redirect with the cookie the router
+// set, and land on the campaign list showing the account's campaigns.
+//
+// Every step goes through the router the binary uses. A test that built its own
+// middleware chain would pass with `Authenticate` missing from the composition
+// root, which is exactly the failure this test was written for.
+func TestSignInThroughTheRouterProducesAWorkingSession(t *testing.T) {
+	t.Parallel()
+
+	st := newWiringStore()
+
+	hash, err := auth.HashPassword("correct horse")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	st.users["ada"] = domain.User{ID: 1, Username: "ada", PasswordHash: hash}
+	st.campaigns["greyhaven"] = domain.Campaign{
+		ID: 1, Slug: "greyhaven", Name: "Greyhaven", Visibility: domain.VisibilityPrivate,
+	}
+	st.members[1] = domain.RoleGM
+
+	handler := fullRouter(st)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, signIn(t, "ada", "correct horse"))
+
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("sign-in status = %d, want 303", recorder.Code)
+	}
+
+	session := sessionCookieOf(t, recorder)
+
+	// The campaign list, carrying the cookie the router itself set.
+	list := httptest.NewRecorder()
+	handler.ServeHTTP(list, getRequest(t, "/", session))
+
+	if list.Code != http.StatusOK {
+		t.Fatalf("campaign list status = %d, want 200", list.Code)
+	}
+
+	body := list.Body.String()
+
+	// The identity reached the handler. Before the fix, the router resolved every
+	// request as anonymous and rendered the sign-in form here instead.
+	if !strings.Contains(body, `data-testid="campaign-list"`) {
+		t.Errorf("the campaign list did not render; body began %q", firstBytes(body))
+	}
+
+	for _, want := range []string{`data-slug="greyhaven"`, "ada", "Game Master"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the campaign list does not contain %q; body began %q", want, firstBytes(body))
+		}
+	}
+}
+
+// TestSignOutThroughTheRouterRevokesTheSession: the same wiring assertion for
+// the other direction, and it fails if the cookie is cleared without the row.
+func TestSignOutThroughTheRouterRevokesTheSession(t *testing.T) {
+	t.Parallel()
+
+	st := newWiringStore()
+
+	hash, err := auth.HashPassword("pw")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	st.users["ada"] = domain.User{ID: 1, Username: "ada", PasswordHash: hash}
+
+	handler := fullRouter(st)
+
+	signInRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(signInRecorder, signIn(t, "ada", "pw"))
+
+	session := sessionCookieOf(t, signInRecorder)
+
+	if len(st.sessions) != 1 {
+		t.Fatalf("%d sessions stored, want 1", len(st.sessions))
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, formPost(t, "/logout", url.Values{}, session))
+
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("sign-out status = %d, want 303", recorder.Code)
+	}
+
+	if len(st.sessions) != 0 {
+		t.Errorf("%d sessions remain after sign-out, want 0", len(st.sessions))
+	}
+}
+
+// TestCampaignGatesSeeTheIdentityThroughTheRouter is the other half of the
+// missing-middleware bug: Resolve reads the requestor to load a membership, so
+// without Authenticate in the chain every campaign route answered as an
+// anonymous visitor regardless of the cookie.
+//
+// There is no campaign route mounted in this phase, so the assertion is made
+// through the identity the gates consume: a request carrying a valid session
+// must not be anonymous. Without the cookie, it must be.
+func TestCampaignGatesSeeTheIdentityThroughTheRouter(t *testing.T) {
+	t.Parallel()
+
+	st := newWiringStore()
+
+	hash, err := auth.HashPassword("pw")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	st.users["ada"] = domain.User{ID: 1, Username: "ada", PasswordHash: hash}
+
+	handler := fullRouter(st)
+
+	// A request with no cookie reaches the campaign-list route as anonymous,
+	// which is the observable form of the identity.
+	anonymous := httptest.NewRecorder()
+	handler.ServeHTTP(anonymous, getRequest(t, "/", nil))
+
+	if strings.Contains(anonymous.Body.String(), `data-testid="header-account"`) {
+		t.Error("a request with no cookie rendered an account zone: identity is not being resolved")
+	}
+
+	// With a valid session, the same route must render the identity. This is the
+	// assertion that fails when Authenticate is missing from the chain.
+	signInRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(signInRecorder, signIn(t, "ada", "pw"))
+
+	session := sessionCookieOf(t, signInRecorder)
+
+	signedIn := httptest.NewRecorder()
+	handler.ServeHTTP(signedIn, getRequest(t, "/", session))
+
+	if !strings.Contains(signedIn.Body.String(), `data-testid="header-account"`) {
+		t.Errorf("a request with a valid session did not render an account zone; "+
+			"body began %q. identity.Authenticate is not in the chain", firstBytes(signedIn.Body.String()))
+	}
+}
+
+// TestRouterWithoutAStoreStillServesLiveness is the independently-runnable
+// invariant from architecture §15, and it holds for a router with no database at
+// all — which is what makes the wiring above a wiring choice rather than a
+// dependency.
+func TestRouterWithoutAStoreStillServesLiveness(t *testing.T) {
+	t.Parallel()
+
+	handler := httpapi.NewRouter(
+		slog.New(slog.DiscardHandler),
+		config.Config{HandlerTimeout: time.Second},
+		observability.NewRegistry(),
+		nil,
+		nil,
+	)
+
+	for path, want := range map[string]int{
+		"/healthz": http.StatusOK,
+		"/readyz":  http.StatusOK,
+		"/nope":    http.StatusNotFound,
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, getRequest(t, path, nil))
+
+		if recorder.Code != want {
+			t.Errorf("GET %s = %d, want %d", path, recorder.Code, want)
+		}
+	}
+}
+
+// TestUnmatchedCampaignPathIsNotFoundNotAuthorised: /c/ is mounted behind the
+// access gates, and with no campaign route registered the answer is a 404 whose
+// body is the not-found body — the same answer for a slug nobody registered.
+func TestUnmatchedCampaignPathIsNotFoundNotAuthorised(t *testing.T) {
+	t.Parallel()
+
+	st := newWiringStore()
+	handler := fullRouter(st)
+
+	for _, path := range []string{"/c/greyhaven", "/c/greyhaven/wiki/Page", "/c/no-such-campaign/wiki/Page"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, getRequest(t, path, nil))
+
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, recorder.Code)
+		}
+	}
+}
+
+// signIn builds a credential POST.
+func signIn(t *testing.T, username, password string) *http.Request {
+	t.Helper()
+
+	form := url.Values{"username": {username}, "password": {password}}
+
+	return formPost(t, "/login", form, nil)
+}
+
+// formPost builds a form-encoded POST, optionally carrying a cookie.
+func formPost(t *testing.T, path string, form url.Values, cookie *http.Cookie) *http.Request {
+	t.Helper()
+
+	r := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, path, strings.NewReader(form.Encode()),
+	)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+
+	return r
+}
+
+// getRequest builds a GET, optionally carrying a cookie.
+func getRequest(t *testing.T, path string, cookie *http.Cookie) *http.Request {
+	t.Helper()
+
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, http.NoBody)
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+
+	return r
+}
+
+// sessionCookieOf returns the session cookie a response set.
+func sessionCookieOf(t *testing.T, recorder *httptest.ResponseRecorder) *http.Cookie {
+	t.Helper()
+
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == auth.SessionCookieName {
+			return cookie
+		}
+	}
+
+	t.Fatal("no session cookie was set")
+
+	return nil
+}
+
+// firstBytes truncates a body for a failure message, because a whole rendered
+// page in a test failure is unreadable.
+func firstBytes(s string) string {
+	const limit = 200
+	if len(s) > limit {
+		return s[:limit] + "..."
+	}
+
+	return s
+}
