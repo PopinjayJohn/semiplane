@@ -93,6 +93,13 @@ type Router struct {
 	// link, which is why it is a field: an instance with no configured
 	// documentation must not render a link somewhere that answers 404.
 	DocsHref string
+	// Instance is the identity the header and the rail render. A zero value
+	// renders an empty version and — more importantly — reports the instance
+	// healthy, because an empty `Degraded` slice means healthy by construction.
+	// The wiki route carries the same view, and the two must not disagree: a
+	// campaign with an unreadable content root (S-4.5) is degraded on every page
+	// or on none.
+	Instance components.InstanceView
 }
 
 // Mount registers the routes on mux.
@@ -370,7 +377,7 @@ func (r *Router) renderFailure(
 // cannot appear on a page whose reader may not be signed in: a control that posts
 // somewhere unusable is a focus stop that does nothing.
 func (r *Router) shell(requestor domain.Requestor) components.ShellView {
-	shell := components.ShellView{}
+	shell := components.ShellView{Instance: r.Instance}
 
 	if requestor.Authenticated {
 		shell.Account = components.AccountView{Username: requestor.Username}

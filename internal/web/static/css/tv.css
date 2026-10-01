@@ -1,0 +1,371 @@
+/* semiplane — TV mode.  UI §3.3 and §3.4.
+ *
+ * WHY THIS IS A FILE AND NOT A WIDTH BAND
+ * ---------------------------------------
+ * A 55" television and a 12.9" tablet in landscape are *indistinguishable to
+ * CSS*: coarse pointer, never hover, wider than 1280px, and a device pixel ratio
+ * that varies with the picture mode rather than with the glass. Every signal a
+ * media query can read says "large desktop". They need opposite layouts — 10-foot
+ * type at 3m versus 2-foot type at 30cm — so the distinction cannot be made from
+ * the viewport, and a `@media (min-width: 137.5rem)` band would classify a 12.9"
+ * tablet held in landscape as a television the moment it was plugged into a
+ * monitor, which is the failure the record refuses.
+ *
+ * So the signal is `[data-ui="tv"]`, written by the inline head resolver before
+ * the first paint (UI §3.7) from four sources in this order: `?ui=tv`, the
+ * `sp_ui` cookie, a seven-token user-agent *hint* allowlist used only before a
+ * cookie exists, and media queries alone as the last resort. Every rule in this
+ * file is therefore a rule about a *mode*, and none of them is inside a
+ * `@media` width condition. That is the whole distinction, and it is why the file
+ * is separate from shell.css rather than another section of it: shell.css mixes
+ * mode rules and width rules, and this one is purely mode.
+ *
+ * The accepted failure mode is §3.3's and it is not a bug to fix: a TV browser
+ * outside the hint allowlist shows the laptop layout until someone presses the
+ * mode switcher once, and the choice then persists. That is the correct trade
+ * against a stale user-agent list, and — more to the point — against a tablet
+ * misclassified as a television. Do not widen the allowlist to avoid it.
+ *
+ * WHAT IS IN THIS FILE AND WHAT IS NOT
+ * -----------------------------------
+ * The grid areas, the track widths and the chrome heights are NOT here. They are
+ * `shell.css`'s, alongside every other tier, and §3.7's block is the record's
+ * own:
+ *
+ *     .shell {
+ *       grid-template-areas: "header header" "main rail" "footer footer";
+ *       grid-template-rows: 5rem minmax(0, 1fr) 3rem;
+ *       grid-template-columns: minmax(0, 1fr) 26rem;
+ *     }
+ *
+ * shell.css states that block with the lengths coming from its declared
+ * constants (`--header-h-tv`, `--footer-h-tv`, `--rail-right-tv`) rather than
+ * restated, and `TestEveryTierDeclaresItsGrid` holds it there. Duplicating the
+ * areas in a second file would be two copies of one map with nothing holding them
+ * together — the same class of bug `TestEveryMediaQueryMatchesADeclaredConstant`
+ * exists to prevent for breakpoints, and §3.7's "one canonical DOM, tiers as CSS
+ * variants, so tiers cannot drift" is the rule it would break.
+ *
+ * What *is* here is everything shell.css has no other reason to know about:
+ * the horizontal navigation strip that replaces the left rail, the D-pad focus
+ * rule, and the 10-foot typographic and target-size treatment. Those are
+ * properties of the mode rather than of a track, and they are the parts a reader
+ * two feet from a laptop would never notice.
+ */
+
+/* --- The mode's own identity --------------------------------------------- */
+
+/* Not a `:root` override of a colour: the mode does not change the palette. It
+ * changes how far away the reader is, and the tokens are already correct for
+ * that distance because `--type-scale` and `--target-min` are applied per tier
+ * in shell.css. This block therefore only records what the mode asserts, and the
+ * assertion is that these two numbers are the TV row of §5.1's table.
+ *
+ * They are restated rather than inherited so that a reader can check them here,
+ * and `TestTheTvModeScaleIsTheSpecifiedOne` in internal/web fails if either
+ * drifts — a duplicated number that is *checked* is not a second source. */
+:root[data-ui="tv"],
+:root[data-ui="tv-wide"] {
+  --type-scale: 1.5;
+  --target-min: 3.5rem; /* 56px — §7.3's movement axis; no WCAG criterion covers 10-foot */
+  --target-gap: 1rem;    /* 16px gutter, so a mis-aimed remote press cannot land on a neighbour */
+}
+
+/* §3.4: at `--breakpoint-tv-wide` (137.5rem, which is 2200 CSS px and not 3840)
+ * the type rises to 1.75 and the rail to 30rem. shell.css owns the rail; the
+ * type step is repeated here for the same checked-duplication reason as above. */
+:root[data-ui="tv-wide"] {
+  --type-scale: 1.75;
+}
+
+/* §5.1's TV floor: "nothing below `--text-md` except the footer legal line". A
+ * 12px footer line is legible at 3m in a dark room and a 12px control label is
+ * not, so the floor is expressed as a floor rather than left to each rule. */
+:root[data-ui="tv"] :is(button, a, summary, label, th),
+:root[data-ui="tv-wide"] :is(button, a, summary, label, th) {
+  font-size: max(1em, var(--text-md));
+}
+
+/* --- No left rail. §3.4 --------------------------------------------------- */
+
+/* §3.4's first bullet, and the reason for the whole mode: "D-pad traversal of a
+ * 40-entry wiki tree is punishing". At 30cm with a keyboard that rule is a list
+ * you scroll; at 3m with a remote it is forty arrow presses to reach a page, and
+ * every one of them is a chance to leave the reader somewhere they did not
+ * choose. So the left navigation does not exist in this mode and the five
+ * destinations become a horizontal strip.
+ *
+ * `grid-area: auto` takes the nav out of the grid entirely: §3.4's areas name no
+ * nav column, and an item assigned to an area it is not laid out by is an item
+ * the grid still has to place. `position: absolute` against the shell puts the
+ * strip in the header band — which is where §3.4 says it goes — without a second
+ * grid and without the two items overlapping in one area.
+ *
+ * The strip stops at the rail's inline edge because the rail is a grid item in
+ * row 2 and column 2, and a strip running the full width would sit over it. The
+ * rail's width is the constant, so this is the one place TV mode reads a track
+ * length and it reads the declared one. */
+:root[data-ui="tv"] .shell,
+:root[data-ui="tv-wide"] .shell {
+  /* The containing block for the strip. `relative` rather than `absolute` so the
+   * shell does not leave the document flow — §3.6's viewport-locked shell is
+   * already exactly the viewport, and an absolutely positioned shell would take
+   * the layout out from under the rails. */
+  position: relative;
+}
+
+:root[data-ui="tv"] .shell-nav,
+:root[data-ui="tv-wide"] .shell-nav,
+:root[data-ui="tv"] [data-shell-nav],
+:root[data-ui="tv-wide"] [data-shell-nav] {
+  grid-area: auto;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inset-inline-end: var(--rail-right);
+  /* §3.4's 5rem header, and §7.3's 56px: a strip of 56px targets in an 80px
+   * band leaves 24px, which is the honest answer to the arithmetic rather than a
+   * band that has to grow. §3.4 fixes the header at 5rem and §7.3 fixes the
+   * target at 56px; both are load-bearing and neither gives. */
+  block-size: var(--header-h-tv);
+  display: flex;
+  align-items: center;
+  /* §7.3's 16px gutter, applied once so no destination can be written without
+   * it. This is the single most important declaration in the file: it is the
+   * difference between a remote press landing on the intended destination and
+   * landing on its neighbour. */
+  gap: var(--target-gap);
+  padding-inline: var(--gutter);
+  overflow: visible;
+  translate: none;
+  max-block-size: none;
+  min-inline-size: 0;
+}
+
+/* The strip is horizontal, so the nested wiki tree has nothing to nest *beside*.
+ * §3.4's answer is that the tree is not in the strip at all — the strip carries
+ * five destinations and the campaign overview carries a tile grid. Until that
+ * surface lands, the wiki section would put five section rows and a forty-entry
+ * tree into one horizontal row, so the strip takes the top-level destinations and
+ * drops the tree. `display: none` rather than a `max-inline-size` clamp: a
+ * horizontally scrollable strip is a horizontal scroll trap on a remote, and
+ * §7.4's rule is that arrows move within a composite widget and nowhere gets
+ * stranded. The pages are still reachable from the campaign overview. */
+:root[data-ui="tv"] .shell-nav .nav-list--nested,
+:root[data-ui="tv-wide"] .shell-nav .nav-list--nested {
+  display: none;
+}
+
+/* Five destinations across the strip: the section rows are what stays, and the
+ * disclosure chevrons have nothing left to disclose. */
+:root[data-ui="tv"] .shell-nav .nav-disclosure,
+:root[data-ui="tv-wide"] .shell-nav .nav-disclosure {
+  border: 0;
+  padding-inline: 0;
+  font-weight: 600;
+}
+
+:root[data-ui="tv"] .shell-nav .nav-list,
+:root[data-ui="tv-wide"] .shell-nav .nav-list {
+  display: flex;
+  align-items: center;
+  gap: var(--target-gap);
+  padding-inline: 0;
+}
+
+:root[data-ui="tv"] .shell-nav .nav-item,
+:root[data-ui="tv-wide"] .shell-nav .nav-item {
+  display: flex;
+}
+
+/* The collapse control has nothing to collapse in a mode with no left rail. A
+ * control that changes nothing is a focus stop that lies, which is the rule the
+ * chrome package states for its own controls and which holds here for the same
+ * reason. */
+:root[data-ui="tv"] .nav-collapse,
+:root[data-ui="tv-wide"] .nav-collapse {
+  display: none;
+}
+
+/* The collapsed state is a left-rail concept and there is no left rail. Leaving
+ * the attribute unstyled rather than resetting it means a reader who arrives
+ * with the rail collapsed on a laptop and the mode switched to TV keeps the
+ * attribute in the DOM — so switching back restores their state — while the
+ * labels stay visible here, because the strip is a row of words and not a column
+ * of icons. */
+:root[data-ui="tv"] .shell-nav[data-nav="collapsed"] .nav-label,
+:root[data-ui="tv-wide"] .shell-nav[data-nav="collapsed"] .nav-label {
+  position: static;
+  inline-size: auto;
+  block-size: auto;
+  clip-path: none;
+  overflow: visible;
+}
+
+/* The header band now holds the strip, so the zones that would collide with it
+ * step aside. Two of the three are settled by the record rather than by taste:
+ *
+ * - The **account zone** goes because UI §1.3 is explicit that a TV "may not
+ *   sign in, sign out, manage the instance". A sign-out button on a television is
+ *   not an affordance the mode offers; it is a control that contradicts the
+ *   capability table. Capability is orthogonal to permission (§1.3) — a GM
+ *   signed in on a TV still sees unredacted pages — and this is the capability,
+ *   not the permission.
+ * - The **search field** goes because §3.4's strip already contains Search as one
+ *   of its five destinations, and a second search control in the same 80px band is
+ *   the duplicate §4.2 objects to. Search is submit-to-navigate over ordinary
+ *   HTTP (S-11.3, §7.5), so the destination lands on a page with a form.
+ *
+ * The theme button and the utilities trigger stay: §1.3 does not prohibit either,
+ * and a television in a dark room is exactly where a theme control earns its
+ * place. They sit at the inline end, above the strip's own extent, so nothing
+ * overlaps. */
+:root[data-ui="tv"] .shell-account,
+:root[data-ui="tv-wide"] .shell-account,
+:root[data-ui="tv"] .header-search,
+:root[data-ui="tv-wide"] .header-search {
+  display: none;
+}
+
+:root[data-ui="tv"] .shell-header,
+:root[data-ui="tv-wide"] .shell-header {
+  /* The strip is the band's content, so whatever the header still holds is
+   * aligned to the inline end — past the strip, in the rail's column's shadow —
+   * rather than to the start, where the strip begins. `pointer-events` stays
+   * default so the controls are operable; they simply occupy the right edge. */
+  justify-content: flex-end;
+  /* The brand is the campaign's name, and §8.3's rank 1 is the current location.
+   * In this mode the strip's first destination is the campaign overview, so the
+   * location is one press away and the 80px band has no room to state it twice. */
+  padding-inline-start: 0;
+}
+
+/* --- §7.4: focus on a remote --------------------------------------------- */
+
+/* This is the rule that makes the mode usable, and it is a real exception rather
+ * than a preference.
+ *
+ * §7.4 requires `:focus-visible` "for pointer tiers", and on TV it says: "On TV,
+ * `:focus` and `:focus-visible` are styled identically — some TV browsers lack
+ * `:focus-visible`, and a ring that appears only for keyboard input may then
+ * never appear at all."
+ *
+ * That is not hypothetical. A browser without `:focus-visible` does not fail to
+ * *match* the pseudo-class — it fails to *parse* the selector, so the whole rule
+ * is dropped at parse time rather than evaluated to false. `:focus` is
+ * universally supported, so a rule written on `:focus` is the only one that can
+ * be relied on here.
+ *
+ * The cost is that a reader with a mouse attached to a television gets a ring on
+ * click. That is a ring that shows where focus went, on a device whose primary
+ * input is a remote, and §10.5's finding from the D-pad pass is recorded as the
+ * tradeoff rather than hidden: the alternative is an invisible focus position,
+ * which on a TV means a reader pressing OK and not knowing what they pressed it
+ * on.
+ *
+ * The ring is *thicker* here for the same reason the targets are larger: at 3m a
+ * 2px ring is a hairline. §7.1's 3:1 floor is about the ring being visible at
+ * all, and 3px is what that means at this viewing distance. */
+:root[data-ui="tv"] :is(a, button, input, select, textarea, summary, [tabindex]):focus,
+:root[data-ui="tv-wide"] :is(a, button, input, select, textarea, summary, [tabindex]):focus {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--focus-ring-offset);
+}
+
+/* Every focusable element's ring is at least the movement target, so a focus
+ * position a reader cannot see the extent of is not a focus position. The two
+ * sizes are §7.3's 56px and this rule's job is to make the *indicator* match the
+ * thing it indicates. */
+:root[data-ui="tv"] :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
+:root[data-ui="tv-wide"] :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--focus-ring-offset);
+}
+
+/* --- No hover-only affordance. §10.5 -------------------------------------- */
+
+/* §10.5's D-pad pass found that a `:hover` rule with no `:focus-visible`
+ * counterpart is an affordance a remote cannot reach, and the browser's own
+ * `:hover` emulation on a touch device makes it worse: the row highlights on
+ * touch-down and the highlight is gone by the time the reader has decided.
+ *
+ * There are therefore **no** `:hover` rules in this file, and none in shell.css.
+ * That is not an omission to be filled in later — it is the reason
+ * `TestNoHoverRuleIsTheOnlyCarrierOfAnAffordance` in internal/web exists, and it
+ * is why the `:focus` rules above are this prominent rather than a courtesy:
+ * they are the only affordance a remote has.
+ *
+ * What a hover rule *may* do here is restate something focus already shows, and
+ * the rule is written so that adding one is a deliberate act: if a future
+ * `:hover` rule is added, it must name a companion focus rule in the same
+ * declaration block, which is what the test checks for by requiring the file to
+ * contain no bare `:hover` selector at all. */
+
+/* --- The centre is capped, never the raw edge. §3.4 ---------------------- */
+
+/* §3.4's last clause, and shell.css already states it — but stating it once in
+ * the grid file and once here would be two copies of a number, so this file
+ * records the *reason* at the one place a TV-specific reader will look and adds
+ * the one thing shell.css cannot: at 10 feet the measure is wider than 90ch.
+ *
+ * §3.2's measure is 68ch for prose at 30cm, and 72ch at wide. At 3m the eye's
+ * comfortable line is roughly twice the length in characters for the same
+ * physical distance, so 90ch at `--type-scale: 1.5` is about the same *physical*
+ * line length as 68ch at 1.0625. Beyond that the reader starts losing the start
+ * of the next line on the return sweep, which is the saccade the whole layout
+ * exists to avoid. */
+:root[data-ui="tv"] .shell-main > *,
+:root[data-ui="tv-wide"] .shell-main > * {
+  max-inline-size: min(100%, 90ch);
+}
+
+/* §3.4's second bullet is about the map, and the map is a `<canvas>` that
+ * forced-colors cannot reach — phase 9's own problem, named here so the token
+ * exists before the map does. The centre's aspect ratio is the map's to
+ * letterbox; what this file can fix is that the centre never scrolls sideways to
+ * reach it. */
+:root[data-ui="tv"] .shell-main,
+:root[data-ui="tv-wide"] .shell-main {
+  /* §3.6, restated because it is the property that keeps a 3840px-wide
+   * centre-locked shell from growing a second scroll axis. */
+  overflow-x: hidden;
+}
+
+/* --- Preferences are honoured in every mode. §3.3 ------------------------- */
+
+/* §3.3's closing line: "`prefers-reduced-motion`, `prefers-contrast` and
+ * `forced-colors` are honoured in every mode and never used to infer a form
+ * factor." The second half is the reason this file contains no rule inside a
+ * `@media (prefers-*)` or `@media (forced-colors)` condition *to decide the
+ * layout* — a `prefers-contrast: more` rule that widened the rail would be using
+ * a preference to infer something about the display, which is the confusion §3.3
+ * is closing off.
+ *
+ * The blocks below are therefore about the *indicator*, not the layout, and each
+ * one restates a token rule from tokens.css rather than introducing a value. They
+ * exist so that a reader who lands here can see that the mode does not opt out.
+ */
+@media (prefers-reduced-motion: reduce) {
+  /* tokens.css collapses every `--dur-*` to 1ms as a *set*. The TV strip has no
+   * transition of its own, and this rule states that rather than adding one: the
+   * strip appears with the document, so there is nothing for the preference to
+   * suppress, and inventing a slide to animate would be creating the problem. */
+  :root[data-ui="tv"] .shell-nav,
+  :root[data-ui="tv-wide"] .shell-nav {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  /* §6.7: forced colours replaces the palette wholesale, and the strip's
+   * separation is `gap` — a layout property, invisible to a high-contrast mode.
+   * So the 16px gutter becomes a *border*, which is the only separation a
+   * forced-colours mode can represent. Without this the five destinations are
+   * five words with no visible division between them. */
+  :root[data-ui="tv"] .shell-nav,
+  :root[data-ui="tv-wide"] .shell-nav {
+    border-block-end: 1px solid ButtonBorder;
+  }
+}

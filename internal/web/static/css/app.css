@@ -8,6 +8,34 @@
 
 @import "tailwindcss";
 
+/* The three hand-written sheets the built stylesheet is assembled from,
+ * imported here and nowhere else. The order is load-bearing, not cosmetic:
+ *
+ * 1. `tailwindcss` first, because it establishes the layers and the `@theme`
+ *    machinery. tokens.css declares `@theme static` blocks and per-theme values
+ *    scoped to `[data-theme]`, and a `@theme` block before Tailwind's own theme
+ *    layer has nothing to emit into.
+ * 2. `tokens.css` next, so the primitive, semantic and component token layers
+ *    exist before anything reads them.
+ * 3. `shell.css` third: the grid, the scale model, the target contract, the
+ *    focus ring and the primitive library. It is the only file of the three that
+ *    reads a token the other two declare.
+ * 4. `tv.css` last. Every rule in it is `[data-ui="tv"]`-scoped and *overrides*
+ *    a shell.css rule — the horizontal navigation strip replaces the left rail,
+ *    the D-pad focus rule replaces `:focus-visible` — so it has to come after the
+ *    rules it overrides at the same specificity.
+ *
+ * Without these lines nothing in the phase is styled: no grid, no token, no
+ * `.target`, no `.skip-link`, and every §10.2 and §10.6 gate passes vacuously
+ * against markup that renders unstyled. `TestTheBuiltStylesheetCarriesTheTokens`
+ * and `TestTheServedStylesheetCarriesTheGridAreas` in internal/web assert the
+ * imports landed, because "the shell renders" is otherwise indistinguishable
+ * from "the shell is unstyled". */
+
+@import "./tokens.css";
+@import "./shell.css";
+@import "./tv.css";
+
 /* templ renders server-side, so a class name lives in Go source, not in a
  * template file the scanner would find. Pointing the scanner at both roots is
  * what keeps a `data-testid`-adjacent utility from silently vanishing from the

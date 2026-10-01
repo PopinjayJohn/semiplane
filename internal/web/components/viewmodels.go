@@ -1,7 +1,7 @@
 package components
 
 // Package components holds the server-rendered markup for semiplane's routes:
-// the shell landmarks, the auth-facing pages, and the states those pages can be
+// the shell document, the auth-facing pages, and the states those pages can be
 // in. It lives under internal/web beside the embedded assets rather than in
 // that package so the two never need to import each other.
 //
@@ -12,8 +12,37 @@ package components
 // has more than one godoc". The generated file is excluded from *reporting* by
 // its own "Code generated" header; it is not excluded from the count. Moving
 // this comment up one line reintroduces the failure, so it stays here.
+//
+// # The two view-model layers, and why there is a conversion between them
+//
+// The shell's four landmarks live in `components/chrome` and the primitive
+// library in `components/ui`, because a campaign shell composes the chrome and a
+// package cannot import its own caller. So the chrome declares the models *its*
+// components take — `HeaderView`, `FooterView`, `NavView` — and this package
+// declares the models the *routes* build.
+//
+// That gives two layers of every concept that appears in both: an
+// `AccountView` a route fills and a `chrome.AccountView` a landmark reads, an
+// `InstanceView` and a `chrome.HeaderView`, a `DegradedView` and
+// `chrome.DegradedView`. The functions at the foot of this file convert between
+// them.
+//
+// **The conversion is deliberate and the alternative was tried.** Making
+// `components`' types *aliases* of the chrome's —
+// `type AccountView = chrome.AccountView` — looks like the tidier answer and
+// removes the conversions entirely. It does not work, for a reason specific to
+// Go: an alias is the same type, so the method set is the method set. The chrome
+// spells its fallbacks `instanceLabel()`, this package spells its
+// `displayName()`, and an alias would leave exactly one of the two names
+// available at each call site — three sites today, and the number grows with
+// every route. The unexported method would simply stop existing where it was
+// called. A conversion keeps both names meaning what they mean to their own
+// package, and `TestTheViewModelLayersAgreeWhereTheyOverlap` holds the two from
+// drifting apart in the fields they share.
 import (
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/web/components/chrome"
+	"github.com/semiplane/semiplane/internal/web/components/ui"
 )
 
 // The view models in this file are the whole contract between the interface
@@ -26,6 +55,13 @@ import (
 
 // productName names the software in the header and in a document title when
 // the operator has not configured an instance name.
+//
+// Duplicated in `components/chrome`, and the duplication is bounded by a test
+// rather than by a shared constant: `chrome`'s copy is unexported, so exporting
+// it would make one package the owner of the other's vocabulary for the sake of
+// eleven characters. `TestTheProductNameIsTheSameInBothPackages` compares the
+// two, so a rename that reaches only one of them fails rather than producing a
+// header that says one thing and a document title that says another.
 const productName = "semiplane"
 
 // titleSeparator joins the parts of a document title. UI §7.2 fixes the form as
@@ -58,6 +94,22 @@ type ShellView struct {
 	// until that route exists the field is empty and the footer omits the link
 	// rather than pointing at a page that answers 404.
 	StatusHref string
+	// Campaign is the campaign this route is inside, or the zero value.
+	//
+	// UI §8.3's rank 1 is the current location, and inside a campaign the
+	// campaign's name is it. The zero value is the pre-campaign case, which is
+	// what makes the header's decision a zero-value check rather than a branch:
+	// `chrome.HeaderView.Campaign` carries this straight through, and an empty
+	// slug renders the instance's brand link instead.
+	//
+	// The type is the chrome's own `CampaignRef` rather than a fourth copy.
+	// That package cannot import this one — a package cannot import its caller,
+	// which is the direction the whole split rests on — so a local struct here
+	// would need a conversion, and the conversion would have to reach for
+	// `label()` and `href()`, which are unexported there *on purpose*: both are
+	// rendering decisions, and a route that wants different ones has the fields
+	// to put its own values in.
+	Campaign chrome.CampaignRef
 }
 
 // InstanceView identifies the running instance and reports the subsystems that
@@ -193,15 +245,22 @@ type CampaignListView struct {
 
 // LoadFailure describes a page that could not be loaded (UI §4.7's `500` row).
 //
-// A value rather than a sentence, for the same reason as LoginFailure: the
-// wording is the interface's, and only the per-request reference is the
-// caller's. That reference is what ties a reader's screenshot to a line in the
-// access log, which is the only reason this page exists at all.
-type LoadFailure struct {
-	// Reference is the request id from the RequestID middleware. Rendered only
-	// when set.
-	Reference string
-}
+// An alias, and the only alias in this package, because the wording and the
+// heading placement moved to `components/ui` with the state that renders them
+// while every route that builds this shape kept its two lines. A *conversion*
+// would have meant editing all four call sites for no benefit at all: there is
+// one field to copy and the name already means one thing.
+//
+// It is an alias rather than a second struct because two structs would be two
+// answers to "what does a failed load look like", and the second one would not be
+// rendered by `ui.LoadError` — so a caller that got it wrong would compile, ship
+// and show nothing. `TestLoadFailureIsTheStatePackageType` pins the alias so the
+// two cannot drift into separate types again.
+//
+// The doc comment moved to `ui.LoadFailure` rather than being kept here, because
+// a comment above an alias describes the *original* and duplicating it is how two
+// descriptions of one thing start disagreeing.
+type LoadFailure = ui.LoadFailure
 
 // CampaignCard is one row of the campaign list: the campaign's name, the URL
 // that reaches it, and the reader's own relationship to it.
@@ -294,4 +353,132 @@ func pageChrome(shell ShellView, page string) ShellView {
 // dropped rather than filled with something that names nothing.
 func documentTitle(page string, instance InstanceView) string {
 	return page + titleSeparator + instance.displayName()
+}
+
+// documentTitleForCampaign composes the document title for a route inside a
+// campaign.
+//
+// The full form of UI §7.2 — "Page — Section — Campaign" — where the section is
+// the campaign's name. This is a second function rather than a third argument on
+// `documentTitle` because the two forms differ in *length*: a pre-campaign route
+// drops the middle part rather than substituting something, and a single function
+// with a conditional section would be one function that builds two different
+// titles depending on a blank string.
+func documentTitleForCampaign(page string, instance InstanceView, campaign chrome.CampaignRef) string {
+	name := campaign.Name
+	if name == "" {
+		// `chrome.CampaignRef.label()` is unexported on purpose, so the fallback
+		// is written here rather than reached for. It is the same fallback, and
+		// duplicating it is cheaper than exporting a method whose only caller
+		// would be the package that deliberately does not own it — the two must
+		// agree, and `TestCampaignFallsBackToItsSlugInBothPlaces` is what holds
+		// them to it. A campaign registered without a name still has a slug, and
+		// a document title reading " — — " tells a reader nothing.
+		name = campaign.Slug
+	}
+
+	if name == "" {
+		// Neither field set. A caller that built a campaign reference with
+		// nothing in it still gets §7.2's *form*, with the section omitted
+		// rather than rendered as a stray separator pair.
+		return page + titleSeparator + instance.displayName()
+	}
+
+	return page + titleSeparator + name + titleSeparator + instance.displayName()
+}
+
+// --- The conversions between the two view-model layers ----------------------
+//
+// Four, and no more. Each is total — every field either converts or is zero on
+// purpose — because a partial conversion here is the one place in the shell
+// where a campaign's chrome could silently lose a thing a reader needs, and the
+// symptom would be a missing link rather than an error.
+
+// chromeAccount converts the signed-in identity into the form the header's
+// account zone reads.
+//
+// The sign-out target moves with it because `components.AccountView` and
+// `chrome.AccountView` disagree about where it lives: the route-facing model
+// holds it on `ShellView` (it was added there before the chrome existed, and
+// four routes set it there), and the chrome model holds it on the account
+// because the zone is what posts. Two fields, one place that knows about it.
+func chromeAccount(account AccountView, signOutHref string) chrome.AccountView {
+	return chrome.AccountView{
+		Username:    account.Username,
+		SignOutHref: signOutHref,
+	}
+}
+
+// chromeDegraded converts the rail's unhealthy subsystems into the footer's.
+//
+// Deliberately converting a slice rather than sharing one: the two are read by
+// two landmarks in two routes' worth of markup, and a `[]chrome.DegradedView`
+// field on `InstanceView` would make every route that fills the rail depend on
+// the chrome package for a model it has no other reason to know about.
+func chromeDegraded(degraded []DegradedView) []chrome.DegradedView {
+	if len(degraded) == 0 {
+		// Nil rather than an empty slice: `len(view.Degraded) > 0` is the
+		// condition the footer tests, and both satisfy it, but nil is what the
+		// zero value of the field is and a conversion that manufactured an
+		// empty allocation would make the two indistinguishable to a reader of
+		// the struct.
+		return nil
+	}
+
+	converted := make([]chrome.DegradedView, 0, len(degraded))
+	for _, item := range degraded {
+		converted = append(converted, chrome.DegradedView{
+			Name:   item.Name,
+			Detail: item.Detail,
+		})
+	}
+
+	return converted
+}
+
+// chromeHeader converts a route's shell view into the banner's model.
+//
+// `Campaign` is copied rather than derived, because the header's decision of
+// which link to render is §8.3's rank 1 and it keys on exactly one thing: is
+// there a campaign. The zero `CampaignRef` is the pre-campaign case and renders
+// the instance's brand link, so a route that leaves the field empty gets the
+// pre-campaign banner with no branch to remember.
+//
+// `Theme` is left at `chrome.ThemeAuto` and `Connection` at
+// `chrome.ConnectionNone` because the server is not entitled to assert either:
+// §3.7 resolves both client-side before the first paint, and §6.6's conclusion is
+// that the document does not vary by them. A route that *did* pass a theme
+// through would make the document vary by the cookie, which is the thing §6.6
+// rules out. The search zone is empty for the same reason there is no search
+// before a campaign exists.
+func chromeHeader(shell ShellView) chrome.HeaderView {
+	return chrome.HeaderView{
+		InstanceName: shell.Instance.Name,
+		Account:      chromeAccount(shell.Account, shell.SignOutHref),
+		Campaign:     shell.Campaign,
+		Theme:        chrome.ThemeAuto,
+		Connection:   chrome.ConnectionNone,
+	}
+}
+
+// chromeFooter converts a route's shell view into the contentinfo landmark's
+// model.
+//
+// `degraded` is a parameter rather than being read off the shell view, and that
+// is S3's integration rule 10 recorded as structure: on a pre-campaign route the
+// *rail* already renders `components.DegradedNotice`, and the footer's copy
+// carries its own `<h2>Not working</h2>`. Passing the same subsystems to both
+// would meet the reader with the same heading twice in one document. So the
+// pre-campaign shell passes nothing here and the campaign shell passes the list,
+// where the rail is the campaign's own panels and renders none of these.
+func chromeFooter(shell ShellView, degraded []DegradedView) chrome.FooterView {
+	return chrome.FooterView{
+		Version:    shell.Instance.Version,
+		StatusHref: shell.StatusHref,
+		Degraded:   chromeDegraded(degraded),
+		// Bar and Play stay zero: the compact bar's four destinations are the
+		// routes behind them (P6's, and the shape of a wiki path is the content
+		// pipeline's to decide), and the play row is the realtime plane's. A shell
+		// that guessed them would be guessing at three URL schemes in one place.
+	}
 }
