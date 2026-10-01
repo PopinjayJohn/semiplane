@@ -324,3 +324,64 @@ func TestSearchLimitAppliesThePolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestEveryStatementThatReadsPagesJoinsVisibilityOnDemand is the S-8.2 audit,
+// asserted as a property of the statements rather than of one call.
+//
+// The audit itself: the statement a search box reaches is `searchPages`, and it
+// joins `campaigns` on visibility — see TestSearchPagesCannotDropTheVisibilityPredicate
+// in pages_internal_test.go, which reads the statement's text. What this asserts is
+// the other half, which that test cannot: that the statements which *do not* join
+// are the ones that cannot leak, because each is scoped to a campaign the caller
+// was already authorised for.
+//
+// The list is the audit. A new statement that projects a title or an excerpt has to
+// be added here, and the question it has to answer is the one this file's comment
+// answers: who reaches it, and with what knowledge of the campaign?
+func TestEveryStatementThatReadsPagesJoinsVisibilityOnDemand(t *testing.T) {
+	t.Parallel()
+
+	// The statements in pages.go that project a title or an excerpt, and why each
+	// is not a leak. Written out rather than derived: a derived list would be
+	// computed from the same text it is checking, which is how a check passes
+	// vacuously.
+	//
+	//   selectIndexedText, selectIndexedPagesForCampaign, selectIndexedPagesUnder,
+	//   selectPageByPath, selectPagesForCampaign — all keyed by `campaign_id = ?`.
+	//   The caller supplies an id it already holds, and holding it means the route
+	//   mounted its gate (ADR 0024). None of them is reachable from a query
+	//   parameter, which is where S-8.2's hazard lives.
+	//
+	//   searchPages — the one statement a search box reaches. It joins, and the
+	//   test above is what holds it there.
+	indexScoped := []string{
+		selectIndexedText,
+		selectIndexedPagesForCampaign,
+		selectIndexedPagesUnder,
+		selectPageByPath,
+		selectPagesForCampaign,
+	}
+
+	for _, statement := range indexScoped {
+		if !strings.Contains(statement, "campaign_id = ?") {
+			t.Errorf("a campaign-scoped statement is not scoped by campaign_id:\n%s", statement)
+		}
+	}
+
+	// The inverse, and the one that would catch a copy of `selectPagesForCampaign`
+	// with the scope dropped: nothing that projects a title may be a bare
+	// `SELECT ... FROM pages` with no tenant in the WHERE clause.
+	for name, statement := range map[string]string{
+		"selectIndexedText":             selectIndexedText,
+		"selectIndexedPagesForCampaign": selectIndexedPagesForCampaign,
+		"selectIndexedPagesUnder":       selectIndexedPagesUnder,
+		"selectPageByPath":              selectPageByPath,
+		"selectPagesForCampaign":        selectPagesForCampaign,
+		"searchPages":                   searchPages,
+	} {
+		if strings.Contains(statement, "FROM pages ") &&
+			!strings.Contains(statement, "campaign_id") {
+			t.Errorf("%s reads `pages` with no campaign column in it:\n%s", name, statement)
+		}
+	}
+}

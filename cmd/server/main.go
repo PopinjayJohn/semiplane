@@ -21,7 +21,6 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
-	"github.com/semiplane/semiplane/internal/web/components"
 )
 
 // usageText is written on a usage error and on an explicit `help`. Kept in one
@@ -148,8 +147,11 @@ func runServer(_ []string) error {
 		// A failed close leaves a WAL that the next start has to recover, which
 		// it can, so this is logged rather than returned: the server is already
 		// shutting down and there is nobody left to tell.
-		if err := db.Close(); err != nil {
-			logger.Error("close store", slog.String("error", err.Error()))
+		// Named `closeErr` rather than `err`: the pipeline wiring below declares
+		// `err` in this same scope, and a deferred close that shadows it reads as a
+		// statement about what this function returns, which it does not.
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Error("close store", slog.String("error", closeErr.Error()))
 		}
 	}()
 
@@ -187,6 +189,29 @@ func runServer(_ []string) error {
 		return fmt.Errorf("open campaign content roots: %w", rootsErr)
 	}
 
+	// Closed before the store and after the pipeline. Deferred here, at
+	// construction, because the deferred calls below run last-in-first-out: the
+	// pipeline registers its close *after* this one, so the pipeline stops first,
+	// and this runs before the store's. An `os.Root` handle closed while the
+	// settle filter still stats through it is a failure manufactured by this
+	// function rather than by anything on the host.
+	defer func() {
+		if closeErr := contentRoots.Close(); closeErr != nil {
+			logger.Error("close campaign content roots", slog.String("error", closeErr.Error()))
+		}
+	}()
+
+	registered := mustListCampaigns(ctx, db)
+
+	// The §13.2 surfaces of the content pipeline: the watcher subsystem's counters
+	// and the indexer's four, registered into the process's registry so `/readyz`
+	// renders them as zeros before anything fails. Constructed once and shared by
+	// the watcher, the settle filter and the indexer, because the gauges on
+	// `observability.Watch` live in the value rather than in the counter.
+	signals := newContentSignals(registry, logger)
+
+	campaignIDs := campaignIDBySlug(registered)
+
 	// Indexed: the entry is 128 bytes and this runs on every boot.
 	for i := range degraded {
 		entry := &degraded[i]
@@ -199,6 +224,19 @@ func runServer(_ []string) error {
 			slog.String("path", entry.Path),
 			slog.String("error", entry.Err.Error()),
 		)
+
+		// The gauge as well as the line. S-4.5 says a missing content root marks
+		// the campaign degraded, and `watch.degraded`'s `current` is a count of the
+		// campaigns in that state — so `/readyz` answers "how many campaigns are
+		// degraded right now" for a reader who never opens a log.
+		//
+		// Nothing clears it in this phase. There is no re-verify loop yet, so a
+		// vault that comes back stays degraded until the process restarts; that is
+		// a limitation of the surface rather than a claim that the vault is
+		// broken, and it fails toward reporting a problem rather than hiding one.
+		if id, known := campaignIDs[entry.Slug]; known {
+			signals.watch.Degraded(ctx, campaignSignalID(id), "content_root_missing")
+		}
 	}
 
 	if len(degraded) > 0 {
@@ -213,9 +251,7 @@ func runServer(_ []string) error {
 	// for concurrent use, so this is one allocation per campaign rather than one
 	// per request. Built here from the campaigns the store just listed, because a
 	// renderer for a campaign with no root would be a renderer nothing can reach.
-	renderers := make(wiki.CampaignRenderers, len(degraded))
-
-	registered := mustListCampaigns(ctx, db)
+	renderers := make(wiki.CampaignRenderers, len(registered))
 
 	// Indexed: domain.Campaign is 128 bytes, and a renderer map keyed by slug
 	// wants the slug, not the row.
@@ -227,19 +263,46 @@ func runServer(_ []string) error {
 		renderers[registered[i].Slug] = content.NewRenderer(registered[i].Slug, pageKinds{})
 	}
 
-	wikiRoute := &wiki.Handler{
-		Roots:     contentRoots,
-		Renderers: renderers,
-		Kinds:     pageKinds{},
-		Pages:     pageLister{roots: contentRoots, db: db},
-		// P10 replaces this. Until then `[!secret]` content is **not** redacted,
-		// and this is the one place on the request path that fact is written down.
-		Redactor:    content.NoSecrets(),
-		Cache:       content.NewCache(renderCacheEntries),
-		Logger:      logger,
-		Instance:    components.InstanceView{},
-		SignOutHref: "/logout",
+	// The content pipeline: one watcher, one settle filter, one indexer over every
+	// campaign whose content root opened. `pipeline.go` states the graph; this is
+	// the wiring, and it is here rather than in a package so that the order the
+	// three are constructed and stopped in is visible in one place.
+	pipeline, err := newContentPipeline(ctx, contentRoots, registered, db, pageKinds{}, signals)
+	if err != nil {
+		return fmt.Errorf("wire the content pipeline: %w", err)
 	}
+
+	// Deferred after the store's and the roots' own closes, so Go's
+	// last-in-first-out deferral runs it first: the pipeline stops, then the roots
+	// are closed, then the store. That order is load-bearing rather than incidental
+	// — see `contentPipeline.Close`.
+	defer func() {
+		// Logged rather than returned, for the reason the store's close is: the
+		// process is on its way out and there is nobody left to tell. A watcher
+		// that would not close leaks an inotify descriptor into a process that is
+		// exiting, so the cost is a line in the log.
+		if closeErr := pipeline.Close(); closeErr != nil {
+			logger.Error("close content pipeline", slog.String("error", closeErr.Error()))
+		}
+	}()
+
+	// The startup index, before the server listens and therefore before any request
+	// can ask the wiki route which pages a campaign contains. An empty `pages` table
+	// resolves no reference at all, so a wiki served against one marks every
+	// `[[wikilink]]` broken — the symptom of a link-resolution bug, caused by a
+	// missing boot step. `pageLister` walked the content root until this ran.
+	pipeline.buildIndex(ctx, logger)
+
+	// The wiki read path. Built last, over a table that is already populated, and
+	// through the same constructor the tests use so that a test asserting a page
+	// resolves is asserting it about this handler.
+	wikiRoute := newWikiRoute(
+		contentRoots,
+		renderers,
+		pageKinds{},
+		pageLister{db: db},
+		logger,
+	)
 
 	server := &http.Server{
 		Addr: cfg.Addr,

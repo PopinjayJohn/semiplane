@@ -48,7 +48,14 @@ node_modules/
 
 # Toolchain binaries installed by the Makefile (tailwind, templ). Never
 # committed: the standalone Tailwind binary is ~110MB.
-.toolbin/
+#
+# No trailing slash, and that is load-bearing rather than cosmetic. A trailing
+# slash makes the pattern match directories only, so a *symlink* named .toolbin is
+# not ignored — which is exactly what a worktree that links its tool directory to
+# the primary checkout contains. That symlink then lands in a diff, and on a CI
+# runner `go install` fails with "mkdir .toolbin/: file exists" because the path
+# is a symlink rather than a directory. Phase 4 committed one exactly that way.
+.toolbin
 
 # Generated frontend assets. Produced by `make css` and `make templ`, which
 # `make check` runs before `go build` because internal/web embeds them. A

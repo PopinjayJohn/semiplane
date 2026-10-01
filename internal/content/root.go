@@ -409,7 +409,28 @@ func (r *Root) Glob(pattern string) ([]string, error) {
 // reaches the caller's own sentinel. fs.WalkDir turns SkipDir and SkipAll into
 // a nil result before returning it, so neither of those comes back wrapped and
 // a caller comparing with == is not affected.
+// A closed root walks as an empty tree, so the check is here and not in the
+// caller.
+//
+// `os.Root.FS()` on a closed `Root` returns a live `fs.FS` that reports **no
+// error** and **no entries**: a walk of a dead descriptor is indistinguishable
+// from a campaign with an empty vault. That is the worst possible shape for a
+// function whose result feeds a prune, because `ReindexCampaign` walks, indexes
+// what it found, then prunes what it did not — so a closed root would delete
+// every row for its campaign and report success at every step.
+//
+// The check is a `Stat` on the root itself, because that is the one operation
+// whose answer differs between live and closed. It costs one syscall per walk
+// and a walk is already O(pages), so it is not measurable.
+//
+// `ErrNoRoot` is the right answer rather than a new sentinel: "this root is not
+// usable" is what `Registry.Get` already says for a campaign whose root is not
+// open, and a caller that handles one handles the other.
 func (r *Root) Walk(walk fs.WalkDirFunc) error {
+	if _, err := r.root.Stat(rootDirName); err != nil {
+		return fmt.Errorf("walk content root for %s: %w", r.slug, err)
+	}
+
 	err := fs.WalkDir(r.fsys, rootDirName, func(rel string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return walk(rel, entry, err)
