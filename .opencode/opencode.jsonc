@@ -1,0 +1,121 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Adoption of this repo's Kilo setup (kilo.json + .kilo/skills) for OpenCode.
+  //
+  // - .kilo/skills are loaded from their committed location, so the records stay
+  //   the single source of truth for both agents.
+  // - kilo.json's `permission` map becomes an ordered `permissions` array: the
+  //   last matching rule wins, so specific allowances come first and the broad
+  //   fallbacks come last.
+  // - kilo.json's `mcp` block becomes `mcp.servers`. `enabled: true` is the
+  //   default here, and `enabled: false` is expressed as `disabled: true`.
+
+  "skills": ["./.kilo/skills"],
+
+  "lsp": {
+    "go": {
+      "command": ["gopls"],
+      "env": {
+        "PATH": "/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  },
+
+  "mcp": {
+    "servers": {
+      "playwright": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@playwright/mcp@0.0.83",
+          "--browser",
+          "chromium",
+          "--isolated",
+          // Chromium refuses to launch as root without this. Correct for a
+          // disposable root-owned container; remove it for a rootless host.
+          "--no-sandbox",
+          "--viewport-size",
+          "1280x720",
+          "--timeout-action",
+          "10000",
+          "--output-dir",
+          ".playwright-mcp"
+        ],
+        "cwd": ".",
+        "environment": {
+          "PATH": "/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin:/bin",
+          "PLAYWRIGHT_BROWSERS_PATH": "/root/.cache/ms-playwright"
+        },
+        "timeout": {
+          "execution": 60000
+        }
+      },
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp",
+        "oauth": false,
+        "timeout": {
+          "catalog": 30000
+        }
+      }
+    }
+  },
+
+  "permissions": [
+    // Playwright: the routine browser tools run unattended; anything that
+    // executes arbitrary code or reads the disk asks first.
+    { "action": "playwright_browser_*", "resource": "*", "effect": "allow" },
+    { "action": "playwright_browser_evaluate", "resource": "*", "effect": "ask" },
+    { "action": "playwright_browser_run_code_unsafe", "resource": "*", "effect": "ask" },
+    { "action": "playwright_browser_file_upload", "resource": "*", "effect": "ask" },
+
+    { "action": "context7_*", "resource": "*", "effect": "allow" },
+
+    // Secrets are never edited, in any form.
+    { "action": "edit", "resource": "*.env", "effect": "deny" },
+    { "action": "edit", "resource": "*.env.*", "effect": "deny" },
+    { "action": "edit", "resource": "*.pem", "effect": "deny" },
+    { "action": "edit", "resource": "*.key", "effect": "deny" },
+    { "action": "edit", "resource": "**/secrets/**", "effect": "deny" },
+    { "action": "edit", "resource": "*", "effect": "allow" },
+
+    // Shell: the toolchain and the read-only Git verbs from kilo.json. The gate
+    // is `make check`, so every one of these must be runnable unattended.
+    { "action": "shell", "resource": "go version*", "effect": "allow" },
+    { "action": "shell", "resource": "go env*", "effect": "allow" },
+    { "action": "shell", "resource": "go build*", "effect": "allow" },
+    { "action": "shell", "resource": "go run*", "effect": "allow" },
+    { "action": "shell", "resource": "go test*", "effect": "allow" },
+    { "action": "shell", "resource": "go vet*", "effect": "allow" },
+    { "action": "shell", "resource": "go mod *", "effect": "allow" },
+    { "action": "shell", "resource": "go fmt*", "effect": "allow" },
+    { "action": "shell", "resource": "gofmt*", "effect": "allow" },
+    { "action": "shell", "resource": "gofumpt*", "effect": "allow" },
+    { "action": "shell", "resource": "golangci-lint*", "effect": "allow" },
+    { "action": "shell", "resource": "gopls*", "effect": "allow" },
+    { "action": "shell", "resource": "templ*", "effect": "allow" },
+    { "action": "shell", "resource": "hugo*", "effect": "allow" },
+    { "action": "shell", "resource": "yq *", "effect": "allow" },
+    { "action": "shell", "resource": "make *", "effect": "allow" },
+
+    { "action": "shell", "resource": "git status*", "effect": "allow" },
+    { "action": "shell", "resource": "git diff*", "effect": "allow" },
+    { "action": "shell", "resource": "git log*", "effect": "allow" },
+    { "action": "shell", "resource": "git show*", "effect": "allow" },
+    { "action": "shell", "resource": "git branch*", "effect": "allow" },
+
+    { "action": "shell", "resource": "git add*", "effect": "ask" },
+    { "action": "shell", "resource": "git commit*", "effect": "ask" },
+    { "action": "shell", "resource": "git push*", "effect": "ask" },
+    { "action": "shell", "resource": "git rebase*", "effect": "ask" },
+    { "action": "shell", "resource": "git merge*", "effect": "ask" },
+    { "action": "shell", "resource": "git reset*", "effect": "ask" },
+
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+
+    // Fallbacks last: the last matching rule wins.
+    { "action": "shell", "resource": "*", "effect": "ask" }
+  ]
+}

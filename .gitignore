@@ -68,3 +68,8 @@ docs/assets/plans/
 # .idea/
 # .vscode/
 *.code-workspace
+
+# OpenCode resolves the skills through .opencode/opencode.jsonc, which points at
+# the committed .kilo/skills. The local symlink is a convenience for tooling that
+# expects a .opencode/skills path, not a tracked file.
+.opencode/skills
