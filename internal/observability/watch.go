@@ -83,7 +83,7 @@ const (
 	stateFallback
 )
 
-// Watch is the watcher subsystem's §13.2 surface: the six counters it registers
+// Watch is the watcher subsystem's §13.2 surface: the seven counters it registers
 // and the six typed emitters the watcher, the settle filter and the indexer
 // call.
 //
@@ -119,7 +119,7 @@ type Watch struct {
 	state map[string]watchState
 }
 
-// NewWatch registers the watcher's six counters and returns the surface.
+// NewWatch registers the watcher's seven counters and returns the surface.
 //
 // `registry` may be nil and `logger` may be nil. Both are tolerated for the
 // same reason and with the same cost: logging must not be the thing that takes

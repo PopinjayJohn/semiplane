@@ -7,7 +7,9 @@ import (
 
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/store"
+	"github.com/semiplane/semiplane/internal/web/components"
 )
 
 // The composition root's smaller wirings. Each is here rather than inline in
@@ -47,55 +49,88 @@ func (pageKinds) HasPageKind(string) bool { return false }
 // pageLister answers the wiki route's one query on a cache miss: which pages does
 // this campaign contain.
 //
-// It walks the campaign's content root rather than reading the `pages` table,
-// and that is a decision rather than an omission. ADR 0006 makes the filesystem
-// the source of truth and the database a rebuildable index, so a walk *is* the
-// index — and in this phase it is the only thing that works at all, because
-// nothing writes `pages` until the watcher (P4) indexes the tree. Reading the
-// table would resolve no links at all, and the observable result is a wiki where
-// every wikilink is marked broken.
+// The `pages` table, and no longer a walk of the content root. Phase 4 made the
+// table maintained — `content.Indexer` writes it from settled changes, and the
+// composition root runs `ReindexCampaign` for every campaign before the server
+// listens — so reading it is both cheaper than the walk it replaces and more
+// correct: a walk read every page's bytes on every cache miss, and this is a range
+// scan of one campaign's rows.
 //
-// The swap is one line here: when P4's index is maintained, this becomes the
-// store query and the walk goes away. The route does not move, because the seam
-// is this type.
+// The direction is the one S-3.1 points anyway. The filesystem is the source of
+// truth and this is a rebuildable index of it, so the question a reader of this
+// comment should be asking is not "why is the table authoritative" — it never is —
+// but "what keeps the table equal to the tree", and the answer is the watcher plus
+// the startup index that has to run before the first request. `TestTheIndexIsBuiltBeforeTheRouterServes`
+// is that claim, asserted.
 type pageLister struct {
-	roots *content.Registry
-	db    *store.Store
+	db *store.Store
 }
 
-// PagesForCampaign lists a campaign's pages for link resolution.
+// PagesForCampaign lists a campaign's indexed pages for link resolution.
 //
-// The campaign is named by id, which is why this holds the registry rather than a
-// single root: the route resolves one campaign per request and the registry is
-// the thing that turns a slug into a confined root. An id the registry does not
-// hold is a wiring fault, and it is reported as an error naming the id rather
-// than as an empty list — an empty list makes every link broken, which looks like
-// a content problem and is not one.
+// The error names the campaign id, and that is the whole reason this type still
+// exists rather than the store handle being handed to the route directly: a bare
+// store error says a query failed, and this one says whose links are about to be
+// wrong. A campaign the query cannot answer produces an error rather than an empty
+// list, because an empty list makes every link on every page broken — which looks
+// like a content problem and is not one.
+//
+// A campaign whose content root could not be opened is deliberately **not**
+// answered here. Its rows are stale, because nothing walked its tree to prune them,
+// and the route fails earlier and more honestly: the root lookup refuses and the
+// response is a load error naming a request id (S-4.5, ADR 0024). A 404 for it
+// would read as "this campaign does not exist", which is a different statement and
+// a false one.
 func (l pageLister) PagesForCampaign(
 	ctx context.Context,
 	campaignID int64,
 ) ([]domain.Page, error) {
-	campaign, err := l.db.CampaignByID(ctx, campaignID)
-	if err != nil {
-		return nil, fmt.Errorf("look up campaign %d for its page index: %w", campaignID, err)
-	}
-
-	root, err := l.roots.Get(campaign.Slug)
+	pages, err := l.db.PagesForCampaign(ctx, campaignID)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"content root for campaign %d (%s): %w",
+			"list the indexed pages of campaign %d: %w",
 			campaignID,
-			campaign.Slug,
 			err,
 		)
 	}
 
-	index, err := content.BuildPageIndex(root, campaign.ID)
-	if err != nil {
-		return nil, fmt.Errorf("build page index for campaign %d: %w", campaignID, err)
-	}
+	return pages, nil
+}
 
-	return index.Pages(), nil
+// newWikiRoute builds the campaign-scoped wiki handler over the content roots, the
+// per-campaign renderers, the kind registry and the maintained page index.
+//
+// One constructor rather than a struct literal in the composition root because the
+// nine fields are one decision — *what serves a campaign's pages* — and a literal
+// copied into a test is a second place to forget one of them. `runServer` builds
+// the handler through this and the tests build it through this, so a test asserting
+// that a page's references resolve is asserting it about the handler the product
+// serves rather than about a fixture that resembles it.
+//
+// `kinds` and `pages` are parameters rather than being read from a registry inside
+// here: P8 replaces the former with the plugin registry and this phase replaced
+// the latter with the maintained table, and a constructor that looked them up would
+// have to be edited for each.
+func newWikiRoute(
+	roots *content.Registry,
+	renderers wiki.CampaignRenderers,
+	kinds domain.PageKindRegistry,
+	pages wiki.Pages,
+	logger *slog.Logger,
+) *wiki.Handler {
+	return &wiki.Handler{
+		Roots:     roots,
+		Renderers: renderers,
+		Kinds:     kinds,
+		Pages:     pages,
+		// P10 replaces this. Until then `[!secret]` content is **not** redacted,
+		// and this is the one place on the request path that fact is written down.
+		Redactor:    content.NoSecrets(),
+		Cache:       content.NewCache(renderCacheEntries),
+		Logger:      logger,
+		Instance:    components.InstanceView{},
+		SignOutHref: "/logout",
+	}
 }
 
 // mustListCampaigns enumerates campaigns at startup.
@@ -109,7 +144,9 @@ func (l pageLister) PagesForCampaign(
 //
 // Returns nil on failure, so the loop that follows builds no renderers and every
 // campaign route then answers a load error naming a request id — which is a
-// diagnosable state, and a better one than a silent empty wiki.
+// diagnosable state, and a better one than a silent empty wiki. The pipeline reads
+// the same empty list, which means it watches and indexes nothing rather than
+// watching and indexing the wrong thing.
 func mustListCampaigns(ctx context.Context, db *store.Store) []domain.Campaign {
 	campaigns, err := db.Campaigns(ctx)
 	if err != nil {
