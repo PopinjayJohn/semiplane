@@ -2,6 +2,7 @@ package accounts_test
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -284,8 +285,6 @@ func TestLoginSucceedsAndSetsACookie(t *testing.T) {
 func TestLoginFailureIsIndistinguishable(t *testing.T) {
 	t.Parallel()
 
-	st := newFakeStore().withUser(t, "ada", "correct horse")
-
 	cases := []struct {
 		name string
 		form url.Values
@@ -296,11 +295,19 @@ func TestLoginFailureIsIndistinguishable(t *testing.T) {
 		{"no password field", url.Values{"username": {"ada"}}},
 	}
 
-	var bodies []string
+	// One body per case, written by index. Each subtest owns its own slot, and
+	// an `append` to a shared slice from parallel subtests is a data race — which
+	// is what the first version of this test did, and why it failed under
+	// `-count=2` and passed under `-count=1`.
+	bodies := make([]string, len(cases))
 
-	for _, tc := range cases {
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
+			// A store per subtest for the same reason: a successful sign-in
+			// writes the sessions map, and four of these run concurrently.
+			st := newFakeStore().withUser(t, "ada", "correct horse")
 
 			recorder := request(t, st, http.MethodPost, "/login", tc.form)
 
@@ -312,7 +319,7 @@ func TestLoginFailureIsIndistinguishable(t *testing.T) {
 				t.Error("a failed sign-in set a cookie")
 			}
 
-			bodies = append(bodies, recorder.Body.String())
+			bodies[i] = recorder.Body.String()
 		})
 	}
 
@@ -382,8 +389,6 @@ func TestLoginRefusesAnOversizedBody(t *testing.T) {
 func TestLoginRedirectsToTheCampaignList(t *testing.T) {
 	t.Parallel()
 
-	st := newFakeStore().withUser(t, "ada", "hunter2")
-
 	cases := []struct {
 		name string
 		next string
@@ -401,6 +406,10 @@ func TestLoginRedirectsToTheCampaignList(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
+			// Per subtest: every case here signs in successfully, so each one
+			// writes the sessions map, and they run concurrently.
+			st := newFakeStore().withUser(t, "ada", "hunter2")
 
 			recorder := request(t, st, http.MethodPost, "/login", url.Values{
 				"username": {"ada"}, "password": {"hunter2"}, "next": {tc.next},
@@ -733,8 +742,19 @@ func TestSessionExpiryComesFromTheCookieConstant(t *testing.T) {
 }
 
 // TestSessionCookieCarriesNoUsernameOrRole: the cookie's value is the raw token
-// and nothing else. A cookie carrying identity would be readable by script and
-// would put a role in a value a client controls.
+// and nothing else.
+//
+// Asserted by decoding the token, not by searching the string for a username. A
+// base64url token is 43 characters of [A-Za-z0-9_-], so it contains "gm" or "ada"
+// by chance roughly one run in twenty — the first version of this test searched
+// the raw value and failed intermittently for that reason, which is a test
+// asserting on randomness rather than on the code.
+//
+// What is actually being checked is that the value carries no *structure*: it
+// decodes to exactly the 32 bytes of crypto/rand, with no prefix, no JSON, no
+// `user=1` segment. A cookie holding identity would be a value the client could
+// read and edit, and `internal/httpapi/auth` documents the token as unguessable
+// precisely so nothing in it is meaningful to anybody but the server.
 func TestSessionCookieCarriesNoUsernameOrRole(t *testing.T) {
 	t.Parallel()
 
@@ -744,16 +764,36 @@ func TestSessionCookieCarriesNoUsernameOrRole(t *testing.T) {
 		"username": {"ada"}, "password": {"hunter2"},
 	})
 
-	for _, cookie := range recorder.Result().Cookies() {
-		if cookie.Name != auth.SessionCookieName {
-			continue
-		}
+	var value string
 
-		for _, forbidden := range []string{"ada", "gm", "admin"} {
-			if strings.Contains(strings.ToLower(cookie.Value), forbidden) {
-				t.Errorf("the session cookie value contains %q", forbidden)
-			}
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == auth.SessionCookieName {
+			value = cookie.Value
 		}
+	}
+
+	if value == "" {
+		t.Fatal("no session cookie was set")
+	}
+
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		t.Fatalf("the cookie value is not a raw-URL base64 token: %v", err)
+	}
+
+	// Exactly the minted entropy, and no longer. A value carrying a username or a
+	// role would be longer, or would decode to something whose length is not the
+	// token's.
+	const tokenBytes = 32
+	if len(raw) != tokenBytes {
+		t.Errorf("the cookie value decodes to %d bytes, want %d: it carries something "+
+			"beyond the token", len(raw), tokenBytes)
+	}
+
+	// And the token is the only thing that authenticates: the store keyed on its
+	// hash, so nothing in the row is derived from a username.
+	if _, ok := st.sessions[auth.HashSessionToken(value)]; !ok {
+		t.Error("the cookie's hash is not in auth_sessions")
 	}
 }
 
