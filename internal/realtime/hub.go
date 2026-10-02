@@ -619,19 +619,19 @@ func (h *Hub) Apply(ctx context.Context, peer *Peer, intent *ClientIntent) error
 		return fmt.Errorf("%w: an intent needs a peer and a frame", ErrNoResolver)
 	}
 
-	if h.resolve == nil {
-		return fmt.Errorf("%w: nothing can answer an intent", ErrNoResolver)
-	}
-
 	// The campaign and the actor come from the peer, not from the frame. There is no
 	// campaign field on a client frame and one must not be added: a frame that named
 	// its own campaign would be a frame that chose which table it was playing on.
-	resolution, err := h.resolve.Resolve(ctx, Intent{
-		Campaign: peer.campaignID,
-		Actor:    peer.who.ID,
-		Role:     peer.who.Role,
-		Frame:    intent,
-	})
+	//
+	// `NewActor` cannot fail here, and the error is not being discarded by accident: a
+	// peer is admitted by `Join`, which resolves the campaign from the URL path before
+	// it mints one, so the campaign is positive by the time a peer exists.
+	actor, err := NewActor(peer.campaignID, peer.who.ID, peer.who.Role)
+	if err != nil {
+		return fmt.Errorf("%w: a peer without a campaign: %w", ErrNoResolver, err)
+	}
+
+	resolution, err := h.resolveIntent(ctx, actor, intent)
 	if err != nil {
 		return peer.Send(&ServerRejected{
 			Type:   TypeRejected,
@@ -640,28 +640,161 @@ func (h *Hub) Apply(ctx context.Context, peer *Peer, intent *ClientIntent) error
 		})
 	}
 
+	// Answer first, then broadcast, and the order is load-bearing rather than
+	// incidental: committed tests in `internal/httpapi/play` read the socket's first
+	// frame after an intent and require it to be the `applied`, so the delta is what a
+	// client sees *second*. An earlier version of this refactor published from
+	// `Dispatch` and so answered afterwards; it passed every hub test and failed three
+	// in `play`. That is the correct outcome, and it is why the two callers share
+	// `announce` — one implementation of "tell the table" — rather than sharing an
+	// order.
+	//
+	// The cost is real and is stated rather than discovered later: a peer whose answer
+	// queue has failed is never told, because `Send` returns and this returns with it.
+	// That is the behaviour phase 7 shipped and it is kept deliberately; changing the
+	// wire order is its own decision with its own record, not something a plugin phase
+	// should smuggle in.
 	if resolution.Answer != nil {
 		if err := peer.Send(resolution.Answer); err != nil {
 			return err
 		}
 	}
 
-	if len(resolution.Broadcast) == 0 {
-		return nil
+	return h.announce(peer.campaignID, resolution.Broadcast)
+}
+
+// Actor is who a resolution is performed as, on the occasions there is no connection
+// to take it from.
+//
+// A `Peer` is not the only thing that can act on a campaign, and this type exists
+// because pretending otherwise made one caller unreachable. A UI plugin renders during
+// an ordinary HTTP request: it has no socket, no presence entry and no slot in the
+// campaign's peer limit, so `Join` cannot produce a peer for it — and the only
+// alternative at the time was a plugin that could render a widget and never fire it.
+//
+// **Every field is unexported, and that is the gate.** There is no route that decodes
+// an `Actor` from a request body, a query string or a header; a route builds one with
+// `NewActor` from the session the identity middleware resolved and the campaign the URL
+// path named, after the access gate S-8 requires has already run.
+//
+// Unexported fields alone are not enough, and the test that refused to be written is
+// what settled it. `encoding/json` **does not fail** on a struct it cannot populate:
+// unmarshalling `{"campaign":9,"user":7}` into an all-unexported struct returns no
+// error and changes nothing, so a handler that decoded a request body into an `Actor`
+// would have compiled, run, and dispatched as the zero actor — caught only by
+// `Dispatch`'s campaign check, one layer away, with a message about a campaign rather
+// than about an actor. That is a silent failure wearing a loud-looking one.
+//
+// So the fields are unexported **and** `UnmarshalJSON` refuses, which is the pair the
+// property needs: nothing can populate an `Actor` from bytes, and the attempt says so
+// at the call site. The same reasoning is why `DiscardConfirmation` in `ruleset.go`
+// keeps its fields unexported; the difference is that one is never decoded at all,
+// which is a promise about its callers rather than a type-level one.
+//
+// `Role` is here rather than looked up, and it is **not** the authorisation input the
+// hub trusts on its own: `Peer.who` carries exactly these two fields and its own
+// doc comment says it is "a log line field and the addressing of a snapshot's `you`;
+// never an authorisation input". §7.2's role check happens inside the system, which
+// reads the role off `realtime.Intent` — the same value, from the same place, whether
+// the caller had a socket or not. Adding a second place a role could be substituted
+// would be the forgery this type is one field away from.
+type Actor struct {
+	// campaign is the campaign whose state is being resolved against. Positive, and
+	// checked by `NewActor` rather than merely trusted here.
+	campaign int64
+	// user is the `domain.User.ID` the resolution is attributed to.
+	user UserID
+	// role is that user's role in campaign.
+	role domain.Role
+}
+
+// NewActor builds the identity a resolution is performed as, and refuses one that names
+// no campaign.
+//
+// The check is here as well as in `Dispatch` because the zero value is constructible
+// without this function: `NewActor` means a caller cannot hold an `Actor` it was told
+// was usable, and `Dispatch` means a caller cannot skip `NewActor` and be wrong
+// quietly. One of the two alone would be a check a second boundary forgets.
+func NewActor(campaign int64, user UserID, role domain.Role) (Actor, error) {
+	if campaign <= 0 {
+		return Actor{}, fmt.Errorf(
+			"%w: an actor needs a campaign, got %d", ErrNoResolver, campaign,
+		)
 	}
 
-	// Broadcast to everyone, the actor included. The actor's own `applied` carries
-	// the authoritative version for the placement it asked about, and the delta
-	// carries the same version, so a client that applies the delta first finds its
-	// optimistic write already current — which is the reconcile ADR 0009 rule 1 is
-	// about, not a correction.
-	//
-	// No `since`, because a live broadcast is not a resync answer and §7.1's `delta`
-	// uses `since` for exactly that question. `ServerDelta.Since` documents the same.
-	return h.Publish(peer.campaignID, &ServerDelta{
-		Type:    TypeDelta,
-		Changes: resolution.Broadcast,
-	})
+	return Actor{campaign: campaign, user: user, role: role}, nil
+}
+
+// Campaign is the campaign this actor acts within.
+func (a Actor) Campaign() int64 { return a.campaign }
+
+// User is the account this actor is.
+func (a Actor) User() UserID { return a.user }
+
+// Role is that account's role in Campaign.
+func (a Actor) Role() domain.Role { return a.role }
+
+// Viewer is the peer-free half of an Actor, which is all a `snapshot`'s `you` needs.
+//
+// Deliberately without the campaign: a snapshot's `you` addresses the recipient, and
+// which campaign is being watched is the frame's business, not the addressee's.
+func (a Actor) Viewer() Viewer { return Viewer{ID: a.user, Role: a.role} }
+
+// UnmarshalJSON refuses, always.
+//
+// Implementing it is the point: without this method `encoding/json` walks past an
+// all-unexported struct silently and hands back the zero value, so a decode "succeeds"
+// and produces an actor with no campaign in it. With it, the decode is the error, at
+// the line that made the mistake.
+//
+// The receiver is a pointer because that is how `encoding/json` finds a method set at
+// all, and the argument is named `_` because there is deliberately no reading of it.
+func (a *Actor) UnmarshalJSON([]byte) error {
+	return fmt.Errorf(
+		"%w: a realtime.Actor is built from the session and the campaign in the path, "+
+			"never from request bytes", ErrNoResolver,
+	)
+}
+
+// Dispatch resolves a frame as `who`, publishes what changed, and returns the answer.
+//
+// It is `Apply` without the peer, and it is the **only** place a resolution is
+// broadcast — `Apply` delegates here rather than publishing for itself, because two
+// callers each remembering to publish is how a change reaches one client and not the
+// rest. A resolver that returns changes but no error, or an error but no changes, is
+// the only two shapes that matter:
+//
+//   - **Changes, no error:** published to the campaign, actor included, and returned.
+//     The actor's `applied` and the delta carry the same version, so a client that
+//     applies the delta first finds its optimistic write already current — which is
+//     the reconcile ADR 0009 rule 1 is about, not a correction. No `since`, because a
+//     live broadcast is not a resync answer and §7.1's `delta` uses `since` for
+//     exactly that question; `ServerDelta.Since` documents the same.
+//   - **An error, no changes:** nothing is published and the error carries the
+//     refusal's reason. A refusal that published would tell the table something
+//     changed when nothing did.
+//
+// The publish happens before this returns, before `Apply` answers its peer. That order
+// is deliberate and it is a change from the order `Apply` used to have: the resolver
+// has already applied the mutation to state by the time it answers, so a peer whose
+// answer queue has failed must not be the reason the other clients are left stale.
+// Failing to tell one client about a committed change is worse than telling it twice.
+//
+// A refusal is returned as an error rather than as a `ServerRejected` frame because
+// only a peer has a `seq` to reject: a UI plugin's dispatch has no client frame behind
+// it, and it needs the reason as a value it can render rather than as a frame nobody
+// would read.
+func (h *Hub) Dispatch(ctx context.Context, who Actor, frame *ClientIntent) (Resolution, error) {
+	resolution, err := h.resolveIntent(ctx, who, frame)
+	if err != nil {
+		return Resolution{}, err
+	}
+
+	if err := h.announce(who.campaign, resolution.Broadcast); err != nil {
+		return Resolution{}, err
+	}
+
+	return resolution, nil
 }
 
 // Close ends every peer, stops the sweeper, and flushes every campaign state.
@@ -689,6 +822,79 @@ func (h *Hub) Close(ctx context.Context) error {
 	// second call here should report a flush failure if one occurred rather than
 	// reporting nothing at all.
 	return h.states.Close(ctx)
+}
+
+// resolveIntent asks the resolver what a frame does, and announces nothing.
+//
+// Split out of `Dispatch` so `Apply` can order its own answer before the table hears about
+// the change. Named for what it takes rather than for what it does, because `resolve` is
+// already the hub's `Resolver` field and a method of that name would give one word two
+// meanings in one file.
+//
+// Unexported because `Dispatch` and `Apply` are the whole surface. A third caller wanting
+// to resolve without announcing would be a caller that has decided a change need not be
+// told to anyone, and there is no such caller.
+func (h *Hub) resolveIntent(
+	ctx context.Context,
+	who Actor,
+	frame *ClientIntent,
+) (Resolution, error) {
+	if who.campaign <= 0 {
+		return Resolution{}, fmt.Errorf(
+			"%w: a dispatch needs a campaign, got %d", ErrNoResolver, who.campaign,
+		)
+	}
+
+	if frame == nil {
+		return Resolution{}, fmt.Errorf("%w: a dispatch needs a frame", ErrNoResolver)
+	}
+
+	if h.resolve == nil {
+		return Resolution{}, fmt.Errorf("%w: nothing can answer an intent", ErrNoResolver)
+	}
+
+	// The campaign and the actor come from the `Actor`, not from the frame — and
+	// `Apply` builds that `Actor` from the peer rather than from the frame, which is
+	// what keeps the comment above it true for the connection path too.
+	//
+	// Wrapped, and the wrap is load-bearing rather than decorative: `Apply` turns this
+	// into a wire reason through `reasonFor`, which unwraps with `errors.AsType`, so the
+	// `%w` preserves `*RejectionError` and the refusal still reaches the client as the
+	// word the resolver chose. The prefix adds which campaign refused and on whose behalf,
+	// which is the half an operator reading a log line does not have.
+	resolution, err := h.resolve.Resolve(ctx, Intent{
+		Campaign: who.campaign,
+		Actor:    who.user,
+		Role:     who.role,
+		Frame:    frame,
+	})
+	if err != nil {
+		return Resolution{}, fmt.Errorf(
+			"realtime: dispatch in campaign %d as %d: %w", who.campaign, who.user, err,
+		)
+	}
+
+	return resolution, nil
+}
+
+// announce tells a campaign what changed, and is the single implementation of that.
+//
+// One function, called by both `Dispatch` and `Apply`, because the alternative is two
+// publish sites and the failure mode of two is a change that reaches one client and not
+// the rest, depending on which caller the author remembered.
+//
+// An empty change set is a no-op rather than an empty frame. "Nothing changed" is a real
+// answer to an intent that applied to nothing — a presence, a rejected client-side guess —
+// and a `delta` carrying no changes would be a frame every client parses to learn nothing.
+func (h *Hub) announce(campaignID int64, changes []Change) error {
+	if len(changes) == 0 {
+		return nil
+	}
+
+	return h.Publish(campaignID, &ServerDelta{
+		Type:    TypeDelta,
+		Changes: changes,
+	})
 }
 
 // shutdown performs the one-time teardown of the peers and the sweeper.

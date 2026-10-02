@@ -68,7 +68,7 @@ const (
 
 // theGM is the actor a successful discard records. A real account id, because
 // `audit_log.actor_id` is NOT NULL and the row's existence is the assertion.
-var theGM = realtime.Actor{UserID: 7, Username: "mara"}
+var theGM = realtime.AuditActor{UserID: 7, Username: "mara"}
 
 // TestTheFingerprintExcludesHouseRules is ADR 0018's decision, asserted.
 //
@@ -660,31 +660,31 @@ func TestTheDiscardIsGMOnly(t *testing.T) {
 	testCases := []struct {
 		name   string
 		tier   domain.Tier
-		actor  realtime.Actor
+		actor  realtime.AuditActor
 		wantIs error
 	}{
 		{
 			name:   "a player",
 			tier:   domain.TierPlayer,
-			actor:  realtime.Actor{UserID: 9, Username: "ilse"},
+			actor:  realtime.AuditActor{UserID: 9, Username: "ilse"},
 			wantIs: realtime.ErrDiscardNotGM,
 		},
 		{
 			name:   "an authenticated non-member",
 			tier:   domain.TierReadOnly,
-			actor:  realtime.Actor{UserID: 9, Username: "ilse"},
+			actor:  realtime.AuditActor{UserID: 9, Username: "ilse"},
 			wantIs: realtime.ErrDiscardNotGM,
 		},
 		{
 			name:   "an anonymous requestor",
 			tier:   domain.TierNone,
-			actor:  realtime.Actor{UserID: 0},
+			actor:  realtime.AuditActor{UserID: 0},
 			wantIs: realtime.ErrDiscardNotGM,
 		},
 		{
 			name:   "a GM with no account behind them",
 			tier:   domain.TierGM,
-			actor:  realtime.Actor{UserID: 0},
+			actor:  realtime.AuditActor{UserID: 0},
 			wantIs: realtime.ErrDiscardNoActor,
 		},
 		{
