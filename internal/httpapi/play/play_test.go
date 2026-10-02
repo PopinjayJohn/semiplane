@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -765,8 +766,8 @@ func TestAHubShutdownClosesALiveSocketAndLeaksNoGoroutine(t *testing.T) {
 // The assertion is **which two goroutines are on the stack**, not how many are above
 // a floor: the client is told the table is gone either way, because the pump's queues
 // close independently of the reader. What differs is whether the handler's own
-// goroutine is still there, and it is counted by name — see `routeGoroutines` for why
-// the arithmetic cannot carry it.
+// goroutine is still there, and it is counted by name — see `sampleRouteGoroutines` for
+// why the arithmetic cannot carry it.
 //
 // Like `TestAConnectionCostsOneReaderAndNothingElse`, and for a narrower version of the
 // same reason, this is deliberately **not** `t.Parallel`. Naming the goroutines is
@@ -795,7 +796,7 @@ func TestAShutdownWaitsForAReaderThatIsInsideAResolver(t *testing.T) {
 	//
 	// It is **not** the baseline the join assertion uses, because it cannot be:
 	// the hub is closed between the floor and the assertion, and closing it retires
-	// a goroutine of its own. `routeGoroutines` says so at length.
+	// a goroutine of its own. `sampleRouteGoroutines` says so at length.
 	floor := settleGoroutines(t)
 
 	conn := harness.dialAs(gmSlug, gmUserID)
@@ -847,7 +848,8 @@ func TestAShutdownWaitsForAReaderThatIsInsideAResolver(t *testing.T) {
 	// which is two goroutines, and `peak − floor` reads **one** at the same instant
 	// because the floor also contains the hub's sweeper, which `hub.Close` — the
 	// call that reaches this state at all — has just retired.
-	if readers, handlers, stable := routeGoroutines(t); !stable || readers != 1 || handlers != 1 {
+	if readers, handlers, stable := heldRouteGoroutines(t); !stable || readers != 1 ||
+		handlers != 1 {
 		t.Errorf("goroutines with a reader blocked in a resolver: %d in (*Handler).read, "+
 			"%d in (*Handler).serve, held for the whole window: %t; want exactly one of "+
 			"each — the reader, and the handler parked on the join to it", readers, handlers,
@@ -1100,54 +1102,100 @@ func TestALiveSocketOutlivesTheServersWriteTimeout(t *testing.T) {
 // assertion that says what the route's marginal cost actually is rather than leaving
 // the reader unclaimed.
 //
-// The count is **marginal** — a mark, then a batch, then a second mark — because an
-// absolute count would be asserting on whatever else the test binary is doing. The
-// expected composition is two per connection: `net/http`'s own goroutine serving the
-// hijacked connection, which is the one it already accounts for, and this route's
-// reader. So the assertion is a bound, `[1, 2]` per connection, and the number that
-// matters is the **upper** one: a route that started a goroutine per queue, or per
-// broadcast, or per pending write would exceed it, and none of those is bounded by
-// anything else in the design.
+// The expected composition is **exactly two** per connection, and the exactness is the
+// assertion in both directions:
 //
-// The lower bound is load-bearing too. A route that started *no* goroutine per
-// connection could not read and write at all, and a count of zero would otherwise
-// satisfy "at most two".
+//   - one fewer means the reader is gone, and a socket with no reader cannot read;
+//   - one more means a goroutine is leaking per connection — per queue, per broadcast,
+//     per pending write, or one parked in a closure of this route's own — and none of
+//     those is bounded by anything else in the design.
+//
+// ## Why the instrument names goroutines instead of counting the process
+//
+// This test used to measure `runtime.NumGoroutine`'s peak minus its floor, and it was
+// **red 2 runs in 3** on the full tree with `-race`: `a connection cost 21 goroutines
+// across 10 connections, want exactly 20 (27 at the floor, 48 at the peak)`. The floor
+// is the problem and it is not a small one: isolated, the floor is 6; under the full
+// tree with the detector on, it is 27. `NumGoroutine` counts every goroutine in the
+// binary, and a sibling test's socket, the hub's sweeper, a campaign state's runner and
+// the detector's own bookkeeping are all in that number — and none of them is this
+// route's. Subtracting a baseline taken while the machine is quiet is arithmetic about
+// the machine.
+//
+// So the measurement is not a global at all. `sampleRouteGoroutines` reads the
+// goroutine profile and counts **only goroutines parked inside this route's `Handler`**,
+// which is a property of each goroutine rather than of the process it happens to be in:
+// the floor, the siblings and the detector are all invisible to it, because none of
+// them is inside `play.(*Handler).`. Per goroutine it counts
+//
+//	readers   parked inside (*Handler).read
+//	handlers  net/http's own connection goroutine, inside (*Handler).serve
+//	others    route-owned and neither — the column a leak lands in
+//
+// and "two per connection" becomes `readers == batch && handlers == batch && others ==
+// 0`: a claim about ten connections rather than about ten plus whatever else the
+// runner happened to be doing. It is also no longer a band, so there is no ceiling for
+// noise to cross and no floor for noise to push below.
+//
+// The instrument that came before this one counted frames by exact name, and that is
+// the failure mode this one exists to close. An exact-name matcher sees a *missing*
+// reader and is blind to a *leaked* goroutine, because a goroutine parked on a closure
+// frame (`(*Handler).serve.func2`) matches neither name: adding
+//
+//	go func() { <-readerDone }()
+//
+// to `serve` left that test passing. Here that goroutine is route-owned and is neither
+// a reader nor a handler, so it lands in `others` and the test fails. Delete the
+// reader from `loop.go` instead and `readers` is zero, which fails the other way.
+// Both mutations are in `mutate.sh`.
 func TestAConnectionCostsOneReaderAndNothingElse(t *testing.T) {
-	// Deliberately **not** `t.Parallel`, and this is the whole reason the test was
-	// red on CI and green locally.
-	//
-	// It measures a process-global: `runtime.NumGoroutine` counts every goroutine in
-	// the binary. Run in parallel with the rest of the package, its peak includes
-	// the other tests' sockets, their readers, and — under `-race` on a loaded
-	// runner — the detector's own bookkeeping. The assertion is a band, so extra
-	// goroutines push the cost above it and the failure is about the machine rather
-	// than about this route.
-	//
-	// The property under test is *this route's* cost per connection. Measuring a
-	// process-global to test a local property needs the global to be quiet, so the
-	// test takes the package for itself rather than widening the band until it can
-	// no longer catch the bug it exists for. Two readers per connection would still
-	// fail at `batch + 1`; the band's upper bound is kept tight on purpose.
+	// Still deliberately **not** `t.Parallel`, and the reason is now narrower and
+	// sharper. The measurement no longer cares what the *process* is doing, but it is
+	// exact, and "parked inside `play.(*Handler).`" does not distinguish this test's
+	// sockets from another test's — a sibling holding one contributes a reader and a
+	// handler of its own and the assertion is an exact count. The sequential pass is
+	// what guarantees otherwise: `testing` runs a `t.Parallel` test in a goroutine
+	// parked in `testing.(*T).Parallel`, and releases it only after every
+	// non-parallel test has finished. Adding `t.Parallel` here would put ten of them
+	// on this test's stacks.
 	const batch = 10
 
-	harness := newHarness(t, &stubResolver{})
+	// A read bound nothing here can reach, and it is the first thing the fixture
+	// decides because it has a failure mode. Every other socket test runs under
+	// `testReadTimeout` — 250ms — and a connection that reaches it is **closed by the
+	// route**, not merely idle: `read` hands the timeout to the writer as an exit
+	// reason and the connection ends. So on a loaded runner, where ten dials plus the
+	// measurement window can exceed 250ms (this test's own failure above took 380ms),
+	// the first connections retire *during* the measurement and the count falls for a
+	// reason that has nothing to do with the route's cost.
+	//
+	// Nothing below depends on the number, and that is the second reason it is raised.
+	// The sockets are closed by the test and a client close is an immediate read
+	// error, so the "they come back" half is bounded by the client's close rather than
+	// by a deadline — and a reader that genuinely leaked would still be parked when
+	// `settleBudget` expires. At 250ms a leaked reader is *rescued* by the read bound
+	// inside the budget, and the half that exists to catch a leak would pass against
+	// it.
+	harness := newMounted(t, mount{
+		resolve: &stubResolver{},
+		handler: func(handler *play.Handler) { handler.ReadTimeout = time.Minute },
+	})
 
 	conns := make([]*websocket.Conn, 0, batch)
 
-	// One warm-up connection, opened and closed, **before** the mark. The first
-	// `websocket.Dial` in a process starts the client transport's own bookkeeping and
-	// it does not go away, so without this the delta carries a one-time cost that
-	// belongs to the client rather than to any connection — and the test would be
-	// asserting a number one larger than the one it means.
-	warmup := harness.dialAs(gmSlug, gmUserID)
-	_ = warmup.CloseNow()
-
-	waitFor(t, "the warm-up connection to be released", func() bool {
-		return harness.hub.Stats().Peers == 0
-	})
-
-	floor := settleGoroutines(t)
-
+	// **No warm-up connection**, and the reason is the instrument rather than an
+	// omission. This test used to open and close one before the batch because the
+	// first `websocket.Dial` in a process starts client-transport bookkeeping that
+	// never goes away, and a count of the whole process would carry that one-time cost
+	// forever after. `sampleRouteGoroutines` counts goroutines with a
+	// `play.(*Handler).` frame in their stack; the client's transport is `net/http`, so
+	// it is not countable and the warm-up had nothing left to absorb.
+	//
+	// Dropping it also moves a failure to where the claim is. With it, deleting the
+	// reader out of `loop.go` leaves the warm-up's handler parked in `pump` for ever —
+	// nothing reads the socket, so nothing learns the client closed — and the test died
+	// on a precondition ("the warm-up connection's goroutines to be released") rather
+	// than on the count of goroutines a connection costs.
 	for range batch {
 		conns = append(conns, harness.dialAs(gmSlug, gmUserID))
 	}
@@ -1156,42 +1204,38 @@ func TestAConnectionCostsOneReaderAndNothingElse(t *testing.T) {
 		return harness.hub.Stats().Peers == batch
 	})
 
-	// The **peak** over a window rather than a point sample: the readers are started
-	// by the upgrades, and a sample taken before they are scheduled is a count of the
-	// wrong thing.
-	peak := peakGoroutines(t)
-	cost := peak - floor
+	// The composition, **held**. Two claims, and the second is what a point sample
+	// cannot make: the counts must hold for every sample of a window rather than at
+	// the instant they were read. `holdRouteGoroutines` waits for the composition to
+	// appear and then keeps sampling, because a peer joins *before* its reader is
+	// started — so the first samples legitimately read one short, and a helper that
+	// demanded the composition from sample zero would fail against a route that is
+	// merely scheduled.
+	composition := func(sampled routeGoroutines) bool {
+		return sampled.readers == batch && sampled.handlers == batch && sampled.others == 0
+	}
 
-	// **Exactly** two per connection, asserted exactly.
-	//
-	// This was a band whose upper bound equalled the true value: the real cost is
-	// precisely `2*batch` — net/http's connection goroutine plus this route's one
-	// reader — so `cost > 2*batch` had zero headroom and a single sibling goroutine
-	// during the dial window read 21 and failed. It reproduced 5 times in 6 full
-	// runs on the untouched branch.
-	//
-	// The band was the wrong shape. It tried to say "not too many" while the
-	// property is "exactly two": one fewer means the reader is gone, one more means
-	// a goroutine per connection is leaking. Now that the test takes the package for
-	// itself — the measurement is exact, which is what that costs — the exact
-	// assertion is both available and strictly stronger, and there is no ceiling for
-	// noise to cross.
-	if cost != 2*batch {
-		t.Errorf("a connection cost %d goroutines across %d connections, want exactly "+
-			"%d: net/http's connection goroutine and this route's one reader, and no "+
-			"more (%d at the floor, %d at the peak)", cost, batch, 2*batch,
-			floor, peak)
+	sampled, held := holdRouteGoroutines(t, composition)
+	if !held {
+		t.Errorf("a connection costs two goroutines and this one read %s across %d "+
+			"connections: net/http's own connection goroutine and this route's one "+
+			"reader, per connection, and nothing else — no reader missing, and none "+
+			"parked in a closure of this route", sampled, batch)
 	}
 
 	// And they come back, so the reader is released rather than merely bounded. This
 	// is the half a count cannot make: a leaked reader is the failure, and a leaked
 	// reader over a campaign's whole life is unbounded.
+	//
+	// The same instrument, so it is the same claim in the other direction: **zero** of
+	// this route's goroutines, rather than a count that came back near a floor some
+	// sibling test had contributed to.
 	for _, conn := range conns {
 		_ = conn.CloseNow()
 	}
 
-	waitFor(t, "the connections to be released", func() bool {
-		return runtime.NumGoroutine() <= floor+goroutineTolerance
+	waitFor(t, "the connections' goroutines to be released", func() bool {
+		return sampleRouteGoroutines(t).owned() == 0
 	})
 }
 
@@ -1210,16 +1254,18 @@ const goroutineTolerance = 2
 // with every sibling test in the binary, and it failed here exactly that way: a
 // sibling finishing between the two samples moved the count **down**, and a
 // `>=` against a mark taken earlier waited for a number that was never going to
-// arrive. So the two helpers below sample a **window** and take an extremum:
+// arrive. `settleGoroutines` samples a **window** and takes the minimum, which is the
+// quietest moment observed, and the two tests that still use it keep a small tolerance
+// on the way back down for the same reason and say so.
 //
-//   - `settleGoroutines` returns the **minimum** over a short window, which is the
-//     quietest moment observed and therefore the fairest floor.
-//   - `peakGoroutines` returns the **maximum** over a short window, which is the
-//     busiest.
-//
-// A difference between the two is then a statement about this test's connections
-// rather than about the binary, because any sibling churn is in both. The tests below
-// keep a small tolerance on the way back down for the same reason and say so.
+// It is `TestAConnectionCostsOneReaderAndNothingElse` that no longer needs any of
+// that, because it does not measure the process. It counts goroutines **by where they
+// are parked** — `sampleRouteGoroutines` below — and no sibling test's socket, the
+// hub's sweeper or the race detector's own bookkeeping can move a number that has a
+// `play.(*Handler).` frame in its definition. `TestAShutdownWaitsForAReaderThatIsInsideAResolver`
+// is the other one: it needs the *identity* of the two goroutines rather than a
+// count, because the goroutine it wants to see is the one that a subtraction cannot
+// name.
 const goroutineWindow = 150 * time.Millisecond
 
 // settleGoroutines returns the quietest goroutine count observed over a window.
@@ -1244,31 +1290,12 @@ func settleGoroutines(t *testing.T) int {
 	}
 }
 
-// peakGoroutines returns the busiest goroutine count observed over a window.
-func peakGoroutines(t *testing.T) int {
-	t.Helper()
-
-	highest := 0
-
-	deadline := time.Now().Add(goroutineWindow)
-
-	for {
-		if current := runtime.NumGoroutine(); current > highest {
-			highest = current
-		}
-
-		if time.Now().After(deadline) {
-			return highest
-		}
-
-		time.Sleep(poll)
-	}
-}
-
-// Counting this route's goroutines by name, because a floor cannot carry the question.
+// Counting this route's goroutines by where they are parked, because a floor cannot
+// carry the question.
 //
-// The two helpers above are sound and the shutdown test's arithmetic is not, and the
-// difference is the hub. Measured on this branch, in one run, with the stacks:
+// `TestAShutdownWaitsForAReaderThatIsInsideAResolver` is the reason this instrument
+// exists, and the arithmetic is why. Measured on this branch, in one run, with the
+// stacks:
 //
 //	floor, before the dial      5   the hub's sweeper, the httptest accept loop,
 //	                               the fixture's sql opener, the test runner
@@ -1283,54 +1310,99 @@ func peakGoroutines(t *testing.T) int {
 // contains a goroutine the test itself stops between the two samples, and the missing
 // one is the handler the assertion is about. No band corrects that, and `>= 1` would
 // not either — that is the same single goroutine the mutation removes, so it would pass
-// with a margin of zero and fail on a sibling test finishing.
+// with a margin of zero and fail on a sibling test finishing. Worse, on the full tree
+// under `-race` the floor is 27 rather than 5, so a subtraction against it is
+// arithmetic about the machine.
 //
-// Naming the two goroutines needs no baseline at all, needs none of the machine to be
-// quiet, and says *which* two they are: the reader is the one inside `(*Handler).read`,
-// and the handler is the `net/http` connection goroutine `serve` runs on, still inside
-// `(*Handler).serve`. The count is a description of the process; this is a description
-// of the route.
-//
-// The window is not decoration, and it is the one place a single sample would be a
-// race. With `<-readerDone` deleted from `loop.go`, `serve` does not vanish when the
-// client sees the close frame — measured, the client's read errors ~0.5ms after
-// `hub.Close` returns and the handler is still on a stack until ~5ms, because
-// `writer.Close` waits out the close handshake and *that* happens after `pump` has
-// returned. So a point sample taken where the assertion is taken can land inside the
-// gap, see the handler, and pass a route that has stopped waiting on its reader.
-// Requiring the pair to hold for **every** sample of a 150ms window removes the gap
-// rather than narrowing it: in a correct build both goroutines are parked until the
-// test releases the resolver, which is after this call, and in a mutated one the
-// handler is gone for the remaining ~145ms of the window.
-//
-// `stable` is therefore part of the answer and not a nicety: it is the difference
-// between "the handler is there" and "the handler was there a moment ago".
-func routeGoroutines(t *testing.T) (readers, handlers int, stable bool) {
-	t.Helper()
-
-	stable = true
-
-	deadline := time.Now().Add(goroutineWindow)
-
-	for {
-		read, handle := routeGoroutinesOnce(t)
-		readers, handlers = read, handle
-
-		if read != 1 || handle != 1 {
-			stable = false
-		}
-
-		if time.Now().After(deadline) {
-			return readers, handlers, stable
-		}
-
-		time.Sleep(poll)
-	}
+// Naming the goroutines needs no baseline at all, needs none of the machine to be quiet,
+// and says *which* they are: the reader is the one inside `(*Handler).read`, and the
+// handler is the `net/http` connection goroutine `serve` runs on, still inside
+// `(*Handler).serve`. A count is a description of the process; this is a description of
+// the route, and it is what let `TestAConnectionCostsOneReaderAndNothingElse` stop
+// taking a process-global altogether.
+type routeGoroutines struct {
+	// readers is how many goroutines are parked inside `(*Handler).read`.
+	readers int
+	// handlers is how many are the handler: `net/http`'s own connection goroutine,
+	// which is where `serve` runs because `loop.go` blocks at `<-readerDone` rather
+	// than starting a third.
+	handlers int
+	// others is how many are route-owned and neither — the column a leaked goroutine
+	// lands in, and the reason this instrument is a prefix match rather than a pair of
+	// exact names.
+	others int
+	// stacks is every goroutine the profile held, carried so a failure message can
+	// show that the route's count moved while the process's did not. `pprof`'s writer
+	// grows its buffer to 64MB before it would truncate a single profile
+	// (`runtime/pprof.writeGoroutineStacks`), so a short profile is not a thing that
+	// can happen quietly — but this would show it.
+	stacks int
 }
 
-// routeGoroutinesOnce takes one reading of the goroutine profile: how many goroutines
-// are inside `(*Handler).read`, and how many inside `(*Handler).serve`.
-func routeGoroutinesOnce(t *testing.T) (readers, handlers int) {
+// owned is how many goroutines in the process belong to this route.
+func (r routeGoroutines) owned() int { return r.readers + r.handlers + r.others }
+
+func (r routeGoroutines) String() string {
+	return fmt.Sprintf("%d in read, %d in serve, %d in neither, of %d goroutines in the "+
+		"process", r.readers, r.handlers, r.others, r.stacks)
+}
+
+// The frames that name the route, and the two that name a role.
+//
+// A **prefix** and not two exact names, and that is the whole of this instrument.
+// `(*Handler).read` and `(*Handler).serve` are the reader and the handler, but a
+// route-owned goroutine is *any* goroutine with a frame in `play.(*Handler).`:
+// `serve.func1` (the closure the reader runs on), `pump.func1` (a goroutine per queue),
+// `ServeHTTP` (a connection that has not reached `serve` yet). An exact-name matcher
+// classifies the first two and is blind to the rest, which is the failure the reverted
+// instrument had: adding `go func() { <-readerDone }()` to `serve` left it passing,
+// because a goroutine parked on `serve.func2` matches neither name. A prefix sees every
+// one of them, and `others` is where the unexpected ones land.
+//
+// ## Why the prefix names the Handler and not the package
+//
+// `play.` was tried first and it counted four goroutines that do not exist: the paused
+// `t.Parallel()` tests in `internal_test.go`. That file is `package play`, so `testing`
+// runs its tests in goroutines whose stacks carry a `play.` frame — the test function
+// itself — and a test parked in `testing.(*T).Parallel` is, to a package-qualified
+// match, a goroutine the package owns. The harness does not have this problem: it is
+// `play_test`, so a fixture goroutine reads `play_test.…` and never matches `play.`.
+// A white-box test file is the one place the two spellings meet.
+//
+// Naming the **Handler** is the rule that survives it. A goroutine belongs to this route
+// when it is parked inside a method of `play.Handler`, which is the whole of the route's
+// concurrency: the only `go` statement in the package is the reader's, inside `serve`.
+//
+// The residual gap is a goroutine started by a **package-level** function in `play`, and
+// it is stated rather than papered over: if a later refactor moved the reader into one,
+// the instrument would stop counting it and `readers` would be zero — a loud, immediate
+// failure on the very same commit, not a silent one. The mutation this instrument exists
+// for goes the other way: a leak is the failure that must not pass quietly, and every
+// leak reachable from a `Handler` method is inside the prefix.
+const (
+	// routePrefix is the qualifier a frame carries to be this route's.
+	routePrefix = "play.(*Handler)."
+	// readerFrame is the reader: the one goroutine this route starts per connection.
+	readerFrame = "play.(*Handler).read"
+	// serveFrame is the handler.
+	serveFrame = "play.(*Handler).serve"
+)
+
+// sampleRouteGoroutines takes one reading of the goroutine profile and attributes every
+// goroutine in it.
+//
+// Attribution is **per goroutine**, not per frame, and that is the other half of the
+// design. A reader's stack carries both `(*Handler).read` and the `(*Handler).serve.func1`
+// closure that started it, so counting frames counts the reader twice; and treating
+// either name as "a handler" counts every reader as a handler as well, which is off by
+// exactly one in the direction that hides the bug. So each goroutine is classified once,
+// by where it is parked: a reader if `read` is anywhere on its stack, otherwise the
+// handler if `serve` is, otherwise route-owned and unaccounted-for.
+//
+// The whole profile is walked, not only the parts that mention the route: a goroutine
+// this route does not own must be *seen and rejected*, or the instrument is an assertion
+// about a filter rather than about the route.
+func sampleRouteGoroutines(t *testing.T) routeGoroutines {
 	t.Helper()
 
 	profile := &bytes.Buffer{}
@@ -1338,18 +1410,130 @@ func routeGoroutinesOnce(t *testing.T) (readers, handlers int) {
 		t.Fatalf("write the goroutine profile: %v", err)
 	}
 
+	var reading routeGoroutines
+
 	for stack := range strings.SplitSeq(profile.String(), "\n\n") {
+		if strings.TrimSpace(stack) == "" {
+			continue
+		}
+
+		reading.stacks++
+
+		owned, reader, handler := false, false, false
+
 		for frame := range strings.SplitSeq(stack, "\n") {
-			switch frameFunction(frame) {
-			case `play.(*Handler).read`:
-				readers++
-			case `play.(*Handler).serve`:
-				handlers++
+			name := frameFunction(frame)
+			if !strings.HasPrefix(name, routePrefix) {
+				continue
 			}
+
+			owned = true
+
+			switch name {
+			case readerFrame:
+				reader = true
+			case serveFrame:
+				handler = true
+			}
+		}
+
+		if !owned {
+			continue
+		}
+
+		switch {
+		case reader:
+			reading.readers++
+		case handler:
+			reading.handlers++
+		default:
+			reading.others++
 		}
 	}
 
-	return readers, handlers
+	return reading
+}
+
+// holdRouteGoroutines samples the route's goroutines until `wanted` has held for a whole
+// window, and reports the last sample together with whether it ever did.
+//
+// Two things are going on and both are load-bearing.
+//
+// **Wait, then hold.** A peer joins the hub *before* the upgrade, and the reader is
+// started by `serve`, so the first samples after ten joins legitimately read nine
+// readers. Demanding the composition from the first sample fails against a route that is
+// merely scheduled.
+//
+// **Hold, not sample.** With `<-readerDone` deleted from `loop.go`, the handler does not
+// vanish when the client sees the close frame — measured, the client's read errors
+// ~0.5ms after `hub.Close` returns and the handler is still on a stack until ~5ms,
+// because `writer.Close` waits out the close handshake and *that* happens after `pump`
+// has returned. A point sample taken where the assertion is taken can land inside the
+// gap, see the handler, and pass a route that has stopped waiting on its reader.
+// Requiring the composition for a continuous window removes the gap rather than
+// narrowing it: in a correct build the goroutines are parked until the test releases
+// whatever is blocking them, which is after this call, and in a mutated one the handler
+// is gone for the rest of the window and the hold never completes.
+//
+// The budget is `settleBudget` and not the window, so a mutation costs five seconds and
+// a failure rather than a hang: `held` is false either way, and `held` is what the
+// caller asserts.
+func holdRouteGoroutines(
+	t *testing.T,
+	wanted func(routeGoroutines) bool,
+) (last routeGoroutines, held bool) {
+	t.Helper()
+
+	budget := time.Now().Add(settleBudget)
+
+	// since is when the composition last became true and has stayed true. Zero until
+	// it first holds, and reset by any sample that disagrees: the window restarts
+	// rather than being averaged over the samples around it, because agreement is the
+	// only evidence there is.
+	var since time.Time
+
+	for {
+		last = sampleRouteGoroutines(t)
+
+		now := time.Now()
+
+		switch {
+		case wanted(last):
+			if since.IsZero() {
+				since = now
+			}
+		default:
+			since = time.Time{}
+		}
+
+		if !since.IsZero() && now.Sub(since) >= goroutineWindow {
+			return last, true
+		}
+
+		if now.After(budget) {
+			return last, false
+		}
+
+		time.Sleep(poll)
+	}
+}
+
+// heldRouteGoroutines is the shutdown test's reading: one reader and one handler, held
+// for a whole window.
+//
+// The predicate stops at the two named roles and does **not** absorb `others`. That
+// column is the connection test's claim — what a connection *costs* — and this test's
+// claim is which two goroutines are on the stack while one of them cannot leave. One
+// assertion per test, so a mutation of either is reported as the failure it is rather
+// than absorbed by the other.
+func heldRouteGoroutines(t *testing.T) (readers, handlers int, held bool) {
+	t.Helper()
+
+	sampled, held := holdRouteGoroutines(t, func(reading routeGoroutines) bool {
+		return reading.readers == 1 && reading.handlers == 1
+	})
+
+	return sampled.readers, sampled.handlers, held
 }
 
 // frameFunctionPattern names the function a `pprof` stack frame is in, qualified by the
@@ -1360,15 +1544,24 @@ func routeGoroutinesOnce(t *testing.T) (readers, handlers int) {
 // matching the bare method would let an unrelated handler's reader satisfy the
 // assertion.
 //
-// The `(func1)` in the reader's innermost frame and the `created by` line that names
-// `(*Handler).serve` are both excluded by anchoring on the whole name, which is the
-// other half of the reason it is a name and not a `strings.Contains`: the reader's
-// stack carries both, so a substring match would count every reader as a handler as
-// well and the count would be off by exactly one, in the direction that hides the bug.
+// The `(func1)` in the reader's innermost frame is excluded by anchoring on the whole
+// name, which is the other half of the reason it is a name and not a
+// `strings.Contains`: the reader's stack carries both `(*Handler).read` and
+// `(*Handler).serve.func1`, so a substring match would count every reader as a handler
+// as well, and the count would then be off by exactly one in the direction that hides
+// the regression the count exists to catch.
 var frameFunctionPattern = regexp.MustCompile(`^(?:[^\s(]*/)?([\w.()*]+)\(`)
 
 // frameFunction returns the function a stack frame is in, or `""` for a line that is
 // not a frame.
+//
+// The `created by` line is not a frame and is **load-bearing** in that exclusion.
+// Attribution asks where a goroutine is parked, not who started it, and the line that
+// answers the second question names the *parent*'s function: for a goroutine parked in
+// `serve.func2` it reads `created by … (*Handler).serve`, which would classify the leak
+// as a handler and report "11 in serve" for what is actually "10 in read, 10 in serve,
+// 1 in neither". It would still fail the test, but it would name the wrong thing, and an
+// instrument that reports the wrong thing is one nobody can debug from.
 func frameFunction(frame string) string {
 	if strings.HasPrefix(frame, "created by ") {
 		return ""

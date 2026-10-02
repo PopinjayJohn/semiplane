@@ -443,6 +443,37 @@ mutate "the socket is never closed" \
 	'	if err := error(nil); err != nil {' \
 	'TestAMalformedFrameClosesTheConnectionWithAClassAndNotTheBytes'
 
+# 25. A goroutine per connection that is neither the reader nor the handler. This is the
+#     exact mutation the reverted instrument could not see: a goroutine parked on
+#     `(*Handler).serve.func2` matches neither `(*Handler).read` nor
+#     `(*Handler).serve`, so a matcher built on those two names counts ten readers and
+#     ten handlers and passes. The instrument that replaced it attributes by where a
+#     goroutine is parked, so this lands in `others` and fails.
+mutate "a second goroutine per connection, parked in a closure of serve" \
+	"$LOOP" \
+'	go func() {
+		defer close(readerDone)
+
+		h.read(connCtx, raw, peer, reads)
+	}()' \
+'	go func() {
+		defer close(readerDone)
+
+		h.read(connCtx, raw, peer, reads)
+	}()
+
+	go func() { <-readerDone }()' \
+	'TestAConnectionCostsOneReaderAndNothingElse'
+
+# 26. The reader is never started. The other direction of the same assertion, and the
+#     one a `>= 1` band would have swallowed: a route that reads nothing is a socket with
+#     no reader, and the cost of a connection falls to one.
+mutate "the reader goroutine is never started" \
+	"$LOOP" \
+'		h.read(connCtx, raw, peer, reads)' \
+'		_ = connCtx' \
+	'TestAConnectionCostsOneReaderAndNothingElse'
+
 echo
 echo "hits: $pass   misses: $fail   expected-misses: $expected"
 [ "$fail" -eq 0 ]
