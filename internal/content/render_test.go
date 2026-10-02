@@ -112,6 +112,17 @@ type tokens struct {
 	// attributes is every attribute name in the fragment, lowercased, in order.
 	attributes []string
 
+	// classes is every **token** of every `class` attribute in the fragment, in
+	// order. Tokens rather than attribute values because a `class` list is a
+	// list: `internal/content/target.go` appends `target` to the classes the
+	// renderer wrote, so `class="wikilink"` is *one* correct spelling of what is
+	// now `class="wikilink target"`, and a test that asserted the value as a
+	// string would be asserting that nothing else may ever join the list. That is
+	// the mistake `hasClass` below exists to prevent, and it is the same one the
+	// route audits call out when they split on whitespace rather than using
+	// `strings.Contains`.
+	classes []string
+
 	// text is the fragment with every tag removed, so a test can assert about what
 	// a reader would actually see.
 	text string
@@ -149,6 +160,10 @@ func parseTokens(t *testing.T, fragment string) tokens {
 
 			for _, attr := range current.Attr {
 				found.attributes = append(found.attributes, strings.ToLower(attr.Key))
+
+				if attr.Key == "class" {
+					found.classes = append(found.classes, strings.Fields(attr.Val)...)
+				}
 			}
 		case html.TextToken:
 			visible.WriteString(html.UnescapeString(tokenizer.Token().Data))
@@ -169,6 +184,17 @@ func (tk tokens) hasElement(name string) bool {
 // hasAttribute reports whether name is among the fragment's attributes.
 func (tk tokens) hasAttribute(name string) bool {
 	return slices.Contains(tk.attributes, name)
+}
+
+// hasClass reports whether any element in the fragment carries name in its class
+// list.
+//
+// By token, never by substring and never by matching the whole attribute value —
+// `target` is a substring of `target-large` and `class="wikilink"` is a prefix of
+// `class="wikilink target"`, so both of the cheaper checks answer questions
+// nobody asked.
+func (tk tokens) hasClass(name string) bool {
+	return slices.Contains(tk.classes, name)
 }
 
 // renderBody renders prose with no front matter, which is what most of these
@@ -508,11 +534,15 @@ func TestClassIsBounded(t *testing.T) {
 
 		out := renderBody(t, "A footnote[^1].\n\n[^1]: note.\n\n```go\nx\n```\n\n[[Page]]")
 		for _, want := range []string{
-			`class="footnote-ref"`, `class="footnote-backref"`,
-			`class="footnotes"`, `class="language-go"`, `class="wikilink"`,
+			"footnote-ref", "footnote-backref",
+			"footnotes", "language-go", "wikilink",
 		} {
-			if !strings.Contains(out.HTML, want) {
-				t.Errorf("output does not contain %s:\n%s", want, out.HTML)
+			// By token. `.target` joins these lists, and the question this
+			// subtest asks is "did the class survive sanitisation", which is
+			// asked of a class list and not of one spelling of an attribute
+			// value.
+			if !parseTokens(t, out.HTML).hasClass(want) {
+				t.Errorf("no element carries the %q class:\n%s", want, out.HTML)
 			}
 		}
 	})
@@ -885,11 +915,14 @@ func TestExtensionsFire(t *testing.T) {
 		t,
 		"See [[Page]] and ![[map.png]] and {{dice:1d20}} and {{statblock:Goblin}}.",
 	)
-	for _, want := range []string{
-		`class="wikilink"`, `class="embed"`, `class="dice"`, `class="statblock"`,
-	} {
-		if !strings.Contains(out.HTML, want) {
-			t.Errorf("the %s extension did not fire:\n%s", want, out.HTML)
+	// By class **token**, not by matching `class="wikilink"`: the `.target` pass
+	// appends its own token to these elements, so the attribute value is
+	// `class="wikilink target"` and asserting the shorter spelling would be
+	// asserting that nothing may ever join the list.
+	for _, want := range []string{"wikilink", "embed", "dice", "statblock"} {
+		if !parseTokens(t, out.HTML).hasClass(want) {
+			t.Errorf("no element carries the %q class, so the extension did not fire:\n%s",
+				want, out.HTML)
 		}
 	}
 }
@@ -1244,8 +1277,12 @@ func TestLabelAgreesWithTheLinkLayer(t *testing.T) {
 
 			out := renderBody(t, "[["+inner+"]]")
 
-			// What the renderer wrote between the tags.
-			match := regexp.MustCompile(`<a class="wikilink"[^>]*>([^<]*)</a>`).
+			// What the renderer wrote between the tags. The class list is
+			// matched by its first token rather than exactly, because
+			// `target.go`'s pass appends `.target` to the same anchor and
+			// this is about the *label*, not about what else the element
+			// carries.
+			match := regexp.MustCompile(`<a class="wikilink(?: [^"]*)?"[^>]*>([^<]*)</a>`).
 				FindStringSubmatch(out.HTML)
 			if match == nil {
 				t.Fatalf("no wikilink rendered for %q:\n%s", inner, out.HTML)
