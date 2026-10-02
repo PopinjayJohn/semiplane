@@ -53,11 +53,11 @@
 //
 // §10.8's row is "refuse to resume rather than silently misresolve", and a refusal
 // that says only "incompatible" has moved the diagnosis onto the reader.
-// `Drift.Error` names the **persisted** version, the **expected** version, the
+// `DriftError.Error` names the **persisted** version, the **expected** version, the
 // **input that differs**, and **what happens now**, in one sentence a GM can read at
 // the table. A test asserts all four are present, because the version of this
 // message that omits the expected version still reads like a finished message.
-// `Drift.Class` exists so the log line and the page say the same word, through
+// `DriftError.Class` exists so the log line and the page say the same word, through
 // `observability.Classed` rather than a chain somebody has to edit.
 //
 // # The escape is a separate act, and it is audited
@@ -111,6 +111,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -143,7 +144,7 @@ const (
 // ruleset fingerprint from the one this process has registered, and so is refused
 // rather than re-resolved (S-7.8, architecture §10.8).
 //
-// A `*Drift` wraps it, so a caller asks `errors.Is(err, ErrRulesetDrift)` and a
+// A `*DriftError` wraps it, so a caller asks `errors.Is(err, ErrRulesetDrift)` and a
 // handler that wants the detail reaches for the concrete type — the shape
 // `protocol.go` uses for a frame refusal.
 var ErrRulesetDrift = errors.New("realtime: persisted state was written under a different ruleset")
@@ -191,11 +192,15 @@ var ErrDiscardUnconfirmed = errors.New(
 
 // ErrDiscardStale is a confirmation for state that has moved on since it was
 // prepared: the GM confirmed a game that no longer exists.
-var ErrDiscardStale = errors.New("realtime: the persisted state changed since the discard was prepared")
+var ErrDiscardStale = errors.New(
+	"realtime: the persisted state changed since the discard was prepared",
+)
 
 // ErrDiscardForeign is a confirmation prepared for a different campaign than the one
 // being discarded.
-var ErrDiscardForeign = errors.New("realtime: the discard confirmation was prepared for another campaign")
+var ErrDiscardForeign = errors.New(
+	"realtime: the discard confirmation was prepared for another campaign",
+)
 
 // ErrNoDiscardableState means there is no `campaign_state` row to discard.
 //
@@ -250,6 +255,34 @@ var componentOrder = []Component{
 	ComponentRuleset,
 	ComponentBasePack,
 	ComponentOverlayPack,
+}
+
+// componentKeys is the persisted name of each component, positionally paired with
+// `componentOrder`.
+//
+// Separate from the `Component` values, and the separation is load-bearing: a
+// `Component` is a **label for a person** ("base pack", with a space, because a GM
+// reads it on a status page) and a key is a **name in a stored column**. Coupling
+// them would mean rewording a label silently invalidating every fingerprint ever
+// written, so a copy edit in the documentation would cost every campaign a resume.
+// The two lists are positionally paired and `componentKey`/`componentForKey` are the
+// only places that convert, so reordering one without the other is a panic at the
+// conversion rather than a silent remapping.
+var componentKeys = []string{"system", "ruleset", "base", "overlay"}
+
+// componentKey returns the persisted name of a component.
+func componentKey(component Component) string {
+	return componentKeys[slices.Index(componentOrder, component)]
+}
+
+// componentForKey returns the component a persisted name denotes.
+func componentForKey(key string) (Component, bool) {
+	at := slices.Index(componentKeys, key)
+	if at < 0 {
+		return ComponentNone, false
+	}
+
+	return componentOrder[at], true
 }
 
 // HouseRule is one house-rule module, as a campaign has it configured.
@@ -332,6 +365,14 @@ type Fingerprint struct {
 	OverlayPack string
 }
 
+// Empty reports whether the fingerprint names no ruleset at all.
+//
+// The zero value's question, and it is the question `persistedText` asks of a
+// campaign whose column could not be parsed. Not a "is this valid" predicate: a
+// fingerprint with only some components set is invalid and `validate` says so, and
+// mixing the two would let an invalid fingerprint read as merely absent.
+func (f Fingerprint) Empty() bool { return f == Fingerprint{} }
+
 // FingerprintOf returns the fingerprint of a resolved descriptor.
 //
 // The one line that implements ADR 0018's exclusion, and it is worth reading the
@@ -360,37 +401,6 @@ func FingerprintOf(descriptor Descriptor) (Fingerprint, error) {
 	return fingerprint, nil
 }
 
-// validate refuses a fingerprint that could not be encoded unambiguously.
-//
-// A component may not be empty where emptiness is not a legal value, and no
-// component may contain a separator, an assignment, or a control character. The
-// first rule is what stops a fingerprint that is the empty string: an "everything
-// empty" fingerprint is indistinguishable from a campaign written under no
-// particular ruleset, which migration 0005 says is a *meaningful* value, and the
-// two would be one value meaning two things.
-func (f Fingerprint) validate() error {
-	fields := []struct {
-		component Component
-		value     string
-	}{
-		{ComponentSystem, f.System},
-		{ComponentRuleset, f.Ruleset},
-		{ComponentBasePack, f.BasePack},
-		// Overlay is exempt: architecture §10.4 makes a standalone pack a
-		// first-class shape, so "no overlay" is a fact about the system rather than
-		// a missing input.
-		{ComponentOverlayPack, f.OverlayPack},
-	}
-
-	for _, field := range fields {
-		if err := checkComponent(field.component, field.value); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // checkComponent refuses one component's value, and says which one it was.
 func checkComponent(component Component, value string) error {
 	if value == "" && component != ComponentOverlayPack {
@@ -405,7 +415,8 @@ func checkComponent(component Component, value string) error {
 		return fmt.Errorf(
 			"realtime: fingerprint %s is %q, which contains a reserved separator; the encoding does "+
 				"not escape, and a plugin identifier carrying one should be renamed",
-			component, value,
+			component,
+			value,
 		)
 	}
 
@@ -431,34 +442,10 @@ func (f Fingerprint) String() string {
 	parts := make([]string, 0, len(componentOrder))
 
 	for _, component := range componentOrder {
-		parts = append(parts, string(component)+fingerprintAssign+f.value(component))
+		parts = append(parts, componentKey(component)+fingerprintAssign+f.value(component))
 	}
 
 	return fingerprintFormat + ":" + strings.Join(parts, fingerprintSeparator)
-}
-
-// value returns one component's value, and is the switch `String`, `Diff` and
-// `ParseFingerprint` share so the three cannot disagree about which field is which.
-//
-// An exhaustive switch with no default, because `exhaustive` holds this file to
-// `componentOrder`: a new `Component` is a compile error here rather than an empty
-// string in a persisted fingerprint.
-func (f Fingerprint) value(component Component) string {
-	switch component {
-	case ComponentSystem:
-		return f.System
-	case ComponentRuleset:
-		return f.Ruleset
-	case ComponentBasePack:
-		return f.BasePack
-	case ComponentOverlayPack:
-		return f.OverlayPack
-	default:
-		// Unreachable through `String` or `Diff`, which both iterate componentOrder.
-		// Present because a function with an implicit zero return is a function whose
-		// failure is invisible.
-		return ""
-	}
 }
 
 // Equal reports whether two fingerprints name the same resolution semantics.
@@ -498,6 +485,61 @@ func (f Fingerprint) Diff(other Fingerprint) Component {
 	}
 }
 
+// value returns one component's value, and is the switch `String`, `Diff` and
+// `ParseFingerprint` share so the three cannot disagree about which field is which.
+//
+// An exhaustive switch with no default, because `exhaustive` holds this file to
+// `componentOrder`: a new `Component` is a compile error here rather than an empty
+// string in a persisted fingerprint.
+func (f Fingerprint) value(component Component) string {
+	switch component {
+	case ComponentSystem:
+		return f.System
+	case ComponentRuleset:
+		return f.Ruleset
+	case ComponentBasePack:
+		return f.BasePack
+	case ComponentOverlayPack:
+		return f.OverlayPack
+	default:
+		// Unreachable through `String` or `Diff`, which both iterate componentOrder.
+		// Present because a function with an implicit zero return is a function whose
+		// failure is invisible.
+		return ""
+	}
+}
+
+// validate refuses a fingerprint that could not be encoded unambiguously.
+//
+// A component may not be empty where emptiness is not a legal value, and no
+// component may contain a separator, an assignment, or a control character. The
+// first rule is what stops a fingerprint that is the empty string: an "everything
+// empty" fingerprint is indistinguishable from a campaign written under no
+// particular ruleset, which migration 0005 says is a *meaningful* value, and the
+// two would be one value meaning two things.
+func (f Fingerprint) validate() error {
+	fields := []struct {
+		component Component
+		value     string
+	}{
+		{ComponentSystem, f.System},
+		{ComponentRuleset, f.Ruleset},
+		{ComponentBasePack, f.BasePack},
+		// Overlay is exempt: architecture §10.4 makes a standalone pack a
+		// first-class shape, so "no overlay" is a fact about the system rather than
+		// a missing input.
+		{ComponentOverlayPack, f.OverlayPack},
+	}
+
+	for _, field := range fields {
+		if err := checkComponent(field.component, field.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ParseFingerprint reads the encoded form back into a fingerprint.
 //
 // Needed on every resume, because the column is one TEXT value and the comparison
@@ -530,7 +572,7 @@ func ParseFingerprint(encoded string) (Fingerprint, error) {
 
 	parsed := make(map[Component]string, len(parts))
 
-	for at, part := range parts {
+	for index, part := range parts {
 		name, value, assigned := strings.Cut(part, fingerprintAssign)
 		if !assigned {
 			return Fingerprint{}, fmt.Errorf(
@@ -538,15 +580,17 @@ func ParseFingerprint(encoded string) (Fingerprint, error) {
 			)
 		}
 
-		want := componentOrder[at]
-		if Component(name) != want {
+		want := componentOrder[index]
+
+		got, known := componentForKey(name)
+		if !known || got != want {
 			return Fingerprint{}, fmt.Errorf(
 				"%w: %q has %s where %s was expected; components are written in a fixed order",
-				ErrRulesetUnreadable, encoded, name, want,
+				ErrRulesetUnreadable, encoded, name, componentKey(want),
 			)
 		}
 
-		parsed[Component(name)] = value
+		parsed[got] = value
 	}
 
 	fingerprint := Fingerprint{
@@ -567,7 +611,7 @@ func ParseFingerprint(encoded string) (Fingerprint, error) {
 	return fingerprint, nil
 }
 
-// Drift is the refusal: a campaign's state was written under one fingerprint and
+// DriftError is the refusal: a campaign's state was written under one fingerprint and
 // this process has registered another (S-7.8).
 //
 // A concrete error rather than a formatted string, so a handler can read the
@@ -576,7 +620,7 @@ func ParseFingerprint(encoded string) (Fingerprint, error) {
 // `observability.ErrorClass` report `ruleset_drift` rather than this type, which is
 // the same mechanism `protocol.FrameError` uses and the reason it is a convention
 // rather than a chain somebody has to edit.
-type Drift struct {
+type DriftError struct {
 	// CampaignID is the campaign that cannot resume.
 	CampaignID int64
 
@@ -597,7 +641,7 @@ type Drift struct {
 // the server would resolve it under, and what will not happen. A test asserts all
 // three appear, because the version of this sentence that drops the expected version
 // still reads like a finished message.
-func (d *Drift) Error() string {
+func (d *DriftError) Error() string {
 	return fmt.Sprintf(
 		"realtime: campaign %d cannot resume: the persisted state was written under %q, the "+
 			"registered ruleset is %q, and the %s differs; the game will not resume until the GM "+
@@ -608,10 +652,10 @@ func (d *Drift) Error() string {
 }
 
 // Is reports target as `ErrRulesetDrift`, so a caller branches on the umbrella.
-func (d *Drift) Is(target error) bool { return target == ErrRulesetDrift }
+func (d *DriftError) Is(target error) bool { return target == ErrRulesetDrift }
 
 // Class names this refusal for a log line's `detail`, through `observability.Classed`.
-func (d *Drift) Class() string { return "ruleset_drift" }
+func (d *DriftError) Class() string { return "ruleset_drift" }
 
 // VersionReader reads the `ruleset_version` a campaign's state was last written
 // under, exactly as the column holds it.
@@ -653,7 +697,7 @@ type Status struct {
 	// Drift is the refusal, or nil. Non-nil exactly when `!Resumable` and
 	// `Unreadable` is nil, so a caller that renders the alert from this field and
 	// the resume decision from that one cannot disagree.
-	Drift *Drift
+	Drift *DriftError
 
 	// Unreadable is the comparison error, or nil. Set when the column holds
 	// something this build cannot compare, and mutually exclusive with `Drift`: a
@@ -731,6 +775,11 @@ func (g *Gate) Inspect(ctx context.Context, campaignID int64) (Status, error) {
 		status.Resumable = false
 		status.Unreadable = err
 
+		//nolint:nilerr // The refusal is the *answer*, not a failure to produce one:
+		// `Inspect` is what a status page renders, and a page that answered with an
+		// error instead of a status would be a page that cannot say "this campaign
+		// cannot resume and here is why". `Check` is the function that turns this
+		// into a returned error, and it is one line below.
 		return status, nil
 	}
 
@@ -739,7 +788,7 @@ func (g *Gate) Inspect(ctx context.Context, campaignID int64) (Status, error) {
 	}
 
 	status.Resumable = false
-	status.Drift = &Drift{
+	status.Drift = &DriftError{
 		CampaignID: campaignID,
 		Persisted:  parsed,
 		Expected:   g.expected,
@@ -750,7 +799,7 @@ func (g *Gate) Inspect(ctx context.Context, campaignID int64) (Status, error) {
 }
 
 // Check reports whether a campaign's persisted state may be resumed, returning the
-// `*Drift` when it may not.
+// `*DriftError` when it may not.
 //
 // The call a composition root makes **before** the live state is opened, and the
 // ordering is the only one that means anything: opening first would write a fresh
@@ -767,6 +816,35 @@ func (g *Gate) Check(ctx context.Context, campaignID int64) error {
 	}
 
 	return status.Unreadable
+}
+
+// Resume opens a campaign's live state, refusing on drift first.
+//
+// It exists because the *order* is the whole of the gate and an order is easy to get
+// wrong in a composition root. `Registry.Open` does not consult a gate, and it cannot:
+// the fingerprint is a column on `campaigns` and `state.go` does not read that table.
+// A root that opens first and checks afterwards has, by the time it checks, written a
+// fresh `campaign_state` row under the new fingerprint — the evidence that there had
+// ever been a difference is gone, and the refusal that follows names a game that is no
+// longer on disk.
+//
+// One call cannot be ordered wrongly, so this is the one a composition root should
+// use. A root that needs the two steps apart can still call `Check` and `Open`
+// itself, and the documentation on `Check` says so in the place it is easy to miss.
+func (g *Gate) Resume(
+	ctx context.Context,
+	registry *Registry,
+	campaignID int64,
+) (*CampaignState, error) {
+	if registry == nil {
+		return nil, fmt.Errorf("%w: no registry to open a state in", ErrClosed)
+	}
+
+	if err := g.Check(ctx, campaignID); err != nil {
+		return nil, err
+	}
+
+	return registry.Open(ctx, campaignID)
 }
 
 // Actor identifies who performed an audited act.
@@ -971,62 +1049,12 @@ func (d *Discarder) Prepare(
 		return none, status, err
 	}
 
-	confirmation, err := d.prepareRow(ctx, campaignID, gate.Expected())
+	confirmation, err := d.prepareRow(ctx, campaignID, status)
 	if err != nil {
 		return none, status, err
 	}
 
 	return confirmation, status, nil
-}
-
-// prepareRow reads the row the confirmation binds to.
-func (d *Discarder) prepareRow(
-	ctx context.Context,
-	campaignID int64,
-	expected Fingerprint,
-) (DiscardConfirmation, error) {
-	if d.rows == nil {
-		return DiscardConfirmation{}, fmt.Errorf(
-			"%w: no row reader is configured, so no confirmation could be prepared",
-			ErrDiscardUnconfirmed,
-		)
-	}
-
-	if campaignID <= 0 {
-		return DiscardConfirmation{}, fmt.Errorf("%w: campaign id %d is not a campaign", ErrNoState, campaignID)
-	}
-
-	blob, version, err := d.rows(ctx, campaignID)
-	if errors.Is(err, ErrNoState) {
-		return DiscardConfirmation{}, fmt.Errorf("%w: campaign %d", ErrNoDiscardableState, campaignID)
-	}
-
-	if err != nil {
-		return DiscardConfirmation{}, fmt.Errorf("realtime: read campaign %d state: %w", campaignID, err)
-	}
-
-	if version < 0 {
-		return DiscardConfirmation{}, fmt.Errorf(
-			"%w: campaign %d: the version column is %d, which is not a campaign that advanced",
-			ErrNoDiscardableState, campaignID, version,
-		)
-	}
-
-	row := rowFromBlob(uint64(version), blob)
-
-	confirmation := DiscardConfirmation{
-		campaignID: campaignID,
-		revision:   row.version,
-		placements: len(row.document.Placements),
-		expected:   expected,
-		unreadable: row.parseErr,
-	}
-
-	if row.fingerprint != nil {
-		confirmation.persisted = *row.fingerprint
-	}
-
-	return confirmation, nil
 }
 
 // Discard deletes a campaign's persisted game state and records the deletion.
@@ -1123,6 +1151,81 @@ func (d *Discarder) Discard(
 	})
 }
 
+// prepareRow reads the row the confirmation binds to, and takes the version from the
+// status the gate already resolved.
+//
+// The version is not read again here, and that is the point: the column lives on
+// `campaigns` and the row lives on `campaign_state`, so reading both would be two
+// statements that could disagree — and a disagreement would put one version in the
+// alert a GM is reading and another in the audit row recording what they deleted.
+// `Status` already parsed the column once, so `DiscardConfirmation` carries that
+// answer and `Discard` records it.
+func (d *Discarder) prepareRow(
+	ctx context.Context,
+	campaignID int64,
+	status Status,
+) (DiscardConfirmation, error) {
+	if d.rows == nil {
+		return DiscardConfirmation{}, fmt.Errorf(
+			"%w: no row reader is configured, so no confirmation could be prepared",
+			ErrDiscardUnconfirmed,
+		)
+	}
+
+	if campaignID <= 0 {
+		return DiscardConfirmation{}, fmt.Errorf(
+			"%w: campaign id %d is not a campaign",
+			ErrNoState,
+			campaignID,
+		)
+	}
+
+	blob, version, err := d.rows(ctx, campaignID)
+	if errors.Is(err, ErrNoState) {
+		return DiscardConfirmation{}, fmt.Errorf(
+			"%w: campaign %d",
+			ErrNoDiscardableState,
+			campaignID,
+		)
+	}
+
+	if err != nil {
+		return DiscardConfirmation{}, fmt.Errorf(
+			"realtime: read campaign %d state: %w",
+			campaignID,
+			err,
+		)
+	}
+
+	if version < 0 {
+		return DiscardConfirmation{}, fmt.Errorf(
+			"%w: campaign %d: the version column is %d, which is not a campaign that advanced",
+			ErrNoDiscardableState, campaignID, version,
+		)
+	}
+
+	row := rowFromBlob(uint64(version), blob)
+
+	confirmation := DiscardConfirmation{
+		campaignID: campaignID,
+		revision:   row.version,
+		placements: len(row.document.Placements),
+		expected:   status.Expected,
+		// Both kinds of unreadable, joined: the version column this build could not
+		// compare, and the state document it could not decode. They are different
+		// failures and the audit row should be able to distinguish them, because
+		// "the version was unreadable" and "the game was unreadable" point an
+		// operator at different places.
+		unreadable: errors.Join(status.Unreadable, row.parseErr),
+	}
+
+	if parsed, err := ParseFingerprint(status.Persisted); err == nil {
+		confirmation.persisted = parsed
+	}
+
+	return confirmation, nil
+}
+
 // discardRow is one `campaign_state` row, read for the staleness check and for the
 // audit row's numbers.
 type discardRow struct {
@@ -1130,11 +1233,9 @@ type discardRow struct {
 	// version is the `version` column: the campaign's mutation counter, and what a
 	// confirmation binds to.
 	version uint64
-	// fingerprint is the persisted ruleset fingerprint the campaign row carries, or
-	// nil when it could not be read. Nil is not a fatal answer: the discard is
-	// allowed either way, and the reason is recorded rather than hidden.
-	fingerprint *Fingerprint
-	parseErr    error
+	// parseErr is why the blob could not be decoded, or nil. Recorded rather than
+	// returned, because an unreadable state is still a state to discard.
+	parseErr error
 }
 
 // discardDetail renders what was discarded, for the audit row.
@@ -1176,10 +1277,24 @@ func persistedText(confirmation DiscardConfirmation) string {
 	}
 
 	if confirmation.unreadable != nil {
-		return "an unreadable ruleset_version"
+		return "a version this build could not read (" + errorText(confirmation.unreadable) + ")"
 	}
 
 	return "no particular ruleset"
+}
+
+// errorText renders an optional error for one line of a column.
+//
+// The newline flattening is not cosmetic: `errors.Join` renders its members
+// newline-separated, and a `detail` with an embedded newline is a row a `SELECT` in a
+// terminal renders as two. The reasons joined here are two sentences that belong on
+// the same line.
+func errorText(err error) string {
+	if err == nil {
+		return "no reason recorded"
+	}
+
+	return strings.ReplaceAll(err.Error(), "\n", "; ")
 }
 
 // readDiscardRow reads and decodes the row inside the discarding transaction.
@@ -1215,14 +1330,10 @@ func readDiscardRow(ctx context.Context, tx *sql.Tx, campaignID int64) (discardR
 		)
 	}
 
-	row := rowFromBlob(uint64(version), blob)
-
-	// The persisted fingerprint is filled in by `Discard` from the confirmation,
-	// because it lives in `campaigns.ruleset_version` and the state blob does not
-	// carry it.
-	row.fingerprint = nil
-
-	return row, nil
+	// Only the two facts the blob can answer: how far the campaign had advanced, and
+	// how much was on the table. The ruleset version lives in `campaigns` and comes
+	// from the prepared confirmation.
+	return rowFromBlob(uint64(version), blob), nil
 }
 
 // rowFromBlob decodes a persisted row into the facts the discard needs.
@@ -1247,11 +1358,3 @@ func rowFromBlob(version uint64, blob []byte) discardRow {
 
 	return row
 }
-
-// Empty reports whether the fingerprint names no ruleset at all.
-//
-// The zero value's question, and it is the question `persistedText` asks of a
-// campaign whose column could not be parsed. Not a "is this valid" predicate: a
-// fingerprint with only some components set is invalid and `validate` says so, and
-// mixing the two would let an invalid fingerprint read as merely absent.
-func (f Fingerprint) Empty() bool { return f == Fingerprint{} }

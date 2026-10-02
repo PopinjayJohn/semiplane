@@ -278,8 +278,13 @@ func NewWrites(registry *Registry, logger *slog.Logger) *Writes {
 func (w *Writes) Record(ctx context.Context, campaignID int64, elapsed time.Duration, err error) {
 	w.counter.Inc()
 
+	// Every write is observed, successful or not. A histogram that dropped its
+	// failures would describe a process that is faster than it is, which is the one
+	// direction of error a latency distribution must not err in.
+	w.latency.Observe(elapsed)
+
 	campaign := strconv.FormatInt(campaignID, 10)
-	detail := w.latency.Snapshot().bucketFor(elapsed)
+	detail := writeBucketLabel(elapsed)
 
 	level := slog.LevelInfo
 
@@ -334,18 +339,19 @@ type WriteSnapshot struct {
 	HasObservations bool
 }
 
-// bucketFor returns the label of the bucket a duration falls in.
+// writeBucketLabel returns the label of the bucket a duration falls in.
 //
-// Computed from the bounds rather than by recording and reading back, because
-// `Record` needs one label and a histogram needs one increment and making the second
-// depend on the first would put a lock acquisition and a slice copy in the path of
-// the determination.
-func (h HistogramValue) bucketFor(elapsed time.Duration) string {
+// Computed from `writeBucketBoundsMS` and not from a `HistogramValue`, and that is
+// load bearing rather than a matter of taste: a `HistogramValue` carries no bounds
+// until something has been observed, so deriving the label from one reports every
+// first write as `>1000ms`. The bounds are a constant; the value is a measurement of
+// them, and the answer to "which bucket is this" is a question about the constant.
+func writeBucketLabel(elapsed time.Duration) string {
 	milliseconds := float64(elapsed) / float64(time.Millisecond)
 
-	for _, bucket := range h.Buckets {
-		if milliseconds <= float64(bucket.UpperMS) {
-			return bucket.Label()
+	for _, bound := range writeBucketBoundsMS {
+		if milliseconds <= float64(bound) {
+			return (&BucketValue{UpperMS: bound}).Label()
 		}
 	}
 
