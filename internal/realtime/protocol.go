@@ -310,43 +310,62 @@ var ErrFrameRejected = errors.New("realtime: frame rejected")
 
 // Sentinels for the individual rejections. Each is also the `Unwrap` target of
 // the `FrameError` that reports it, so a caller can ask one question.
+//
+// Every one of them wraps `ErrFrameRejected`, which is why the umbrella
+// sentinel is a chain member rather than a second thing to remember: a hub that
+// wants "was this the client's fault, or ours?" asks `errors.Is` once.
 var (
 	// ErrClientFrameTooLarge is a frame over MaxClientFrameBytes.
-	ErrClientFrameTooLarge = errors.New("realtime: client frame too large")
+	ErrClientFrameTooLarge = wrap(ErrFrameRejected, "client frame too large")
 	// ErrServerFrameTooLarge is a frame over MaxServerFrameBytes.
-	ErrServerFrameTooLarge = errors.New("realtime: server frame too large")
+	ErrServerFrameTooLarge = wrap(ErrFrameRejected, "server frame too large")
 	// ErrNilReader is a nil io.Reader, which is a wiring fault and not a client's.
+	// It deliberately does **not** wrap ErrFrameRejected: nothing was refused, and
+	// a hub that counted it as a rejection would be reporting our bug as theirs.
 	ErrNilReader = errors.New("realtime: nil frame reader")
 	// ErrNotJSON is a frame that is not a JSON object.
-	ErrNotJSON = errors.New("realtime: frame is not a JSON object")
+	ErrNotJSON = wrap(ErrFrameRejected, "frame is not a JSON object")
 	// ErrMissingType is a frame with no `t`.
-	ErrMissingType = errors.New("realtime: frame has no type")
+	ErrMissingType = wrap(ErrFrameRejected, "frame has no type")
 	// ErrUnknownType is a `t` outside the three a client may send.
-	ErrUnknownType = errors.New("realtime: unknown message type")
+	ErrUnknownType = wrap(ErrFrameRejected, "unknown message type")
 	// ErrUnknownField is a field outside the frame type's grammar.
-	ErrUnknownField = errors.New("realtime: unknown field")
+	ErrUnknownField = wrap(ErrFrameRejected, "unknown field")
 	// ErrMissingField is a required field that is absent.
-	ErrMissingField = errors.New("realtime: missing field")
+	ErrMissingField = wrap(ErrFrameRejected, "missing field")
 	// ErrMalformedFrame is a frame that did not decode. It covers a syntax error,
 	// a field whose JSON type is wrong, and a field of the right type whose value
 	// is nonsense.
-	ErrMalformedFrame = errors.New("realtime: malformed frame")
+	ErrMalformedFrame = wrap(ErrFrameRejected, "malformed frame")
 	// ErrNegativeCounter is a negative `seq`, `since` or `version`.
-	ErrNegativeCounter = errors.New("realtime: negative counter")
+	ErrNegativeCounter = wrap(ErrFrameRejected, "negative counter")
 	// ErrCounterOutOfRange is a counter past maxCounter, or a counter written in a
 	// form no client should use (`1e3`, `+7`, `7.0`).
-	ErrCounterOutOfRange = errors.New("realtime: counter out of range")
+	ErrCounterOutOfRange = wrap(ErrFrameRejected, "counter out of range")
 	// ErrBadToken is a token that is empty, too long, or outside its charset.
-	ErrBadToken = errors.New("realtime: malformed token")
+	ErrBadToken = wrap(ErrFrameRejected, "malformed token")
+	// ErrBadCursor is a cursor that is not a pair of numbers.
+	ErrBadCursor = wrap(ErrFrameRejected, "malformed cursor")
 	// ErrBadRole is a `Viewer.Role` that is not a role.
-	ErrBadRole = errors.New("realtime: malformed role")
+	ErrBadRole = wrap(ErrFrameRejected, "malformed role")
 	// ErrMissingState is a snapshot with no state document.
-	ErrMissingState = errors.New("realtime: snapshot carries no state")
+	ErrMissingState = wrap(ErrFrameRejected, "snapshot carries no state")
 	// ErrOversizeArgs is an outbound frame whose `args` exceed maxArgsLen.
-	ErrOversizeArgs = errors.New("realtime: oversized args")
+	ErrOversizeArgs = wrap(ErrFrameRejected, "oversized args")
 	// ErrUnknownReason is a `RejectReason` outside the closed set.
-	ErrUnknownReason = errors.New("realtime: unknown reject reason")
+	ErrUnknownReason = wrap(ErrFrameRejected, "unknown reject reason")
 )
+
+// wrap builds a sentinel that unwraps to umbrella.
+//
+// A sentinel is created by calling a function rather than by `errors.New` so that
+// `errors.Is(rejection, ErrFrameRejected)` is true of every rejection without the
+// hub having to know the eleven names — which is the whole point of an umbrella
+// sentinel, and would otherwise be a second thing to get wrong at every call
+// site.
+func wrap(umbrella error, detail string) error {
+	return fmt.Errorf("%w: %s", umbrella, detail)
+}
 
 // FrameError is what `Decode`, `ReadFrame` and `Encode` return for a refused
 // frame.
@@ -397,8 +416,7 @@ func reject(class string, cause error) error {
 // Two classes, not one, because they mean different things to whoever is on call:
 // a `*json.SyntaxError` is a client speaking something that is not JSON at all,
 // and a `*json.UnmarshalTypeError` is a client speaking JSON with a field of the
-// wrong type — which is what a negative counter looks like before this file's own
-// counter parsing sees it. Neither one's *text* is ever read.
+// wrong type. Neither one's *text* is ever read.
 func classifyJSON(err error) string {
 	if hasJSONError[*json.SyntaxError](err) {
 		return "malformed"
@@ -409,6 +427,39 @@ func classifyJSON(err error) string {
 	}
 
 	return "malformed"
+}
+
+// classifyStrict reduces an error from `decodeStrict` to a class.
+//
+// It exists because `DisallowUnknownFields` reports an unknown field by *type
+// rather than by message*, and getting that class right matters: the top level is
+// already checked against the grammar table, so the unknown fields this catches
+// are the ones **inside** `args` — and an unknown field inside `args` is the shape
+// a client-supplied dice result takes. Reporting it as `malformed` would lose the
+// one distinction that makes the refusal legible in a log.
+//
+// It is identified by elimination rather than by reading the message. By the time
+// an error reaches here the frame has already parsed as a JSON object, so the only
+// errors left are a type error, a counter error raised by this package's own
+// `UnmarshalJSON`, and whatever `DisallowUnknownFields` produces — which is an
+// `fmt.Errorf` with no `%w`, and so not a `*json.SyntaxError` and not a
+// `*json.UnmarshalTypeError`. Reading the message instead would mean matching
+// against the field name the client chose, which is the thing this file refuses to
+// do everywhere else.
+func classifyStrict(err error) error {
+	// A counter or cursor error is already classified, and already content-free.
+	// Relabelling it `malformed` would throw away the distinction between "a client
+	// sent a negative seq" and "a client sent a broken object", which is the
+	// difference between a client bug and an attacker's probe.
+	if frameErr, ok := errors.AsType[*FrameError](err); ok {
+		return frameErr
+	}
+
+	if hasJSONError[*json.UnmarshalTypeError](err) {
+		return reject("json_type", ErrMalformedFrame)
+	}
+
+	return reject("unknown_field", ErrUnknownField)
 }
 
 // hasJSONError reports whether err is of the decoder error type T.
@@ -538,14 +589,51 @@ type ClientPresence struct {
 
 // PresenceArgs is a pointer and a focus.
 //
-// Both are optional, and the cursor is a pointer to a fixed-size pair rather than
-// a slice: a slice would let a client send a 16 KiB cursor inside a frame that
-// every other field of fits in 40 bytes.
+// Both are optional, and the cursor is a *typed* pair rather than a slice: a
+// slice would let a client send a 16 KiB cursor inside a frame that every other
+// field of fits in 40 bytes.
 type PresenceArgs struct {
 	// Cursor is the reader's pointer position in table points, or nil.
-	Cursor *[2]float64 `json:"cursor,omitempty"`
+	Cursor *Cursor `json:"cursor,omitempty"`
 	// Focus is the placement the reader is looking at, or empty.
 	Focus PlacementID `json:"focus,omitempty"`
+}
+
+// Cursor is a pointer position in table points, as `[120,88]`.
+//
+// It is a named pair with an `UnmarshalJSON` because `encoding/json` will happily
+// decode a three-element array into `[2]float64` and **discard the third**: the
+// documented behaviour is that a JSON array longer than the Go array has its extra
+// elements dropped, with no error. A cursor is not state and a dropped coordinate
+// is not worth refusing a frame over, so `UnmarshalJSON` requires exactly two.
+type Cursor [2]float64
+
+// UnmarshalJSON decodes a JSON array of exactly two numbers.
+func (c *Cursor) UnmarshalJSON(data []byte) error {
+	var pair []float64
+
+	if err := json.Unmarshal(data, &pair); err != nil {
+		// One class for every way of being wrong. A cursor that is not a pair of
+		// numbers is a bad cursor whether it arrived as strings, as a single
+		// element, or as an object, and the decoder's own classification of *how*
+		// would put a client-chosen type name in the log.
+		return reject("bad_cursor", ErrBadCursor)
+	}
+
+	if len(pair) != 2 {
+		// `len(pair)` is the count and not the contents, so nothing client-chosen
+		// reaches the error.
+		return reject("bad_cursor", ErrBadCursor)
+	}
+
+	if !finite(pair[0]) || !finite(pair[1]) {
+		return reject("bad_cursor", ErrBadCursor)
+	}
+
+	c[0] = pair[0]
+	c[1] = pair[1]
+
+	return nil
 }
 
 // ServerSnapshot is the whole state document:
@@ -684,7 +772,7 @@ type PresenceUser struct {
 	// ID is the reader.
 	ID UserID `json:"id"`
 	// Cursor is the reader's pointer position, or nil when they have none.
-	Cursor *[2]float64 `json:"cursor,omitempty"`
+	Cursor *Cursor `json:"cursor,omitempty"`
 	// Focus is the placement the reader is looking at, or empty.
 	Focus PlacementID `json:"focus,omitempty"`
 }
@@ -867,7 +955,7 @@ func Decode(data []byte) (ClientFrame, error) {
 
 	frame := shape.newFrame()
 	if err := decodeStrict(data, frame); err != nil {
-		return nil, reject(classifyJSON(err), ErrMalformedFrame)
+		return nil, classifyStrict(err)
 	}
 
 	if err := validate(frame); err != nil {
@@ -897,37 +985,25 @@ func checkFields(probe map[string]json.RawMessage, shape grammar) error {
 	return nil
 }
 
-// decodeStrict decodes data into target with unknown fields refused and trailing
-// bytes refused.
+// decodeStrict decodes data into target with unknown fields refused.
 //
-// The trailing check is the one `json.Unmarshal` would have done for free. It is
-// done here anyway, because the decoder is what `DisallowUnknownFields` comes
-// with, and `Decoder.Decode` stops at the end of the first value: without the
-// check, `{"t":"hello"}{"t":"intent",…}` is two frames delivered as one message,
-// and the second is never read. The socket is one message per frame and a
-// message that holds two frames is two frames where the protocol has room for
-// one.
+// There is no trailing-value check here, and its absence is deliberate.
+// `encoding/json.Unmarshal` requires the whole slice to be *one* JSON value
+// followed by whitespace, which is exactly the property that keeps a WebSocket
+// message holding two frames from being two frames where the protocol has room for
+// one — and `Decode` runs that `Unmarshal` over the same bytes before it gets
+// here. A `json.Decoder.More()` check would therefore be unreachable code, and
+// `AGENTS.md` is explicit that a rule no fixture can reach is as useless as one
+// that cannot fail. The property is asserted by
+// `TestEveryRejectionClassIsReachable` ("two frames one msg", "trailing junk") and
+// enforced by the `Unmarshal` in `Decode`; this function exists only to turn on
+// `DisallowUnknownFields`.
 func decodeStrict(data []byte, target ClientFrame) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-
-	if decoder.More() {
-		return errTrailingValue
-	}
-
-	return nil
+	return decoder.Decode(target)
 }
-
-// errTrailingValue marks a message carrying more than one JSON value.
-//
-// It is a sentinel so that `classifyJSON` needs no special case: it is not a
-// `*json.SyntaxError` and not a `*json.UnmarshalTypeError`, so it lands on
-// `malformed`, which is what it is.
-var errTrailingValue = errors.New("realtime: more than one value in a frame")
 
 // validate applies the semantic rules the JSON types cannot: token shapes,
 // counter ranges and cross-field requirements.
@@ -999,12 +1075,27 @@ func validatePresence(presence *ClientPresence) error {
 		return reject("bad_token", ErrBadToken)
 	}
 
-	if presence.Args.Cursor != nil && !finite(presence.Args.Cursor[0]) &&
-		!finite(presence.Args.Cursor[1]) {
-		return reject("bad_token", ErrBadToken)
+	if !validCursor(presence.Args.Cursor) {
+		return reject("bad_cursor", ErrBadCursor)
 	}
 
 	return nil
+}
+
+// validCursor reports whether a cursor, present or absent, is a pair of numbers
+// JSON can carry.
+//
+// Both coordinates, not either: a check that refused only when the two were both
+// non-finite would accept `[NaN, 3]`, and the one coordinate that is broken is
+// exactly the one a client would be looking at. `encoding/json` refuses NaN on the
+// inbound path already, so this holds the outbound side, where a roster is built
+// from a table and a resolver's arithmetic.
+func validCursor(cursor *Cursor) bool {
+	if cursor == nil {
+		return true
+	}
+
+	return finite(cursor[0]) && finite(cursor[1])
 }
 
 // Encode writes one server frame.
@@ -1063,10 +1154,31 @@ func validateServer(frame ServerFrame) error {
 	}
 }
 
+// checkType verifies a frame's `t` field against the constant its Go type
+// implies.
+//
+// It exists because `Type` is a field and a field can be forgotten. A hub that
+// writes `&realtime.ServerClock{WorldTime: now}` and forgets `Type` produces
+// `{"t":"","world_time":...}` — a frame that marshals, validates, and is
+// dispatched to nothing, which is a frame a client waits on forever. The two
+// halves of a frame's identity agreeing is a cheap check for a class of mistake
+// that is otherwise invisible until a table sits still.
+func checkType(got, want Type) error {
+	if got != want {
+		return reject("unknown_type", ErrUnknownType)
+	}
+
+	return nil
+}
+
 // validateSnapshot checks a snapshot's state document, role and echoed `since`.
 func validateSnapshot(snapshot *ServerSnapshot) error {
 	if snapshot == nil || len(snapshot.State) == 0 {
 		return reject("no_state", ErrMissingState)
+	}
+
+	if err := checkType(snapshot.Type, TypeSnapshot); err != nil {
+		return err
 	}
 
 	if !snapshot.You.Role.Valid() {
@@ -1086,6 +1198,10 @@ func validateApplied(applied *ServerApplied) error {
 		return reject("bad_token", ErrBadToken)
 	}
 
+	if err := checkType(applied.Type, TypeApplied); err != nil {
+		return err
+	}
+
 	if !validPlacementToken(applied.Placement) {
 		return reject("bad_token", ErrBadToken)
 	}
@@ -1101,6 +1217,10 @@ func validateApplied(applied *ServerApplied) error {
 func validateRejected(rejected *ServerRejected) error {
 	if rejected == nil {
 		return reject("unknown_type", ErrUnknownType)
+	}
+
+	if err := checkType(rejected.Type, TypeRejected); err != nil {
+		return err
 	}
 
 	if !validRejectReason(rejected.Reason) {
@@ -1120,6 +1240,10 @@ func validateRejected(rejected *ServerRejected) error {
 func validateDelta(delta *ServerDelta) error {
 	if delta == nil {
 		return reject("unknown_type", ErrUnknownType)
+	}
+
+	if err := checkType(delta.Type, TypeDelta); err != nil {
+		return err
 	}
 
 	if err := checkSince(delta.Since); err != nil {
@@ -1147,6 +1271,10 @@ func validatePresenceOut(roster *ServerPresence) error {
 		return reject("unknown_type", ErrUnknownType)
 	}
 
+	if err := checkType(roster.Type, TypePresence); err != nil {
+		return err
+	}
+
 	for i := range roster.Users {
 		user := &roster.Users[i]
 
@@ -1158,21 +1286,24 @@ func validatePresenceOut(roster *ServerPresence) error {
 			return reject("bad_token", ErrBadToken)
 		}
 
-		if user.Cursor != nil && !finite(user.Cursor[0]) && !finite(user.Cursor[1]) {
-			return reject("bad_token", ErrBadToken)
+		if !validCursor(user.Cursor) {
+			return reject("bad_cursor", ErrBadCursor)
 		}
 	}
 
 	return nil
 }
 
-// validateClock checks a clock frame's echoed `since`.
+// validateClock checks a clock frame's discriminator.
+//
+// There is nothing else to check: `time.Time` is a value and `Paused` is a
+// bool, and neither can be out of range. The type check is the whole check.
 func validateClock(clock *ServerClock) error {
 	if clock == nil {
 		return reject("unknown_type", ErrUnknownType)
 	}
 
-	return nil
+	return checkType(clock.Type, TypeClock)
 }
 
 // checkSince bounds an echoed `since`.
@@ -1413,25 +1544,33 @@ func (v *Version) UnmarshalJSON(data []byte) error {
 // parseCounter decodes a bare JSON integer in `[0, maxCounter]`.
 //
 // The grammar is a subset of JSON's, deliberately: `encoding/json` would accept
-// `7e0`, `7.0` and `+7` for an integer-typed field (well, not the last, but the
-// first two), and a counter that can be written three ways is a counter whose
-// log lines disagree about the same value. Rejecting the forms costs a client
-// nothing and buys a protocol where one number has one spelling.
+// `7e0` and `7.0` for an integer-typed field, and a counter that can be written
+// three ways is a counter whose log lines disagree about the same value.
+// Rejecting the forms costs a client nothing and buys a protocol where one number
+// has one spelling.
 //
-// The error carries the class and never `data`, which is client-chosen bytes.
+// The three rejections are three classes, because they are three different
+// mistakes: a value of the wrong JSON kind is not a counter at all, a negative
+// value is a counter that would wrap if it were stored unsigned, and `7e0` is a
+// counter written in a form no client should use. The error carries the class and
+// never `data`, which is client-chosen bytes.
 func parseCounter(data []byte) (uint64, error) {
 	if len(data) == 0 {
 		return 0, reject("json_type", ErrMalformedFrame)
 	}
 
-	if data[0] == '-' {
+	switch first := data[0]; {
+	case first == '-':
 		return 0, reject("negative_counter", ErrNegativeCounter)
+	case first < '0' || first > '9':
+		// A quote, a brace, a bracket, `t` for `true`, `n` for `null`: the field is
+		// not a number and no amount of reading the digits will make it one.
+		return 0, reject("json_type", ErrMalformedFrame)
 	}
 
-	// Anything other than a digit at this point is a sign, a point, an exponent,
-	// a quote or a brace — a value in a form this counter does not have. Note
-	// that `data` here is exactly the token `encoding/json` extracted, so leading
-	// whitespace is already gone.
+	// `data` here is exactly the token `encoding/json` extracted, so leading
+	// whitespace is already gone and what is left is digits or a spelling of a
+	// number this counter does not have.
 	for _, char := range data {
 		if char < '0' || char > '9' {
 			return 0, reject("counter_range", ErrCounterOutOfRange)
