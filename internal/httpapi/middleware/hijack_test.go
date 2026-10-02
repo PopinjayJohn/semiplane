@@ -49,7 +49,7 @@ const hijackBudget = 30 * time.Second
 // this file's header gives: the bug is invisible to a recorder and the whole test
 // suite being green while the product was broken is what this file exists to
 // prevent.
-func upgradeHandler(t *testing.T, dialed chan<- struct{}) http.Handler {
+func upgradeHandler(t *testing.T, connected chan<- struct{}) http.Handler {
 	t.Helper()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,7 @@ func upgradeHandler(t *testing.T, dialed chan<- struct{}) http.Handler {
 		_ = buffered
 		_ = conn.Close()
 
-		close(dialed)
+		close(connected)
 	})
 }
 
@@ -90,10 +90,10 @@ func upgradeHandler(t *testing.T, dialed chan<- struct{}) http.Handler {
 func TestTheUpgradeStatusReachesTheClientThroughTheTimeoutLayer(t *testing.T) {
 	t.Parallel()
 
-	dialed := make(chan struct{})
+	connected := make(chan struct{})
 
 	handler := middleware.Chain(
-		upgradeHandler(t, dialed),
+		upgradeHandler(t, connected),
 		middleware.Log(discardLogger()),
 		middleware.Timeout(hijackBudget),
 	)
@@ -109,7 +109,7 @@ func TestTheUpgradeStatusReachesTheClientThroughTheTimeoutLayer(t *testing.T) {
 	// The handler ran to completion rather than being abandoned, so the client got
 	// its status from a finished upgrade and not from a lucky race.
 	select {
-	case <-dialed:
+	case <-connected:
 	case <-time.After(time.Second):
 		t.Error("the upgrading handler never finished")
 	}
@@ -135,7 +135,7 @@ func TestTheTimeoutStillBoundsAHandlerThatDoesNotHijack(t *testing.T) {
 	// partial body. This one covers the narrower thing the hijack fix could break:
 	// that a request which **never wrote at all** still gets a 504 rather than a
 	// silent 200 with an empty body.
-	handler := middleware.Timeout(20*time.Millisecond)(http.HandlerFunc(
+	handler := middleware.Timeout(20 * time.Millisecond)(http.HandlerFunc(
 		func(_ http.ResponseWriter, r *http.Request) {
 			<-r.Context().Done()
 		}))
@@ -177,7 +177,10 @@ func TestAHijackThatIsRefusedLeavesTheResponseIntact(t *testing.T) {
 	}), middleware.Timeout(hijackBudget))
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody),
+	)
 
 	if recorder.Code != http.StatusTeapot {
 		t.Fatalf("the status = %d, want 418: a refused hijack must leave the "+
@@ -198,7 +201,7 @@ func TestAHijackThatIsRefusedLeavesTheResponseIntact(t *testing.T) {
 func observeUpgrade(t *testing.T, handler http.Handler) int {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -225,8 +228,8 @@ func observeUpgrade(t *testing.T, handler http.Handler) int {
 		<-serving
 	})
 
-	request, err := http.NewRequest(
-		http.MethodGet, "http://"+listener.Addr().String()+"/", http.NoBody,
+	request, err := http.NewRequestWithContext(
+		t.Context(), http.MethodGet, "http://"+listener.Addr().String()+"/", http.NoBody,
 	)
 	if err != nil {
 		t.Fatalf("build the upgrade request: %v", err)
@@ -247,5 +250,3 @@ func observeUpgrade(t *testing.T, handler http.Handler) int {
 
 	return response.StatusCode
 }
-
-

@@ -239,79 +239,6 @@ func (tw *timeoutWriter) Unwrap() http.ResponseWriter {
 	return tw.ResponseWriter
 }
 
-// flushParent flushes the writer underneath this one, if it can flush.
-//
-// A type assertion rather than `http.ResponseController`, and the reason is the
-// same one the SSE route's own workaround gives: the controller stops at the
-// *first* `http.Flusher` it finds, which is this writer, so it would call back
-// into `Flush` and never reach the parent. Walking down by `Unwrap` is the only
-// way to flush the layer that actually owns the socket.
-//
-// Tolerates a parent with no flusher — an HTTP/2 response writer that has already
-// sent its headers has nothing left to flush, and a `httptest` recorder behaves
-// similarly. There is nothing to report: the bytes are written either way, and a
-// writer that cannot flush is not a response that failed.
-func (tw *timeoutWriter) flushParent() {
-	if flusher, canFlush := tw.ResponseWriter.(http.Flusher); canFlush {
-		flusher.Flush()
-	}
-}
-
-// budgetSpent reports whether the deadline has passed. A non-blocking select,
-// so it is cheap enough to call on the write path.
-func (tw *timeoutWriter) budgetSpent() bool {
-	select {
-	case <-tw.expired:
-		return true
-	default:
-		return false
-	}
-}
-
-// commit writes the buffered response, or a 504 if the budget ran out. Called
-// exactly once, deferred, after the handler has returned — including after a
-// panic, since Recoverer is the outer layer and recovers before this runs.
-func (tw *timeoutWriter) commit(timedOut bool) {
-	if tw.committed {
-		return
-	}
-
-	tw.committed = true
-
-	// A flushed response is already on the wire, so a 504 would append an error
-	// document to a live event stream. The buffer is still written, though: it
-	// holds everything the handler produced before the flush, and returning here
-	// silently dropped the first event of every stream.
-	if timedOut && !tw.streaming {
-		// Written straight to the parent: the buffer is discarded, and headers
-		// the handler set are deliberately not forwarded. A Content-Type
-		// describing a page that was never sent is a lie, and forwarding a
-		// Content-Length with a body that is not coming is a hang.
-		header := tw.ResponseWriter.Header()
-		clear(header)
-		header.Set("Content-Type", "application/json; charset=utf-8")
-
-		tw.ResponseWriter.WriteHeader(http.StatusGatewayTimeout)
-		writeBody(tw.ResponseWriter, `{"status":"error","error":"request timed out"}`)
-
-		return
-	}
-
-	header := tw.ResponseWriter.Header()
-	maps.Copy(header, tw.header)
-
-	status := tw.statusCode
-	if status == 0 {
-		// No explicit WriteHeader. net/http would default to 200, and doing it
-		// here keeps the committed response identical to what the handler would
-		// have produced unwrapped.
-		status = http.StatusOK
-	}
-
-	tw.ResponseWriter.WriteHeader(status)
-	writeBody(tw.ResponseWriter, tw.body.String())
-}
-
 // Hijack gives up the connection to a handler that is taking it over — a WebSocket
 // upgrade, or any protocol that stops being HTTP mid-response.
 //
@@ -383,6 +310,79 @@ func (tw *timeoutWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	}
 
 	return conn, buffered, nil
+}
+
+// flushParent flushes the writer underneath this one, if it can flush.
+//
+// A type assertion rather than `http.ResponseController`, and the reason is the
+// same one the SSE route's own workaround gives: the controller stops at the
+// *first* `http.Flusher` it finds, which is this writer, so it would call back
+// into `Flush` and never reach the parent. Walking down by `Unwrap` is the only
+// way to flush the layer that actually owns the socket.
+//
+// Tolerates a parent with no flusher — an HTTP/2 response writer that has already
+// sent its headers has nothing left to flush, and a `httptest` recorder behaves
+// similarly. There is nothing to report: the bytes are written either way, and a
+// writer that cannot flush is not a response that failed.
+func (tw *timeoutWriter) flushParent() {
+	if flusher, canFlush := tw.ResponseWriter.(http.Flusher); canFlush {
+		flusher.Flush()
+	}
+}
+
+// budgetSpent reports whether the deadline has passed. A non-blocking select,
+// so it is cheap enough to call on the write path.
+func (tw *timeoutWriter) budgetSpent() bool {
+	select {
+	case <-tw.expired:
+		return true
+	default:
+		return false
+	}
+}
+
+// commit writes the buffered response, or a 504 if the budget ran out. Called
+// exactly once, deferred, after the handler has returned — including after a
+// panic, since Recoverer is the outer layer and recovers before this runs.
+func (tw *timeoutWriter) commit(timedOut bool) {
+	if tw.committed {
+		return
+	}
+
+	tw.committed = true
+
+	// A flushed response is already on the wire, so a 504 would append an error
+	// document to a live event stream. The buffer is still written, though: it
+	// holds everything the handler produced before the flush, and returning here
+	// silently dropped the first event of every stream.
+	if timedOut && !tw.streaming {
+		// Written straight to the parent: the buffer is discarded, and headers
+		// the handler set are deliberately not forwarded. A Content-Type
+		// describing a page that was never sent is a lie, and forwarding a
+		// Content-Length with a body that is not coming is a hang.
+		header := tw.ResponseWriter.Header()
+		clear(header)
+		header.Set("Content-Type", "application/json; charset=utf-8")
+
+		tw.ResponseWriter.WriteHeader(http.StatusGatewayTimeout)
+		writeBody(tw.ResponseWriter, `{"status":"error","error":"request timed out"}`)
+
+		return
+	}
+
+	header := tw.ResponseWriter.Header()
+	maps.Copy(header, tw.header)
+
+	status := tw.statusCode
+	if status == 0 {
+		// No explicit WriteHeader. net/http would default to 200, and doing it
+		// here keeps the committed response identical to what the handler would
+		// have produced unwrapped.
+		status = http.StatusOK
+	}
+
+	tw.ResponseWriter.WriteHeader(status)
+	writeBody(tw.ResponseWriter, tw.body.String())
 }
 
 // writeBody writes a complete response body, discarding the write error.

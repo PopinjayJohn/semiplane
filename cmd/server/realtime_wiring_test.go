@@ -120,7 +120,9 @@ func TestThePlayMatrixThroughTheRouter(t *testing.T) {
 	private := inst.registerPrivateCampaign("blackgate-private")
 
 	inst.addMember(public.ID, player.ID, domain.RolePlayer)
-	inst.addMember(private.ID, inst.owner.ID, domain.RoleGM)
+	// **No** membership for the private campaign's GM here: the registrar seeded
+	// one, and seeding it a second time is a uniqueness violation. The fixture that
+	// needed a hand-added GM row would add it where the registrar had not.
 
 	handler := inst.serve(inst.registered)
 
@@ -176,17 +178,29 @@ func TestThePlayMatrixThroughTheRouter(t *testing.T) {
 			endpoint := inst.listen(t, handler)
 
 			if testCase.status != http.StatusSwitchingProtocols {
+				// Before, not after: this plane has already admitted a GM and a
+				// player in the rows above, so "a refusal carries no state" is not
+				// observable as a count of zero here. It is observable as a count
+				// that did not move. `TestARefusedPlayCarriesNoCampaignState` is
+				// the test that asks the stronger question against a plane that has
+				// never admitted anybody.
+				before := inst.campaignState()
+
 				status := inst.dialRefused(t, endpoint, testCase.slug, testCase.user)
 				if status != testCase.status {
 					t.Errorf("GET /c/%s/play = %d, want %d", testCase.slug, status, testCase.status)
 				}
 
-				inst.assertNoCampaignState(t, testCase.slug)
+				inst.assertCampaignStateUnchanged(t, testCase.slug, before)
 
 				return
 			}
 
-			conn, _, err := websocket.Dial(context.Background(),
+			//nolint:bodyclose // On a **successful** handshake the response body *is*
+			// the socket: the library has taken the connection over and owns it from
+			// here, and `CloseNow` below is what releases it. There is no HTTP body to
+			// close and closing one would close the table.
+			conn, _, err := websocket.Dial(t.Context(),
 				"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+testCase.slug+"/play",
 				&websocket.DialOptions{HTTPHeader: handshakeHeader(testCase.user)},
 			)
@@ -195,6 +209,13 @@ func TestThePlayMatrixThroughTheRouter(t *testing.T) {
 			}
 
 			t.Cleanup(func() { _ = conn.CloseNow() })
+
+			// The response body on a **successful** handshake is the WebSocket
+			// itself, already taken over by the library; `websocket.Dial` owns it and
+			// `CloseNow` above is what releases it. There is nothing to close here,
+			// and the `bodyclose` findings on the refusal paths are real: those
+			// responses are ordinary HTTP with a body a caller must read, which
+			// `dialRefused` does.
 
 			// An open socket is only half the affirmative answer; the other half is
 			// that it is a **live** socket, which a `101` followed by silence is not.
@@ -329,7 +350,14 @@ func TestThePlaySocketOutlivesAGracefulShutdownWithTheStoreStillOpen(t *testing.
 
 	// A GM sits at the table and says nothing, which is a game between turns and
 	// exactly the connection a shutdown has to end rather than wait on.
-	conn, _, err := websocket.Dial(context.Background(),
+	//
+	// `//nolint:bodyclose` because on a **successful** handshake the response body
+	// *is* the socket: the library took the connection over and owns it, and
+	// `CloseNow` below is what releases it. There is no HTTP body to close, and
+	// closing one would close the table.
+	//
+	//nolint:bodyclose // The body is the socket; see above.
+	conn, _, err := websocket.Dial(t.Context(),
 		"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+inst.campaign.Slug+"/play",
 		&websocket.DialOptions{HTTPHeader: handshakeHeader(inst.session())},
 	)
@@ -410,13 +438,31 @@ func TestThePlaySocketOutlivesAGracefulShutdownWithTheStoreStillOpen(t *testing.
 // This asserts it on the **source**, not on behaviour, and deliberately: the
 // behaviour — "a drifted campaign refuses to resume" — is `ruleset.go`'s own test
 // and passes whether or not the composition root calls the gate at all, because
-// the boot pass below opens nothing. A behavioural test could not see a
+// `resumeCampaignStates` opens nothing. A behavioural test could not see a
 // `registry.Open` added beside the gate. A source assertion can.
 //
-// The one allowance is `registry.Close`, which is a flush rather than an open and
-// whose name contains the substring for a reason that would otherwise need a
-// suppression comment. It is matched with the `.Open(` suffix so a reader can see
-// from this line alone which call is being permitted.
+// # The receiver is the hazard, not the method name
+//
+// This is a scan of eleven `.Open(` calls in this package, of which three are
+// state opens and the rest are `store.Open`, `campaignroots.Open` and
+// `contentRoots.Get`. Matching the method name would need a suppression comment
+// for each of the eight, and a suppression comment per false positive is a list
+// that grows every time somebody calls `Open` on something new.
+//
+// `Registry` is instead the **only** type in the product that holds a
+// `realtime.Writer`, and the only one whose `Open` calls `state.persist` on the
+// initial load — which is the code that writes the fresh `campaign_state` row
+// under the new fingerprint. So `registry.Open` *is* the hazard by identity rather
+// than by coincidence, and the eight other `Open` calls are not false positives at
+// all: they are simply not the same call.
+//
+// # Both directions, because a prohibition is not a gate
+//
+// Nothing opening directly is necessary and not sufficient. A composition root
+// that opened nothing would pass that check and be completely broken — the boot
+// pass would report drift and no campaign could ever be played. So the count of
+// permitted opens is asserted non-zero, because "a scan that matches nothing" and
+// "a package that does nothing" are the same observation.
 func TestStatesAreOnlyOpenedThroughTheGate(t *testing.T) {
 	t.Parallel()
 
@@ -427,18 +473,28 @@ func TestStatesAreOnlyOpenedThroughTheGate(t *testing.T) {
 		t.Fatalf("read the composition root: %v", err)
 	}
 
-	// The two shapes that are allowed, spelled out rather than skipped: the gate's
-	// own ordered entry point, and the flush.
-	allowed := map[string]string{
-		"gate.Resume(":          "the ordered entry point `ruleset.go` documents",
-		"registry.Close(":       "the flush, which opens nothing",
-		"plane.registry.Close(": "the flush, which opens nothing",
+	// The gate must be **consulted**, by one of the two methods `ruleset.go` offers,
+	// and the count is over the gate specifically rather than over every state
+	// operation this package performs.
+	//
+	// That specificity is not fussiness. The first version of this check counted
+	// *permitted* calls, and the flush (`registry.Close`) was on the permitted list —
+	// so deleting `NewGate` outright left a non-zero count and this test reported
+	// green over a plane that could never have refused a drifted campaign. A check
+	// that survives the removal of the thing it checks is not a check, and this is
+	// the second time in this repository that a gate passed because it was counting
+	// the wrong thing (`AGENTS.md`'s `A11Y_ROUTE_PKGS` story, at package scale).
+	consults := []string{
+		"gate.Inspect(",       // the read-only half: reports drift, opens nothing
+		"gate.Resume(",        // the ordered entry point: checks, then opens
+		"plane.gate.Inspect(", // reached through the plane rather than a local
 	}
 
-	// How many opens the plane is *supposed* to make. A drop to zero would be a
-	// regression the other direction — a composition root that wires the gate and
-	// never resumes anything — and this test would otherwise report it as a pass.
-	var resumeCalls int
+	// `registry.Open(` is the hazard, named as the **forbidden** call so a reader
+	// sees the rule stated positively rather than inferred from what is missing.
+	const forbidden = "registry.Open("
+
+	var consulted int
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -455,33 +511,34 @@ func TestStatesAreOnlyOpenedThroughTheGate(t *testing.T) {
 			code := line
 			if comment := strings.Index(code, "//"); comment >= 0 {
 				// Comments are excluded because this file's own header **names** the
-				// hazard it is guarding, and a grep that counted its own prose would
+				// hazard it is guarding, and a scan that counted its own prose would
 				// fail every time the documentation was written well.
 				code = code[:comment]
 			}
 
-			if trimmed := strings.TrimSpace(code); strings.HasSuffix(trimmed, ".Open(") ||
-				strings.Contains(trimmed, ".Open(ctx, ") ||
-				strings.Contains(trimmed, "registry.Open(") {
-				if reason, allowedHere := allowed[trimmed]; !allowedHere {
-					t.Errorf("%s:%d opens a campaign state outside the gate: %s\n"+
-						"  Registry.Open writes a fresh campaign_state row under the new "+
-						"fingerprint, which destroys the evidence the gate reports drift "+
-						"from. Call gate.Resume(ctx, plane.registry, id) instead", name, number+1, trimmed)
-				} else {
-					_ = reason
-					resumeCalls++
+			if strings.Contains(code, forbidden) {
+				t.Errorf("%s:%d calls %s directly: %s\n"+
+					"  Registry.Open writes a fresh campaign_state row under the new "+
+					"fingerprint, destroying the evidence the gate reports drift from. "+
+					"Call gate.Resume(ctx, plane.registry, id) instead",
+					name, number+1, forbidden, strings.TrimSpace(code))
+			}
+
+			for _, call := range consults {
+				if strings.Contains(code, call) {
+					consulted++
 				}
 			}
 		}
 	}
 
-	if resumeCalls == 0 {
-		t.Error("no permitted open was found in the composition root. Either the " +
-			"wiring that resumes a campaign's state through the gate is gone, or the " +
-			"scan above has stopped recognising it — and both are failures this test " +
-			"exists to notice, because a scan that matches nothing and a package that " +
-			"opens nothing look identical")
+	if consulted == 0 {
+		t.Error("the ruleset gate is never consulted anywhere in the composition " +
+			"root, so no campaign's fingerprint is ever compared against the " +
+			"registered ruleset. Either the gate is not wired, or this scan has " +
+			"stopped recognising the calls it looks for — and both are failures it " +
+			"exists to notice, because a scan matching nothing and a package " +
+			"consulting nothing are the same observation")
 	}
 }
 
@@ -670,7 +727,7 @@ func (i *instance) dialRefused(
 ) int {
 	t.Helper()
 
-	conn, resp, err := websocket.Dial(context.Background(),
+	conn, resp, err := websocket.Dial(t.Context(),
 		"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+slug+"/play",
 		&websocket.DialOptions{HTTPHeader: handshakeHeader(cookie)},
 	)
@@ -681,21 +738,59 @@ func (i *instance) dialRefused(
 			slug)
 	}
 
-	if err != nil && resp != nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}
-
 	if resp == nil {
 		t.Fatalf("the handshake to /c/%s/play failed with %v and carried no HTTP "+
 			"status, so there is no refusal to assert on", slug, err)
 	}
 
+	// Drained and closed, and the drain is not ceremony: an unread body holds the
+	// connection out of the server's pool for as long as the client lives, which for
+	// a fixture that opens several refusals in a row is a test that stalls for a
+	// reason unrelated to what it is checking.
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
 	return resp.StatusCode
 }
 
-// assertNoCampaignState asserts that a refusal left the process exactly as it was:
-// no peer, no live state, and no row on disk.
+// stateCounts is what "how much campaign state does this process hold" looks like at
+// one instant.
+//
+// A value rather than three return values, because the three are read together and
+// a test that read them at three different instants could be handed a peer count
+// from before a join and a row count from after one — which is a fixture asserting
+// on a state that never existed. That is the same reasoning `realtime.Stats` gives
+// for being a struct.
+type stateCounts struct {
+	peers int
+	live  int
+	rows  int
+}
+
+// campaignState reads all three counts.
+func (i *instance) campaignState() stateCounts {
+	i.t.Helper()
+
+	rows, err := i.countStateRows(i.campaign.ID)
+	if err != nil {
+		i.t.Fatalf("count the campaign_state rows: %v", err)
+	}
+
+	return stateCounts{
+		peers: i.plane.hub.Stats().Peers,
+		live:  i.plane.registry.Live(),
+		rows:  rows,
+	}
+}
+
+// assertNoCampaignState asserts that a refusal left the process holding nothing: no
+// peer, no live state, and no row on disk.
+//
+// The absolute form, and it is only meaningful against a plane that has **never**
+// admitted anybody — see `assertCampaignStateUnchanged` for the delta form, which is
+// what the matrix uses.
 //
 // Three observations rather than one, and each catches something the others cannot:
 //
@@ -707,29 +802,32 @@ func (i *instance) dialRefused(
 //   - **The row count on the store** is the durable half. `Registry.Open` writes its
 //     initial row *immediately*, so a refusal that opened a state and then closed
 //     the connection would still leave a `campaign_state` row behind — and a row
-//     that says a game has been played is a claim somebody's `Live()` cannot refute.
+//     that says a game has been played is a claim nobody's `Live()` can refute.
 func (i *instance) assertNoCampaignState(t *testing.T, slug string) {
 	t.Helper()
 
-	if peers := i.plane.hub.Stats().Peers; peers != 0 {
-		t.Errorf("the hub holds %d peers after a refused /c/%s/play, want 0: a refused "+
-			"request must join nothing", peers, slug)
+	if state := i.campaignState(); state != (stateCounts{}) {
+		t.Errorf("a refused /c/%s/play left %+v behind, want nothing: a refused "+
+			"request must join nothing, open no state and write no row", slug, state)
 	}
+}
 
-	if live := i.plane.registry.Live(); live != 0 {
-		t.Errorf("the registry holds %d live states after a refused /c/%s/play, want 0",
-			live, slug)
-	}
+// assertCampaignStateUnchanged asserts that a refusal moved no count.
+//
+// The delta form, and the reason it is needed is that a refusal cannot *reduce*
+// state — it can only add — so on a plane that already holds a table the assertion
+// "nothing is there" is not available and "nothing was added" is the strongest
+// claim the observation supports. That is a weaker claim than the absolute form and
+// it is stated as weaker rather than dressed up as the same one: the row count
+// cannot distinguish "a refusal wrote a row" from "a row was already there", which
+// is precisely why `TestARefusedPlayCarriesNoCampaignState` exists and asks the
+// question against a clean plane.
+func (i *instance) assertCampaignStateUnchanged(t *testing.T, slug string, before stateCounts) {
+	t.Helper()
 
-	rows, err := i.countStateRows(i.campaign.ID)
-	if err != nil {
-		t.Fatalf("count the campaign_state rows: %v", err)
-	}
-
-	if rows != 0 {
-		t.Errorf("%d campaign_state rows after a refused /c/%s/play, want 0. "+
-			"Registry.Open writes its initial row immediately, so a refusal that "+
-			"opened a state leaves a row behind that says the game was played", rows, slug)
+	if after := i.campaignState(); after != before {
+		t.Errorf("a refused /c/%s/play moved campaign state from %+v to %+v; a refused "+
+			"request must join nothing, open no state and write no row", slug, before, after)
 	}
 }
 
