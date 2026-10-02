@@ -1073,8 +1073,21 @@ func TestALiveSocketOutlivesTheServersWriteTimeout(t *testing.T) {
 // connection could not read and write at all, and a count of zero would otherwise
 // satisfy "at most two".
 func TestAConnectionCostsOneReaderAndNothingElse(t *testing.T) {
-	t.Parallel()
-
+	// Deliberately **not** `t.Parallel`, and this is the whole reason the test was
+	// red on CI and green locally.
+	//
+	// It measures a process-global: `runtime.NumGoroutine` counts every goroutine in
+	// the binary. Run in parallel with the rest of the package, its peak includes
+	// the other tests' sockets, their readers, and — under `-race` on a loaded
+	// runner — the detector's own bookkeeping. The assertion is a band, so extra
+	// goroutines push the cost above it and the failure is about the machine rather
+	// than about this route.
+	//
+	// The property under test is *this route's* cost per connection. Measuring a
+	// process-global to test a local property needs the global to be quiet, so the
+	// test takes the package for itself rather than widening the band until it can
+	// no longer catch the bug it exists for. Two readers per connection would still
+	// fail at `batch + 1`; the band's upper bound is kept tight on purpose.
 	const batch = 10
 
 	harness := newHarness(t, &stubResolver{})
