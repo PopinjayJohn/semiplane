@@ -64,6 +64,31 @@
 // atomic save renames over a path, and the destination is worth confirming
 // before the index reads it.
 //
+// # Zero bytes is not a settled size
+//
+// Two `stat` samples that agree are evidence that a writer finished, and that
+// reasoning has exactly one hole in it: **zero is a fixed point**. A page that is
+// zero bytes long and a page whose writer has not started yet have the same
+// `stat`, so a file sitting in that window satisfies "the size is stable" twice
+// over and is emitted as an empty page.
+//
+// The window is real and it is wide, because it is not one syscall. `open(O_TRUNC)`
+// empties the file; the `write` that refills it is a *separate* syscall; and the
+// truncation need not deliver an event of its own, because the event a watcher
+// sees is the one the **write** produces. So there is an interval in which the
+// file exists, is a page by name, has no content, and has an armed deadline over
+// it with nothing to interrupt it. A sync client over a slow link holds that state
+// for seconds (S-3.5 — Obsidian Sync is untrusted input, and untrusted input is
+// slow input). On semiplane's own save path it cannot happen, because S-6.4
+// renames a fully written temporary over the destination.
+//
+// Nothing in the sample distinguishes the two states, so the discriminator has to
+// be time, and the only time budget a confirmation already owns is its settle
+// budget. A zero-length sample is therefore **not stable**: the page is re-armed
+// as though an event had arrived — the quiet period restarts, so a writer that
+// resumes inside it is caught before it is believed — and the budget is *not* taken
+// again, so the time a path may spend empty stays bounded. See `finishLocked`.
+//
 // # A stuck writer is not a settled file
 //
 // The confirmation has a budget, and exhausting it emits
@@ -72,6 +97,17 @@
 // findings, and collapsing them is how a stuck writer becomes silent data loss
 // rather than a visible one. A dropped path is picked up by the next event, or
 // by the periodic rescan (S-4.5) if no more events are coming.
+//
+// The one exception is a path that spent the whole budget at zero bytes, and the
+// reason it is an exception is that dropping it would be worse than the bug it
+// avoids. An empty `.md` file is a page a user can legitimately create, and a
+// filter that cannot settle one cannot settle a blank page at all: it would log a
+// stuck writer every time somebody made a new note, which is an audit that fires
+// on healthy input and therefore says nothing. So that path settles — and settles
+// **reported**, as `outcomeSettledEmpty`: the row describes the bytes that are on
+// disk at this instant, which is what `pages.content_hash` means, and the timeout
+// keeps the only visible trace of a writer that held a path at zero for two
+// seconds.
 
 package content
 
@@ -591,6 +627,15 @@ func (d *Debouncer) confirm(ctx context.Context, page *pendingPage) {
 	case outcomeSettled:
 		d.sink(ctx, change)
 
+	case outcomeSettledEmpty:
+		// Settled, and the confirmation gave up. Both facts, both reported. The
+		// row is emitted because the file really is empty, and the timeout is
+		// emitted because it stayed that way for the whole budget — which is the
+		// only place a writer that stalls between its `open` and its `write`
+		// becomes visible at all. See the file comment.
+		d.watch.StableReadTimeout(ctx, strconv.FormatInt(page.campaignID, 10), page.path)
+		d.sink(ctx, change)
+
 	case outcomeTimeout:
 		d.watch.StableReadTimeout(ctx, strconv.FormatInt(page.campaignID, 10), page.path)
 
@@ -662,7 +707,17 @@ func (d *Debouncer) beginLocked(
 
 	page.phase = phaseConfirm
 	page.first = sample
-	page.budget = now.Add(d.timing.SettleBudget)
+
+	// Taken once per confirmation, at its first sample, and never again within it.
+	// `finishLocked` re-arms a zero-length page by putting it back through this
+	// function, so a confirmation that re-took its budget on every re-arm would
+	// bound nothing at all. The "only when there is none" test is what
+	// `armLocked` clearing the field makes sound: an event starts a new
+	// confirmation, which starts a new budget.
+	if page.budget.IsZero() {
+		page.budget = now.Add(d.timing.SettleBudget)
+	}
+
 	d.scheduleLocked(page, now.Add(d.timing.SampleInterval))
 
 	return outcomeRetry
@@ -670,9 +725,10 @@ func (d *Debouncer) beginLocked(
 
 // finishLocked takes the second sample and decides.
 //
-// Four outcomes, and the order of the cases is the order of how much they
-// matter: a directory is silence, an unstable size is another look, and only
-// then is the path settled or given up on.
+// The order of the cases is the order of how much they matter: a directory is
+// silence, zero bytes is another look *plus* the reason why it needs one, an
+// unstable size is another look, and only then is the path settled or given up
+// on.
 func (d *Debouncer) finishLocked(
 	page *pendingPage,
 	key pendingKey,
@@ -685,7 +741,42 @@ func (d *Debouncer) finishLocked(
 		return outcomeDropped, Change{}
 	}
 
-	if !sample.stableAgainst(page.first) {
+	// **Zero bytes is not a stable size**, because it is the first state of every
+	// in-place write rather than a state any of them end in. A path that is absent
+	// is exempt — that is the removal case, and it settles on exactly the same
+	// two samples as everything else — and so is a directory, whose size is inode
+	// bookkeeping rather than a write.
+	//
+	// The re-arm is the same one `Touch` performs, deliberately: the quiet period
+	// restarts, so a writer that resumes is caught by the timer rather than by the
+	// budget, and the first sample is discarded because a size measured while the
+	// file held nothing describes no version of the page at all.
+	//
+	// It is written out rather than delegated to `armLocked`, and the difference
+	// is the whole point of this branch: `armLocked` clears the budget because an
+	// event starts a *new* confirmation, and a new confirmation is entitled to a
+	// new budget. This is not a new confirmation, it is the same one being
+	// patient, so it keeps the budget it already has. `scheduleLocked` takes a new
+	// ticket either way, so an event arriving now still invalidates this sample.
+	outcome := outcomeSettled
+
+	if sample.present && !sample.dir && sample.size == 0 {
+		if now.Before(page.budget) {
+			page.phase = phaseQuiet
+			page.first = pageSample{}
+			d.scheduleLocked(page, now.Add(d.timing.QuietPeriod))
+
+			return outcomeRetry, Change{}
+		}
+
+		// The whole budget, spent at zero. The file is empty, an empty `.md` file
+		// is a page a user can create, and refusing to settle it would trade a
+		// narrow wrong row for a permanent wrong answer plus a stuck-writer signal
+		// on every new blank note.
+		outcome = outcomeSettledEmpty
+	}
+
+	if outcome == outcomeSettled && !sample.stableAgainst(page.first) {
 		next := now.Add(d.timing.SampleInterval)
 		if !next.Before(page.budget) {
 			// The confirmation gave up. Deliberately not an emission: see the
@@ -740,7 +831,7 @@ func (d *Debouncer) finishLocked(
 
 	delete(d.pending, key)
 
-	return outcomeSettled, change
+	return outcome, change
 }
 
 // sample stats one pending path through its campaign's confined root.
@@ -831,14 +922,22 @@ func (d *Debouncer) pageLocked(campaignID int64, slug, rel string) *pendingPage 
 //
 // The phase and the first sample are cleared rather than kept: an event means
 // something was written, and a size measured before that write describes a file
-// that no longer exists. The budget goes with them, and is re-armed at the next
-// sample — which is what makes a *stuck* writer distinguishable from an *active*
-// one. A path whose events keep arriving never reaches its first sample and so
-// never times out; a path whose events have stopped but whose size will not hold
-// times out once.
+// that no longer exists. The budget is cleared with them, because an event is a
+// new confirmation and a new confirmation is entitled to a new budget at its
+// first sample — which is what makes the "only when there is none" test in
+// `beginLocked` mean *this* confirmation rather than the previous one.
+//
+// What that leaves is the distinction the file comment depends on, and it is
+// worth stating because it is a distinction of *how a page was armed* rather than
+// of how long it has been quiet: a path whose events keep arriving never reaches
+// its first sample and so never times out; a path whose events have stopped but
+// whose size will not hold times out once; and a path re-armed by `finishLocked`
+// because it was empty keeps the budget it already had, so its patience runs out
+// on schedule instead of being renewed by every observation of its own emptiness.
 func (d *Debouncer) armLocked(page *pendingPage, deadline time.Time) {
 	page.phase = phaseQuiet
 	page.first = pageSample{}
+	page.budget = time.Time{}
 
 	d.scheduleLocked(page, deadline)
 }
@@ -923,6 +1022,12 @@ const (
 	// the answer.
 	outcomeSettled
 
+	// outcomeSettledEmpty means the path is out of the map, the returned change
+	// is the answer, and the answer is a page that spent the confirmation's whole
+	// budget at zero bytes. `confirm` reports the settle and the timeout together,
+	// because both happened and neither implies the other.
+	outcomeSettledEmpty
+
 	// outcomeDropped means the path is out of the map and there is nothing to
 	// say: not a page, already gone, or superseded by an event that re-armed it.
 	outcomeDropped
@@ -968,6 +1073,14 @@ type pageSample struct {
 // inode's bookkeeping, and comparing it would report a stuck writer for every
 // folder move that happens to carry files into the move. That matters because a
 // directory destination is exactly what `Moved` exists to report.
+//
+// **Zero bytes is stable here and is not settled because of it.** Two empty
+// samples do agree, and this method says so honestly; the judgement that an
+// agreeing pair of zeroes is not evidence of a finished writer is made one level
+// up, in `finishLocked`, because it is a judgement about what a zero means rather
+// than about what two samples mean. Keeping it here would have made this predicate
+// answer "is this page written yet", which is a question about the file rather
+// than about the pair.
 func (s pageSample) stableAgainst(prev pageSample) bool {
 	if s.present != prev.present || s.dir != prev.dir {
 		return false
@@ -1028,7 +1141,9 @@ type pendingPage struct {
 	first pageSample
 
 	// budget is when this confirmation runs out of patience, taken at the first
-	// sample and never extended.
+	// sample and never extended. Zero between confirmations, which is what makes
+	// `beginLocked`'s "take it only if there is none" test mean a new confirmation
+	// rather than a re-armed one.
 	budget time.Time
 }
 
