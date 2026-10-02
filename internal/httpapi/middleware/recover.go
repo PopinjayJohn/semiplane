@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -235,6 +237,79 @@ func (tw *timeoutWriter) Flush() {
 // route cannot upgrade for a reason that has nothing to do with the network.
 func (tw *timeoutWriter) Unwrap() http.ResponseWriter {
 	return tw.ResponseWriter
+}
+
+// Hijack gives up the connection to a handler that is taking it over — a WebSocket
+// upgrade, or any protocol that stops being HTTP mid-response.
+//
+// # Why this exists at all
+//
+// Without it, `Timeout` **silently breaks every WebSocket route in the product**,
+// and the failure looks like a network fault rather than a wiring one.
+//
+// The mechanism: `websocket.Accept` writes `101 Switching Protocols` through this
+// writer and *then* hijacks. This writer **buffers** the status line — that is what
+// the whole mechanism exists for, because a status line cannot be changed once it is
+// on the wire — and hands it to `commit` in a `defer` that runs when the handler
+// returns. A handler that hijacked has returned by then, so the deferred commit
+// writes `101` to a connection `net/http` no longer owns, the bytes are discarded,
+// and the client sees a bare `EOF` with no status at all.
+//
+// Without `Hijack` on this type it is worse than that: the type would not satisfy
+// `http.Hijacker` at all, so `http.ResponseController` would walk past it to the
+// parent and hijack the *raw* connection, leaving this writer still holding the
+// status line. Same outcome, and the `101` is now unsalvageable by construction.
+//
+// # Why the buffer is committed *before* the hijack
+//
+// That is the whole fix, and the order is the fix. The status line has to reach the
+// socket **before** `net/http` hands the connection over, because after the
+// hijack `net/http` refuses to write to it — the log line
+// `http: response.WriteHeader on hijacked connection` is that refusal, and it is
+// what the deferred commit provokes today.
+//
+// So: commit, then mark streaming so nothing else is buffered, then delegate. The
+// budget cannot be enforced past this point, and that is correct rather than a gap
+// — a hijacked connection is not a response `Timeout` can substitute a 504 into,
+// and a handler that has taken the socket is by definition past the point where
+// buffering has meaning. `play` bounds its own read side with `ReadTimeout` and
+// bounds its own lifetime with `hub.Close`, which is the correct arrangement: the
+// budget that a socket cannot obey is replaced by two that it can.
+//
+// Idempotent against the deferred `commit`: `commit` is guarded by `committed`,
+// which the call below sets, so the handler's return writes nothing further.
+//
+// # Error path
+//
+// A parent that cannot be hijacked — HTTP/2, where there is no connection to take
+// over — returns `errNotHijackable`, the same sentinel `statusRecorder.Hijack`
+// uses. It is *not* a silent success and *not* a commit: a handler that was refused
+// its hijack still has a response to send, and the buffer is left intact so the
+// deferred commit delivers it.
+func (tw *timeoutWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := tw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		// Not committed, deliberately. See the error path above: the handler is
+		// going to return and the deferred commit is what answers it, and it can
+		// still substitute a 504 because nothing has been written yet.
+		return nil, nil, errNotHijackable
+	}
+
+	// The load-bearing line. Before the hijack, because after it `net/http` owns
+	// nothing and the 101 is discarded.
+	tw.commit(false)
+
+	// Past the point where buffering means anything: a hijacked connection has no
+	// response left for a 504 to replace. Also what keeps a `Write` after the
+	// hijack from being swallowed into a buffer nobody will ever commit.
+	tw.streaming = true
+
+	conn, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return nil, nil, fmt.Errorf("hijack connection: %w", err)
+	}
+
+	return conn, buffered, nil
 }
 
 // flushParent flushes the writer underneath this one, if it can flush.

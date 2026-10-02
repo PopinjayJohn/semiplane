@@ -41,7 +41,7 @@
 // nothing to it — no `[]byte`, no `any`, no `map[string]any` "context". S-12.3
 // is enforced by that type rather than by review, and the one place where an
 // attacker-influenced string could reach a line is the error text, which
-// `errorClass` reduces to a class. An error from a Markdown parser quotes the
+// `ErrorClass` reduces to a class. An error from a Markdown parser quotes the
 // line it choked on, and that line is frequently a `[!secret]` callout body, so
 // `err.Error()` is never passed through.
 //
@@ -54,13 +54,8 @@ package observability
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io/fs"
 	"log/slog"
-	"strconv"
 	"sync"
-	"syscall"
 )
 
 // watchState is a set of the state-shaped conditions one campaign's watcher can
@@ -177,7 +172,7 @@ func (w *Watch) AddFailed(ctx context.Context, campaignID, path string, err erro
 	Event(ctx, w.logger, EventWatchAddFailed, slog.LevelError, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 	})
 }
 
@@ -281,7 +276,7 @@ func (w *Watch) SettleFailed(ctx context.Context, campaignID, path string, err e
 	Event(ctx, w.logger, EventContentSettleFailed, slog.LevelWarn, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 	})
 }
 
@@ -292,14 +287,14 @@ func (w *Watch) SettleFailed(ctx context.Context, campaignID, path string, err e
 // the something a request handler reaches for is a cached or empty body. That
 // is a GM looking at a missing page and a player looking at a missing page, and
 // neither is visibly a failure unless something said so. So `err` is logged as
-// its class and never as its text — see `errorClass`.
+// its class and never as its text — see `ErrorClass`.
 func (w *Watch) RenderError(ctx context.Context, campaignID, path string, err error) {
 	w.renderError.Inc()
 
 	Event(ctx, w.logger, EventContentRenderError, slog.LevelError, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 	})
 }
 
@@ -369,79 +364,4 @@ func (w *Watch) leave(campaignID string) {
 // certain it cannot happen.
 func gauge(counter *Counter, delta int64) {
 	counter.SetGauge(max(counter.Snapshot().Current+delta, 0))
-}
-
-// errorClass reduces an error to the short class name that belongs in Detail.
-//
-// It never returns `err.Error()`. S-12.3 forbids an event carrying file
-// contents, and the error text is how they arrive: a Markdown parser quotes the
-// line it failed on, a YAML parser quotes the line it could not parse, and on a
-// wiki page either of those lines is routinely the body of a `[!secret]`
-// callout. The path is dropped too — an `*fs.PathError` repeats it, and `Path`
-// already carries it — so what is left is the part an operator can act on.
-//
-// Sentinels are matched before errnos because `errors.Is` understands the
-// `syscall.Errno.Is` mapping from ENOENT to `fs.ErrNotExist`, and the sentinel
-// names are the vocabulary Go's own documentation uses. An error this build has
-// never seen falls back to its dynamic type, which is an identifier and so
-// cannot carry content.
-func errorClass(err error) string {
-	if err == nil {
-		// No error, no detail. A fabricated class here would read as a fact
-		// about a failure that did not happen.
-		return ""
-	}
-
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return "ENOENT"
-	case errors.Is(err, fs.ErrPermission):
-		return "EACCES"
-	case errors.Is(err, fs.ErrExist):
-		return "EEXIST"
-	case errors.Is(err, fs.ErrInvalid):
-		return "EINVAL"
-	case errors.Is(err, fs.ErrClosed):
-		return "EBADF"
-	case errors.Is(err, errors.ErrUnsupported):
-		return "ENOTSUP"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline_exceeded"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	}
-
-	// No `fs` sentinel covers ENOSPC or the descriptor errnos, and those are
-	// the ones the watcher fails with. This is the branch that turns "too many
-	// open files" into something an alert can match.
-	if errno, ok := errors.AsType[syscall.Errno](err); ok {
-		return errnoClass(errno)
-	}
-
-	return fmt.Sprintf("%T", err)
-}
-
-// errnoClass names the errnos this subsystem's two named failure modes arrive
-// as, and reports every other errno as its number.
-//
-// The two named ones are S-4.5's exhausted watch limit and S-4.4's refused
-// symlink, because those are the two an operator reads the specification for.
-// Everything else is a number rather than a sentence because Detail is a
-// discriminator and the kernel's prose for an errno ("input/output error",
-// "invalid cross-device link") is a sentence.
-func errnoClass(errno syscall.Errno) string {
-	switch errno {
-	case syscall.EMFILE, syscall.ENFILE:
-		// Per-process and system-wide descriptor exhaustion, collapsed to one
-		// class: the operator's next action — raise the limit, or watch fewer
-		// trees — is the same either way, and splitting them buys a distinction
-		// nobody has ever fixed a problem with.
-		return "watch_limit"
-	case syscall.ELOOP:
-		// S-4.4's rejection arriving through the kernel rather than through
-		// the root's own walk.
-		return "ELOOP"
-	default:
-		return "errno_" + strconv.Itoa(int(errno))
-	}
 }

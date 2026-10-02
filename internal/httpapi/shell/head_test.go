@@ -51,13 +51,14 @@ func servedDocument(t *testing.T, path string, cookies ...*http.Cookie) (string,
 		&accountroutes.Router{},
 		nil,
 		nil,
-		// The four remaining campaign-scoped handlers, none of them wired. This
-		// file audits the *pre-campaign* shell document, which is why they are all
-		// nil: there is no campaign, so there is no content root to read, no index
-		// to query, no page to edit and no stream to open. The arity is the only
-		// thing this call has to track, and the router's own nil-tolerance is what
-		// keeps a campaign route out of a pre-campaign document rather than a
-		// panic at boot.
+		// The remaining campaign-scoped handlers, none of them wired. This file
+		// audits the *pre-campaign* shell document, which is why they are all nil:
+		// there is no campaign, so there is no content root to read, no index to
+		// query, no page to edit, no stream to open and no table to sit at. The
+		// arity is the only thing this call has to track, and the router's own
+		// nil-tolerance is what keeps a campaign route out of a pre-campaign
+		// document rather than a panic at boot.
+		nil,
 		nil,
 		nil,
 		nil,

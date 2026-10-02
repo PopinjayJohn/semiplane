@@ -12,6 +12,7 @@ import (
 	eventroutes "github.com/semiplane/semiplane/internal/httpapi/events"
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	playroutes "github.com/semiplane/semiplane/internal/httpapi/play"
 	searchroutes "github.com/semiplane/semiplane/internal/httpapi/search"
 	wikiroutes "github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
@@ -89,11 +90,11 @@ type Store interface {
 // handler and takes the process down at boot over a wiring mistake in a subsystem
 // that has not shipped yet.
 //
-// They are five parameters rather than one slice for two reasons, and the second
+// They are six parameters rather than one slice for two reasons, and the second
 // is the one that decides it. A slice would need an element type, and a common
-// interface over five handlers whose only shared method is `ServeHTTP` would be
+// interface over six handlers whose only shared method is `ServeHTTP` would be
 // that type — so the list would be `[]http.Handler`, which names nothing and
-// makes every mount an unlabelled entry. Five typed parameters say which handler
+// makes every mount an unlabelled entry. Six typed parameters say which handler
 // is which at every call site, and the types are distinct, so a transposition is a
 // compile error rather than a route that serves another route's document.
 func NewRouter(
@@ -107,6 +108,7 @@ func NewRouter(
 	searchRoute *searchroutes.Handler,
 	editRoute *editroutes.Handler,
 	eventsRoute *eventroutes.Handler,
+	playRoute *playroutes.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
@@ -144,7 +146,10 @@ func NewRouter(
 	// added to `mountCampaignRoutes` is behind `Resolve` and `RequireRead` because
 	// it is on the list, and a route added anywhere else is behind nothing.
 	campaignMux := http.NewServeMux()
-	mountCampaignRoutes(campaignMux, wikiRoute, assetRoute, searchRoute, editRoute, eventsRoute)
+	mountCampaignRoutes(
+		campaignMux,
+		wikiRoute, assetRoute, searchRoute, editRoute, eventsRoute, playRoute,
+	)
 
 	if backing != nil {
 		mux.Handle("/c/{slug}/", campaignroutes.Resolve(backing)(
@@ -199,16 +204,24 @@ func NewRouter(
 // resolves overlapping patterns by specificity, not by registration order, so
 // reordering these lines cannot change which handler answers a path. It is ordered
 // the way a reader meets the surfaces — read the page, fetch what it names, find
-// it again, change it, be told it changed — so that the list reads as a product
-// rather than as an alphabet.
+// it again, change it, be told it changed, then sit at the table — so that the
+// list reads as a product rather than as an alphabet.
 //
-// Two of the four mount their own gate, and that is not an inconsistency:
-// `edit.Mount` and `events.Mount` wrap themselves in `campaigns.RequireEdit`
-// because they are GM-only (S-6.5), and a caller who had to remember the gate
-// would eventually register the route without it. The `RequireRead` this function
-// sits under is layered underneath, not replaced: a `player` clears it and is
-// refused 403 by the route's own gate, and an anonymous reader of a public
+// Three of the six mount their own gate, and that is not an inconsistency:
+// `edit.Mount`, `events.Mount` and `play.Mount` wrap themselves in
+// `campaigns.RequireEdit`, `RequireEdit` and `RequirePlay` respectively, because
+// they are not all readable by the same reader. A caller who had to remember the
+// gate would eventually register the route without it. The `RequireRead` this
+// function sits under is layered underneath, not replaced: a `player` clears it and
+// is refused 403 by the route's own gate, and an anonymous reader of a public
 // campaign is challenged 401.
+//
+// `/play` is the route where layering two gates matters most, because it is the
+// one whose absence of the inner gate is not a defect anybody would notice until
+// it is exploited: a socket is a standing capability, so a tabletop reachable
+// without `RequirePlay` is a campaign whose live state anybody who can reach the
+// port can read and write. `play.Mount` mounts it, so this list's job is only to
+// pass the handler through.
 //
 // The patterns carry the `/c/` prefix even though this mux is itself mounted
 // there. A Go 1.22 mux routes on a prefix and then hands the *whole* path to
@@ -220,6 +233,7 @@ func mountCampaignRoutes(
 	searchRoute *searchroutes.Handler,
 	editRoute *editroutes.Handler,
 	eventsRoute *eventroutes.Handler,
+	playRoute *playroutes.Handler,
 ) {
 	if wikiRoute != nil {
 		wikiroutes.Mount(mux, wikiRoute)
@@ -239,5 +253,9 @@ func mountCampaignRoutes(
 
 	if eventsRoute != nil {
 		eventroutes.Mount(mux, eventsRoute)
+	}
+
+	if playRoute != nil {
+		playroutes.Mount(mux, playRoute)
 	}
 }

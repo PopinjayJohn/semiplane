@@ -37,7 +37,7 @@
 // # What an event may carry
 //
 // Inherited from `EventAttributes` and adding nothing: no `[]byte`, no `any`, no
-// free-form context bag. `errorClass` reduces the error text to a class for the
+// free-form context bag. `ErrorClass` reduces the error text to a class for the
 // reason `watch.go` gives — a parser quotes the line it choked on, and that line
 // is frequently a secret callout body.
 
@@ -106,7 +106,7 @@ func (i *Index) ChangeFailed(ctx context.Context, campaignID, operation, path st
 	Event(ctx, i.logger, EventIndexChangeFailed, slog.LevelError, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 		Op:         operation,
 	})
 }
@@ -126,7 +126,7 @@ func (i *Index) PageSkipped(ctx context.Context, campaignID, path string, err er
 	Event(ctx, i.logger, EventIndexPageSkipped, slog.LevelWarn, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 	})
 }
 
@@ -143,7 +143,7 @@ func (i *Index) PageDegraded(ctx context.Context, campaignID, path string, err e
 	Event(ctx, i.logger, EventIndexPageDegraded, slog.LevelWarn, EventAttributes{
 		CampaignID: campaignID,
 		Path:       path,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 	})
 }
 
@@ -170,7 +170,7 @@ func (i *Index) RenameSourceLeft(
 	Event(ctx, i.logger, EventIndexRenameSourceLeft, slog.LevelWarn, EventAttributes{
 		CampaignID: campaignID,
 		Path:       from,
-		Detail:     errorClass(err),
+		Detail:     ErrorClass(err),
 		Count:      count,
 	})
 }
