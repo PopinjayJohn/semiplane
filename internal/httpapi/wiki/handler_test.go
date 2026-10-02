@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/net/html"
@@ -131,6 +132,29 @@ func (l pageListing) PagesForCampaign(_ context.Context, _ int64) ([]domain.Page
 	return l.pages, nil
 }
 
+// campaignLister answers the navigation's Campaigns section, and records whether
+// it was asked at all.
+//
+// The count is there so a test can assert the query is *skipped* for an anonymous
+// reader rather than merely returning nothing for one: a lister that returned an
+// empty slice unconditionally would satisfy every assertion about what the
+// navigation shows and none of them about what it asked for.
+type campaignLister struct {
+	campaigns []domain.Campaign
+	err       error
+	asked     atomic.Int64
+}
+
+func (l *campaignLister) CampaignsForUser(_ context.Context, _ int64) ([]domain.Campaign, error) {
+	l.asked.Add(1)
+
+	if l.err != nil {
+		return nil, l.err
+	}
+
+	return l.campaigns, nil
+}
+
 // recordingRenderer wraps a renderer and remembers every document body it was
 // given.
 //
@@ -190,6 +214,25 @@ type harness struct {
 	redactor  content.Redactor
 	pages     pageListing
 	renderers wiki.Renderers
+	// campaigns is the navigation's Campaigns section. A pointer so a test can
+	// assert it was *asked* — that is the difference between "the section is
+	// absent because the reader is anonymous" and "the section is absent because
+	// nobody asked".
+	campaigns *campaignLister
+	// systemID is the campaign's gameplay system, empty by default. The
+	// navigation's Table destination keys on it (UI §4.7's `system_id` row), so
+	// the default is the case where there is no Table — which is most campaigns
+	// before phase 8 registers anything.
+	systemID string
+	// campaignName is the campaign's name, "Greyhaven" by default. A field rather
+	// than a constant because the slug fallback in the banner and in the document
+	// title is only observable when the name is absent, and hardcoding the name
+	// would make the fallback untestable.
+	campaignName string
+	// instanceView is the instance the shell reports. A pointer rather than a value
+	// because most tests never touch it and a value would mean every one of them
+	// spelled out a default they do not care about.
+	instanceView *components.InstanceView
 	// visibility is the campaign's, and is a field rather than a constant
 	// because most of these tests want a *public* campaign — so an anonymous
 	// reader reaches a page at all and the test measures the render rather than
@@ -232,15 +275,43 @@ func newHarness(t *testing.T) *harness {
 	recorder := &recordingRenderer{inner: content.NewRenderer(testSlug, nil)}
 
 	return &harness{
-		t:          t,
-		root:       registry,
-		dir:        dir,
-		cache:      content.NewCache(8),
-		recorder:   recorder,
-		redactor:   content.NoSecrets(),
-		renderers:  oneRenderer{renderer: recorder},
-		visibility: domain.VisibilityPublic,
+		t:            t,
+		root:         registry,
+		dir:          dir,
+		cache:        content.NewCache(8),
+		recorder:     recorder,
+		redactor:     content.NoSecrets(),
+		renderers:    oneRenderer{renderer: recorder},
+		visibility:   domain.VisibilityPublic,
+		campaignName: "Greyhaven",
+		instanceView: &components.InstanceView{Name: "Greyhaven", Version: "0.3.0"},
 	}
+}
+
+// instance returns the harness's instance view.
+//
+// A pointer, and **not** lazily created: several tests call it before their
+// parallel subtests start, and a lazy initialiser would be a write the first
+// `get` in a subtest performs while a sibling is reading — which `-race` reports
+// and which is a real data race in the harness rather than in the route.
+func (h *harness) instance() *components.InstanceView {
+	return h.instanceView
+}
+
+// indexed gives the harness a campaign whose page listing is pages.
+//
+// A separate entry point from `write` because the two are different acts of
+// authorship: `write` puts bytes in the vault, and the listing is what the
+// watcher *derived* from them. Most of the navigation's assertions are about the
+// listing rather than about the vault, and a test that only wrote files would be
+// asserting against an empty index and proving nothing.
+func (h *harness) indexed(paths ...string) {
+	pages := make([]domain.Page, 0, len(paths))
+	for _, rel := range paths {
+		pages = append(pages, domain.Page{CampaignID: testCampID, Path: rel})
+	}
+
+	h.pages = pageListing{pages: pages}
 }
 
 // write puts a page into the campaign's content root, creating its directory.
@@ -261,6 +332,17 @@ func (h *harness) write(name, body string) {
 	}
 }
 
+// withGameplaySystem gives the campaign a gameplay system, which is the other
+// half of what makes the navigation offer a Table.
+//
+// UI §4.7's `system_id` row: a campaign with no system installed has no tabletop,
+// so the destination is absent rather than a link that answers 404.
+func (h *harness) withGameplaySystem() *harness {
+	h.systemID = "5e"
+
+	return h
+}
+
 // handler builds the route under test. Called by `get`, so a test that changed a
 // dependency between two requests gets both.
 func (h *harness) handler() *wiki.Handler {
@@ -270,9 +352,27 @@ func (h *harness) handler() *wiki.Handler {
 		Pages:       h.pages,
 		Redactor:    h.redactor,
 		Cache:       h.cache,
-		Instance:    components.InstanceView{Name: "Greyhaven", Version: "0.3.0"},
+		Instance:    *h.instance(),
 		SignOutHref: "/logout",
+		// The CampaignLister interface is satisfied by the pointer or nil, so the
+		// field is set conditionally rather than to a typed nil: a non-nil
+		// interface holding a nil pointer is the shape of a panic on the request
+		// path, and a test that forgot to wire it would find out by crashing.
+		Campaigns: h.campaignLister(),
 	}
+}
+
+// campaignLister returns the harness's lister, or nil when the test wired none.
+//
+// The nil is the *interface* nil, not a typed nil, because the route treats a nil
+// `CampaignLister` as "omit the section" and a typed nil would satisfy the
+// interface and then dereference.
+func (h *harness) campaignLister() wiki.CampaignLister {
+	if h.campaigns == nil {
+		return nil
+	}
+
+	return h.campaigns
 }
 
 // serve builds the whole chain, in the order `router.go` assembles it.
@@ -306,7 +406,8 @@ func (h *harness) serveMountedAt(outerPattern string) http.Handler {
 		campaign: domain.Campaign{
 			ID:         testCampID,
 			Slug:       testSlug,
-			Name:       "Greyhaven",
+			Name:       h.campaignName,
+			SystemID:   h.systemID,
 			Visibility: h.visibility,
 		},
 		members: map[int64]domain.Role{
@@ -1292,17 +1393,6 @@ func findElement(node *html.Node, tag string) *html.Node {
 	}
 
 	return nil
-}
-
-// hasAncestor reports whether any ancestor of node has the given tag name.
-func hasAncestor(node *html.Node, tag string) bool {
-	for ancestor := node.Parent; ancestor != nil; ancestor = ancestor.Parent {
-		if ancestor.Type == html.ElementNode && ancestor.Data == tag {
-			return true
-		}
-	}
-
-	return false
 }
 
 // countElements counts the elements with the given tag name beneath node.

@@ -32,10 +32,13 @@ import (
 	"path"
 	"strings"
 
+	"github.com/a-h/templ"
+
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
 	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/chrome"
 )
 
 // pageExtension is the suffix a page's path gains on its way in from a URL.
@@ -50,10 +53,13 @@ const pageExtension = ".md"
 // titleSeparator joins the parts of a document title, in UI §7.2's form
 // "Page — Section — Campaign".
 //
-// Spelled here rather than reusing `components`' because that package's own
-// helper is unexported and composes the *pre-campaign* form, whose third part
-// names the instance. P5 unifies the two when it restyles the shell; until then
-// this route would otherwise render a document title of just the page's name.
+// Spelled here rather than reusing `components`' because that package's helper
+// for a route inside a campaign is `documentTitleForCampaign` and it is
+// unexported: it gives the three-part "Page — Campaign — Instance" form, and the
+// two-part form below is what this route can reach without an edit to a file this
+// work item does not own. `TestTheDocumentTitleFollowsTheShellVariantForm`
+// records the divergence and the integration report names the one-line export
+// that closes it.
 const titleSeparator = " — "
 
 // The header names this route writes. `net/http` has no constants for header
@@ -179,6 +185,17 @@ type Handler struct {
 	// Pages lists a campaign's pages so references resolve. Required, and asked
 	// on a cache miss only.
 	Pages Pages
+
+	// Campaigns lists the reader's own campaigns, which the navigation's
+	// Campaigns section switches between. Optional: nil omits the section
+	// entirely, which is also what an anonymous reader gets and what a reader
+	// whose membership list could not be read gets.
+	//
+	// Optional rather than required because a composition root that has not wired
+	// it yet produces a working page with a shorter navigation, and a nil
+	// dereference on the request path is not a better answer than either. See
+	// `readerCampaigns` for why the failure is a missing section and not a 500.
+	Campaigns CampaignLister
 
 	// Redactor removes content the viewer may not see, and is the seam the
 	// pipeline is ordered around. Required. This phase installs
@@ -354,11 +371,20 @@ func (h *Handler) read(
 		return pageResult{}, fmt.Errorf("page render: %w", err)
 	}
 
-	// Outside the cache, and it has to be: the addresses are a function of the
-	// campaign's page listing rather than of this page's bytes, so they are not
-	// part of the key. Caching them would keep every reader pointed at whatever a
-	// name resolved to when the entry was written. See addresses.
-	body, err := h.addresses(ctx, access.Campaign.ID, root, target.Path(), entry.Rendered)
+	// Outside the cache, and it has to be: the addresses and the navigation's page
+	// tree are both functions of the campaign's page listing rather than of this
+	// page's bytes, so neither is part of the key. Caching either would keep every
+	// reader pointed at whatever a name resolved to when the entry was written. See
+	// addresses.
+	//
+	// Read once and used twice. The listing is one query, and the two uses cannot
+	// disagree with each other because there is only one answer.
+	listing, err := h.Pages.PagesForCampaign(ctx, access.Campaign.ID)
+	if err != nil {
+		return pageResult{}, fmt.Errorf("list pages for campaign %d: %w", access.Campaign.ID, err)
+	}
+
+	body, err := h.addresses(root, target.Path(), entry.Rendered, listing)
 	if err != nil {
 		return pageResult{}, err
 	}
@@ -366,6 +392,7 @@ func (h *Handler) read(
 	return pageResult{
 		title:        pageName(target.Path()),
 		body:         body,
+		nav:          h.navigation(ctx, access, listing),
 		etag:         validator,
 		cacheControl: directives,
 	}, nil
@@ -425,18 +452,16 @@ func (h *Handler) render(
 // every reader until the content hash changed. Recomputing them is cheap next to
 // the render they replace, and it is the only way ADR 0017's byte-identity holds
 // when the listing moves underneath a cached body.
+//
+// The listing arrives as a parameter rather than being read here, because `read`
+// needs the same rows for the navigation's page tree and one query per response
+// is the right number of them.
 func (h *Handler) addresses(
-	ctx context.Context,
-	campaignID int64,
 	root *content.Root,
 	pagePath string,
 	rendered content.Rendered,
+	listing []domain.Page,
 ) (string, error) {
-	pages, err := h.Pages.PagesForCampaign(ctx, campaignID)
-	if err != nil {
-		return "", fmt.Errorf("list pages for campaign %d: %w", campaignID, err)
-	}
-
 	origin, err := content.NewOrigin(pagePath)
 	if err != nil {
 		return "", fmt.Errorf("reference origin for %s: %w", pagePath, err)
@@ -444,7 +469,7 @@ func (h *Handler) addresses(
 
 	return attachAddresses(
 		rendered.HTML,
-		content.NewResolver(root, pages).Links(origin, rendered.References),
+		content.NewResolver(root, listing).Links(origin, rendered.References),
 	), nil
 }
 
@@ -461,6 +486,12 @@ type pageResult struct {
 	// The only unescaped value this package produces, and the only value that
 	// came out of a sanitiser.
 	body string
+	// nav is the campaign navigation the document is composed around. Carried
+	// rather than rebuilt at the writers because the tree is built from the same
+	// listing the addresses were resolved from and must not be a second query.
+	//
+	// Its zero value on a revalidation, where no document is rendered at all.
+	nav chrome.NavView
 	// etag and cacheControl are the key's validator and directives, taken from
 	// `CacheKey.ETag` and `CacheControl` rather than computed here. Two derivations
 	// of a validator in one process is a defect waiting for the one that changes.
@@ -568,9 +599,17 @@ func pageName(pagePath string) string {
 // after a `PUT`. Compared weakly, because a validator for a `GET` is compared
 // with weak comparison, so `W/"x"` and `"x"` are the same answer.
 //
-// An empty header is not a match, and neither is an empty validator: a response
-// with no validator must not be revalidated against nothing, which would answer
-// 304 for every request a client made with no header at all.
+// An empty header is not a match, and an empty validator is not a match either: a
+// response with no validator must not be revalidated against nothing, which would
+// answer 304 for every request a client made with no header at all.
+//
+// Both are checked up front even though the loop below reaches the same answers —
+// `strings.SplitSeq("", ",")` yields one empty candidate, which matches neither
+// the star nor the validator. That redundancy is deliberate, and what is tested is
+// the *rule* rather than the guard: the alternative is a rule whose enforcement
+// depends on how an empty separator-split behaves, which is a property of the
+// standard library rather than of this function and one a future edit to the loop
+// could quietly remove.
 func revalidated(header, validator string) bool {
 	if header == "" || validator == "" {
 		return false
@@ -592,25 +631,24 @@ func revalidated(header, validator string) bool {
 
 // writePage sends the page.
 //
+// The **campaign** shell variant, and that choice is UI §4.6's: the reader is
+// inside a campaign — the access gate admitted them, or they would not be here —
+// so the navigation is present and its skip link is present with it. Rendering
+// the pre-campaign variant here would put a wiki page in a document that says
+// there is no campaign, and §7.2's "the navigation is absent before a campaign
+// exists" would have two readings on one URL.
+//
 // The two cache headers are written from the key and nothing else touches them,
 // and `Vary: Cookie` is written on top of whatever the cache decided. The document
 // is reader-dependent even when its body is not: the shell carries the reader's
 // name and a sign-out form, so a shared cache that keyed only on the URL would
 // hand one reader another's header. `Vary` is the mechanism for saying so, and it
 // is additive — a cache that already says `private` is unaffected by it, and one
-// that says `public` has been told what it was missing.
+// that says `public` has been told what it was missing. ADR 0035's original claim
+// that no route emits it was wrong about exactly this route; the corrected text is
+// in the record.
 func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, page pageResult) {
-	ctx := r.Context()
-	requestor := campaigns.Requestor(ctx)
-	access := campaigns.AccessFrom(ctx)
-
-	view := components.WikiPage(components.WikiPageView{
-		Shell: components.ShellView{
-			Title:       documentTitle(page.title, access.Campaign),
-			Instance:    h.Instance,
-			Account:     components.AccountView{Username: requestor.Username},
-			SignOutHref: h.SignOutHref,
-		},
+	view := h.document(r, page.nav, components.WikiPageView{
 		Heading: page.title,
 		Body:    page.body,
 	})
@@ -621,16 +659,92 @@ func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, page pageRes
 
 	w.WriteHeader(http.StatusOK)
 
+	h.writeDocument(w, r, view, "wiki.page_render_failed")
+}
+
+// writeDocument writes one composed document and records a failure to write it.
+//
+// A method rather than a free function because it needs the handler's logger, and
+// because both writers — the page and the failure state — must do it identically:
+// the status line is committed before either runs, so there is no second answer
+// available, and a document that failed halfway has already told the reader more
+// than an error page would have. What differs is only the event name, which is
+// what tells an operator which of the two paths failed.
+func (h *Handler) writeDocument(
+	w http.ResponseWriter,
+	r *http.Request,
+	view templ.Component,
+	event string,
+) {
+	ctx := r.Context()
+
 	if err := view.Render(ctx, w); err != nil {
-		// Logged and nothing else. The status line is committed and a body is
-		// already on the wire, so there is no second answer available — and a page
-		// that failed halfway has already told the reader more than an error page
-		// would have.
-		h.log(ctx, slog.LevelError, "wiki.page_render_failed",
-			slog.String("campaign", access.Campaign.Slug),
+		h.log(ctx, slog.LevelError, event,
+			slog.String("campaign", campaigns.AccessFrom(ctx).Campaign.Slug),
 			slog.String("error", err.Error()),
 		)
 	}
+}
+
+// document composes the campaign shell around one centre slot.
+//
+// The single place this route decides what a document is, and the reason it is a
+// function rather than two copies of a struct literal is that the page and the
+// failure state are the same document with a different centre: an `<h1>` is in
+// both, the campaign name is in both titles, and a version that put the campaign
+// in one and not the other would produce two shells that differ in a way no test
+// about either would notice.
+//
+// The rail is the instance rail with the degraded list **removed**, and that is
+// not tidiness. `components.shellDocument` hands `Instance.Degraded` to the
+// *footer* on the campaign variant precisely because the rail there is meant to
+// hold the campaign's own panels, and `InstanceRail` renders the same warning as
+// an `<h2>Not working</h2>`. Passing both would put two identical headings in one
+// document, which §7.2's "no heading is repeated" is a failure of — and the
+// duplicate only appears on a campaign with a broken subsystem, which is exactly
+// the sort of document nobody tests. The rail here is a stopgap for UI §4.4's
+// page outline, metadata, sibling and revision panels, which are P6's other work
+// items; see the integration report.
+func (h *Handler) document(
+	r *http.Request,
+	nav chrome.NavView,
+	article components.WikiPageView,
+) templ.Component {
+	ctx := r.Context()
+	access := campaigns.AccessFrom(ctx)
+	requestor := campaigns.Requestor(ctx)
+
+	article.Shell = components.ShellView{
+		Title:       documentTitle(article.Heading, access.Campaign),
+		Instance:    h.Instance,
+		Account:     components.AccountView{Username: requestor.Username},
+		SignOutHref: h.SignOutHref,
+		Campaign:    campaignRef(access.Campaign),
+	}
+
+	rail := h.Instance
+	rail.Degraded = nil
+
+	return components.CampaignShell(
+		article.Shell,
+		nav,
+		components.WikiArticle(article),
+		components.InstanceRail(rail),
+	)
+}
+
+// campaignRef is the shell's reference to the campaign this request is inside.
+//
+// The name is copied verbatim and **not** normalised, which is a decision rather
+// than an omission. UI §8.3's rank 1 is the current location and inside a campaign
+// that is the campaign's own name — so the header's link reads the campaign name,
+// and `chrome.CampaignRef.label` is what falls back to the slug when a campaign was
+// registered without one. Normalising here as well would put a third copy of that
+// fallback next to the one in `chrome` and the one in `documentTitle`, and the
+// second one would be unobservable: a mutation that removed it changes nothing in
+// the served document, which is how three fallbacks become one nobody reviews.
+func campaignRef(campaign domain.Campaign) chrome.CampaignRef {
+	return chrome.CampaignRef{Name: campaign.Name, Slug: campaign.Slug}
 }
 
 // writeNotModified answers a revalidation.
