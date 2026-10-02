@@ -34,6 +34,24 @@ type wiringStore struct {
 	sessions  map[string]store.AuthSession
 	campaigns map[string]domain.Campaign
 	members   map[int64]domain.Role
+
+	// hits are the rows `SearchPages` answers with, keyed by the query term that
+	// finds them. There, rather than one fixed result, because the audit needs
+	// *three* search documents from one fixture — a result list, the idle state and
+	// a campaign the reader cannot see — and a store that answered the same list to
+	// every query could not produce two of them.
+	//
+	// The real `*store.Store` satisfies `search.Pages` too; that is asserted in
+	// `cmd/server` rather than here, because this fake exists so the audit can run
+	// without claiming the process's single-instance slot.
+	hits map[string][]domain.SearchHit
+
+	// searched records every `PageSearch` the route asked for, so a test can assert
+	// the campaign scope rather than only the rows. `search.Pages.CampaignID` of 0
+	// means *every campaign the requestor may read*, and a route that passed it
+	// would leak private page titles rather than fail, so the field is the one worth
+	// pinning.
+	searched []store.PageSearch
 }
 
 func newWiringStore() *wiringStore {
@@ -42,7 +60,32 @@ func newWiringStore() *wiringStore {
 		sessions:  map[string]store.AuthSession{},
 		campaigns: map[string]domain.Campaign{},
 		members:   map[int64]domain.Role{},
+		hits:      map[string][]domain.SearchHit{},
 	}
+}
+
+// SearchPages answers with the rows registered for the query's only term.
+//
+// A term rather than a whole-query match, because the audit's queries are one word
+// each and a matcher that understood FTS5's syntax would be a second implementation
+// of `store.buildMatchQuery` in a test file. The scope is recorded and the campaign
+// filter is **not** re-applied here: `store.SearchPages` joins campaign visibility
+// itself, and a fake that filtered again would make the audit blind to the route
+// passing a scope of 0 — the one mistake that turns a result list into a leak.
+func (f *wiringStore) SearchPages(
+	_ context.Context,
+	search store.PageSearch,
+	_ domain.Requestor,
+) ([]domain.SearchHit, error) {
+	f.searched = append(f.searched, search)
+
+	for term, rows := range f.hits {
+		if strings.Contains(search.Query, term) {
+			return rows, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func (f *wiringStore) UserByUsername(_ context.Context, username string) (domain.User, error) {
@@ -193,6 +236,17 @@ const wiringHandlerTimeout = 20 * time.Second
 // fullRouter builds the router exactly as the composition root does: an account
 // Router and one store, with no middleware added by the test.
 //
+// **No campaign routes.** That is deliberate and it is the reason this helper and
+// `campaignRouter` are two functions rather than one with a flag. The tests that
+// use this one are about the account surface and about the *gates* —
+// `TestUnmatchedCampaignPathIsNotFoundNotAuthorised` asserts that
+// `/c/greyhaven/edit/Page` is a 404, which is only the right assertion while no
+// editor is mounted, and a helper that quietly grew one would turn that test into
+// a test of a different route while still reading as the same test.
+//
+// The §10.2 audit in `shell_render_test.go` needs the opposite, and gets it from
+// `campaignRouter`.
+//
 // `instance` is passed rather than defaulted to a zero value because a zero
 // `components.InstanceView` reports the instance **healthy** — an empty
 // `Degraded` slice means healthy by construction. Every audit that runs over the
@@ -228,6 +282,10 @@ func fullRouterWithInstance(backing httpapi.Store, instance components.InstanceV
 		observability.NewRegistry(),
 		&accounts.Router{Store: backing, Instance: instance},
 		backing,
+		nil,
+		nil,
+		nil,
+		nil,
 		nil,
 	)
 }
@@ -384,6 +442,10 @@ func TestRouterWithoutAStoreStillServesLiveness(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 		config.Config{HandlerTimeout: time.Second},
 		observability.NewRegistry(),
+		nil,
+		nil,
+		nil,
+		nil,
 		nil,
 		nil,
 		nil,

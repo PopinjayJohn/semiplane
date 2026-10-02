@@ -6,9 +6,13 @@ import (
 
 	"github.com/semiplane/semiplane/internal/config"
 	accountroutes "github.com/semiplane/semiplane/internal/httpapi/accounts"
+	assetroutes "github.com/semiplane/semiplane/internal/httpapi/assets"
 	campaignroutes "github.com/semiplane/semiplane/internal/httpapi/campaigns"
+	editroutes "github.com/semiplane/semiplane/internal/httpapi/edit"
+	eventroutes "github.com/semiplane/semiplane/internal/httpapi/events"
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	searchroutes "github.com/semiplane/semiplane/internal/httpapi/search"
 	wikiroutes "github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/web"
@@ -77,6 +81,21 @@ type Store interface {
 // chain wants, and what a router with no database wants. The
 // independently-runnable invariant from architecture §15 — the server starts and
 // answers /healthz — depends on neither.
+//
+// The five campaign-scoped handlers are nil-tolerant for the same reason and one
+// more: a route package is wired by the composition root, so a router built
+// without one registers the rest and answers 404 for that route. That is a
+// *better* failure than the alternative, which is a router that panics on a nil
+// handler and takes the process down at boot over a wiring mistake in a subsystem
+// that has not shipped yet.
+//
+// They are five parameters rather than one slice for two reasons, and the second
+// is the one that decides it. A slice would need an element type, and a common
+// interface over five handlers whose only shared method is `ServeHTTP` would be
+// that type — so the list would be `[]http.Handler`, which names nothing and
+// makes every mount an unlabelled entry. Five typed parameters say which handler
+// is which at every call site, and the types are distinct, so a transposition is a
+// compile error rather than a route that serves another route's document.
 func NewRouter(
 	logger *slog.Logger,
 	cfg config.Config,
@@ -84,6 +103,10 @@ func NewRouter(
 	accountRoutes *accountroutes.Router,
 	backing Store,
 	wikiRoute *wikiroutes.Handler,
+	assetRoute *assetroutes.Handler,
+	searchRoute *searchroutes.Handler,
+	editRoute *editroutes.Handler,
+	eventsRoute *eventroutes.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
@@ -115,8 +138,13 @@ func NewRouter(
 	// everything is indistinguishable from the correct answer while no campaign
 	// route is registered. `wikiroutes.TestTheCampaignMountMustCarryTheSlug`
 	// asserts both directions and is the guard.
+	//
+	// Every campaign route is registered on this one mux rather than on the outer
+	// one, and that is the whole reason the gates are a single mount list: a route
+	// added to `mountCampaignRoutes` is behind `Resolve` and `RequireRead` because
+	// it is on the list, and a route added anywhere else is behind nothing.
 	campaignMux := http.NewServeMux()
-	mountCampaignRoutes(campaignMux, wikiRoute)
+	mountCampaignRoutes(campaignMux, wikiRoute, assetRoute, searchRoute, editRoute, eventsRoute)
 
 	if backing != nil {
 		mux.Handle("/c/{slug}/", campaignroutes.Resolve(backing)(
@@ -161,11 +189,55 @@ func NewRouter(
 // mode of forgetting a gate is a private page answering 200, and the way to make
 // that unexpressible is for there to be one place to add a route.
 //
-// A nil wikiRoute registers nothing rather than panicking, so a router built for
-// a read-only or content-less instance still serves the liveness routes and the
-// account surfaces.
-func mountCampaignRoutes(mux *http.ServeMux, wikiRoute *wikiroutes.Handler) {
+// Every handler is nil-tolerant and registers nothing when nil, so a router built
+// for a read-only or content-less instance still serves the liveness routes, the
+// account surfaces, and the campaign routes that *were* wired. That is what a
+// store-less router is for, and it is also what lets a test mount exactly the one
+// route it is auditing.
+//
+// The list's order is documentation rather than behaviour: `net/http`'s mux
+// resolves overlapping patterns by specificity, not by registration order, so
+// reordering these lines cannot change which handler answers a path. It is ordered
+// the way a reader meets the surfaces — read the page, fetch what it names, find
+// it again, change it, be told it changed — so that the list reads as a product
+// rather than as an alphabet.
+//
+// Two of the four mount their own gate, and that is not an inconsistency:
+// `edit.Mount` and `events.Mount` wrap themselves in `campaigns.RequireEdit`
+// because they are GM-only (S-6.5), and a caller who had to remember the gate
+// would eventually register the route without it. The `RequireRead` this function
+// sits under is layered underneath, not replaced: a `player` clears it and is
+// refused 403 by the route's own gate, and an anonymous reader of a public
+// campaign is challenged 401.
+//
+// The patterns carry the `/c/` prefix even though this mux is itself mounted
+// there. A Go 1.22 mux routes on a prefix and then hands the *whole* path to
+// whatever matched, so a pattern written without the prefix would never fire.
+func mountCampaignRoutes(
+	mux *http.ServeMux,
+	wikiRoute *wikiroutes.Handler,
+	assetRoute *assetroutes.Handler,
+	searchRoute *searchroutes.Handler,
+	editRoute *editroutes.Handler,
+	eventsRoute *eventroutes.Handler,
+) {
 	if wikiRoute != nil {
 		wikiroutes.Mount(mux, wikiRoute)
+	}
+
+	if assetRoute != nil {
+		assetroutes.Mount(mux, assetRoute)
+	}
+
+	if searchRoute != nil {
+		searchroutes.Mount(mux, searchRoute)
+	}
+
+	if editRoute != nil {
+		editroutes.Mount(mux, editRoute)
+	}
+
+	if eventsRoute != nil {
+		eventroutes.Mount(mux, eventsRoute)
 	}
 }
