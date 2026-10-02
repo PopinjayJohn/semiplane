@@ -1162,10 +1162,24 @@ func TestAConnectionCostsOneReaderAndNothingElse(t *testing.T) {
 	peak := peakGoroutines(t)
 	cost := peak - floor
 
-	if cost < batch || cost > 2*batch {
-		t.Errorf("a connection cost %d goroutines across %d connections, want between "+
-			"%d and %d: one is net/http's connection goroutine and one is this route's "+
-			"reader (%d at the floor, %d at the peak)", cost, batch, batch, 2*batch,
+	// **Exactly** two per connection, asserted exactly.
+	//
+	// This was a band whose upper bound equalled the true value: the real cost is
+	// precisely `2*batch` — net/http's connection goroutine plus this route's one
+	// reader — so `cost > 2*batch` had zero headroom and a single sibling goroutine
+	// during the dial window read 21 and failed. It reproduced 5 times in 6 full
+	// runs on the untouched branch.
+	//
+	// The band was the wrong shape. It tried to say "not too many" while the
+	// property is "exactly two": one fewer means the reader is gone, one more means
+	// a goroutine per connection is leaking. Now that the test takes the package for
+	// itself — the measurement is exact, which is what that costs — the exact
+	// assertion is both available and strictly stronger, and there is no ceiling for
+	// noise to cross.
+	if cost != 2*batch {
+		t.Errorf("a connection cost %d goroutines across %d connections, want exactly "+
+			"%d: net/http's connection goroutine and this route's one reader, and no "+
+			"more (%d at the floor, %d at the peak)", cost, batch, 2*batch,
 			floor, peak)
 	}
 
