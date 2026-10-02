@@ -65,6 +65,7 @@ package realtime_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,6 +112,16 @@ const (
 	absence = 20 * time.Millisecond
 )
 
+// authorityPoll is `hub.go`'s wait interval for a join that lost the open race, read
+// through an exported shim.
+//
+// The shim exists so the test that manufactures that race can be four intervals long
+// without restating the number. Restating it would be worse than a duplication: the
+// interval is a guess about the registry's load time, and a test that hard-coded
+// sixteen milliseconds would silently stop testing anything the moment somebody
+// tuned it — which is the failure `AGENTS.md` records for a11y's `A11Y_TESTS`.
+func authorityPoll() time.Duration { return realtime.AuthorityPoll }
+
 // viewerGM is a game's identity, and the only one these tests need.
 var viewerGM = realtime.Viewer{ID: 7, Role: domain.RoleGM}
 
@@ -136,9 +147,32 @@ var epochClock = time.Date(2026, time.September, 30, 14, 0, 0, 0, time.UTC)
 func newTestHub(t *testing.T, resolve realtime.Resolver) (*realtime.Hub, *fakeClock) {
 	t.Helper()
 
+	return newTestHubWith(t, resolve, nil)
+}
+
+// newTestHubWith is `newTestHub` with a hook on the writer.
+//
+// `write` exists because `Registry.Open` writes a `campaign_state` row and a test
+// that wants to observe **how many times a join opened a state** has to be able to
+// count them. A join that called `Open` per request would still *work* — `Open`
+// refuses the second call and the hub recovers — so the only observable difference
+// is the round trip, and the only way to see a round trip is to count it. That is
+// the whole reason `TestAJoinOpensTheStateExactlyOnce` exists rather than a comment
+// in `hub.go` asserting it.
+func newTestHubWith(
+	t *testing.T,
+	resolve realtime.Resolver,
+	write func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error,
+) (*realtime.Hub, *fakeClock) {
+	t.Helper()
+
 	database, writer, reader := openDatabase(t)
 
 	insertSecondCampaign(t, database)
+
+	if write != nil {
+		writer = write
+	}
 
 	registry := realtime.NewRegistry(t.Context(), realtime.Config{
 		Write: writer,
@@ -631,6 +665,10 @@ func TestAPeerThatStopsReadingGoesStale(t *testing.T) {
 	// "gone" and the only thing that tells them apart without writing to a socket.
 	healthy.Advance()
 
+	// Sampled with the sweep armed and the peers behind but before the sweep runs, so
+	// the difference at the end is the sweep's cost and nothing else.
+	goroutinesBeforeSweep := settledGoroutines()
+
 	// A whole window, so the stalled peer has been behind for longer than it is allowed
 	// to be.
 	clock.advance(staleWindow)
@@ -642,8 +680,19 @@ func TestAPeerThatStopsReadingGoesStale(t *testing.T) {
 	// instead of a model of it — and it is what stops this test passing against a hub
 	// whose sweep never fires and whose peers are closed by something else entirely.
 	if got := clock.Arms(); got < 2 {
-		t.Errorf("the sweeper armed %d timers, want at least 2, so this test observed a "+
+		t.Errorf("the sweeper armed %d timers, want at most 2, so this test observed a "+
 			"sweep rather than some other teardown", got)
+	}
+
+	// And the sweep cost no goroutine. This is the second half of "no goroutine per
+	// connection": the sweeper is *one* goroutine for the whole process, so it re-arms
+	// on the goroutine it already has rather than spawning one per tick. A leak of
+	// two thousand a day at the default window is small enough to be invisible in a
+	// memory graph and large enough to be real.
+	if settled := settledGoroutines(); settled > goroutinesBeforeSweep {
+		t.Errorf("the sweep left %d more goroutines than it started with (%d then, %d now); "+
+			"the sweeper re-arms rather than spawning a goroutine per tick",
+			settled-goroutinesBeforeSweep, goroutinesBeforeSweep, settled)
 	}
 
 	// The control, and the half that makes the sweep a measurement rather than a
@@ -954,6 +1003,397 @@ func TestJoiningAConnDoesNotStartAGoroutine(t *testing.T) {
 	}
 }
 
+// TestAJoinOpensTheStateExactlyOnce is the `Registry.Get`-not-`Open` discipline, and
+// it is the mutation target that `TestTheJoinDoesNotOpenASecondAuthority` could not
+// be.
+//
+// `openAuthority` recovers from a lost race: `Open` returns `ErrStateOpen` and the
+// hub goes and gets the winner's state. So a hub that called `Open` on every join
+// would pass every other test in this file — it would be *correct*, one database
+// round trip slower. Correctness is not what makes this a limit: the cost is a row
+// read and a write transaction on the table's busiest path, and the only way to
+// observe it is to count the writes.
+//
+// Eight joins to one campaign must produce exactly one `Open`, and `Open` writes
+// once — the initial write `state.go` documents. A hub that opened per join would
+// produce eight transactions for one campaign with one authority, which is precisely
+// the shape of "a second answer to one question" that this whole component argues
+// against.
+func TestAJoinOpensTheStateExactlyOnce(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		writes int
+	)
+
+	hub, _ := newTestHubWith(t, nil,
+		func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+			mu.Lock()
+			writes++
+			mu.Unlock()
+
+			return nil
+		})
+
+	const joins = 8
+
+	peers := make([]*realtime.Peer, joins)
+
+	for index := range peers {
+		peers[index] = join(t, hub, 1)
+	}
+
+	mu.Lock()
+	counted := writes
+	mu.Unlock()
+
+	if counted != 1 {
+		t.Errorf("%d joins to one campaign produced %d state writes, want 1; `Registry.Get` "+
+			"is consulted first precisely so that opening is not repeated", joins, counted)
+	}
+
+	if got := hub.Stats().Peers; got != joins {
+		t.Errorf("Stats().Peers = %d, want %d", got, joins)
+	}
+
+	// And the peers are all in the same campaign, which is the state the single open
+	// produced.
+	for index, peer := range peers {
+		if peer.CampaignID() != 1 {
+			t.Errorf("peer %d joined campaign %d, want 1", index, peer.CampaignID())
+		}
+	}
+}
+
+// TestConcurrentJoinsToOneCampaignAllSucceed is the lost-race branch, and it is the
+// only way that branch is reachable at all.
+//
+// `openAuthority` calls `Open` when `Get` misses, and two joins arriving together
+// both find nothing and both call it. `Registry.reserve` takes the slot *before* the
+// load, so exactly one of them proceeds and the other is refused with
+// `ErrStateOpen` — and the refusal is not a failure, because the caller wanted the
+// *winner's* state. A hub that reported the refusal would drop the second of two
+// simultaneous connections to a campaign that is working perfectly, which is the kind
+// of bug that only appears on a slow laptop with two tabs opening at once.
+//
+// Sixteen goroutines so the race is reliably hit rather than rarely: the reservation
+// window is a map lookup and a mutex, so a single pair might serialise by luck.
+func TestConcurrentJoinsToOneCampaignAllSucceed(t *testing.T) {
+	hub, _ := newTestHub(t, nil)
+
+	const joiners = 16
+
+	peers := make([]*realtime.Peer, joiners)
+	errs := make([]error, joiners)
+
+	// Two barriers, and the distinction is the whole reason the test needs both.
+	// `ready` says every goroutine is *launched*, so the calls overlap and the race
+	// is actually hit; `done` says every call has *returned*, so the results below are
+	// the finished ones. A single barrier after the launch would read the slice while
+	// the goroutines were still writing it — a test that fails for a reason that has
+	// nothing to do with the code under test, which is worse than no test.
+	var ready, done sync.WaitGroup
+
+	ready.Add(joiners)
+	done.Add(joiners)
+
+	for index := range joiners {
+		go func() {
+			defer done.Done()
+
+			ready.Done()
+			peers[index], errs[index] = hub.Join(t.Context(), 1, viewerGM)
+		}()
+	}
+
+	ready.Wait()
+	done.Wait()
+
+	for index, err := range errs {
+		if err != nil {
+			t.Errorf("concurrent join %d error = %v, want nil; a join that loses the open "+
+				"race must take the winner's state rather than fail", index, err)
+		}
+
+		if peers[index] == nil {
+			t.Errorf("concurrent join %d returned no peer", index)
+		}
+	}
+
+	if got := hub.Stats().Peers; got != joiners {
+		t.Errorf("Stats().Peers = %d, want %d", got, joiners)
+	}
+}
+
+// TestAJoinThatRacesTheWinnersLoadWaitsForIt is the lost-race branch made
+// deterministic, and it is here because the test above does not reliably reach it.
+//
+// `TestConcurrentJoinsToOneCampaignAllSucceed` fires sixteen goroutines at once and
+// usually wins the race — usually. Whether a loser arrives while the winner is
+// *inside* `Registry.Open` depends on how long a `campaign_state` read takes on the
+// machine running the test, and a mutation check found the honest answer: on this
+// container the load finishes before the second goroutine is scheduled, so a hub that
+// refuses a lost race outright passes that test. **A race a test only hits by luck is
+// not a test**, and `AGENTS.md` has three entries about gates that were green for
+// exactly this reason.
+//
+// So the race is manufactured rather than raced for. The registry's *read* is held
+// open — `Registry.Open` seeds the state after the load and before the initial write,
+// so blocking the load holds the reservation in its un-seeded state, which is the
+// window `awaitAuthority` exists for. Every loser in that window must wait for the
+// winner rather than being turned away, and turning them away is the bug this kills.
+func TestAJoinThatRacesTheWinnersLoadWaitsForIt(t *testing.T) {
+	_, writer, reader := openDatabase(t)
+
+	// Held open until the test releases it, and announced first so the test knows the
+	// winner is inside the load rather than merely about to be.
+	var (
+		announced = make(chan struct{})
+		release   = make(chan struct{})
+		blocking  sync.Once
+	)
+
+	held := reader
+	reader = func(ctx context.Context, campaignID int64) (realtime.Persisted, error) {
+		blocking.Do(func() {
+			close(announced)
+
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		})
+
+		return held(ctx, campaignID)
+	}
+
+	registry := realtime.NewRegistry(t.Context(), realtime.Config{Write: writer, Read: reader})
+
+	hub := realtime.NewHub(t.Context(), realtime.HubConfig{States: registry})
+
+	t.Cleanup(func() {
+		if err := hub.Close(context.WithoutCancel(t.Context())); err != nil {
+			t.Errorf("hub.Close() error = %v, want nil", err)
+		}
+
+		if err := registry.Close(context.WithoutCancel(t.Context())); err != nil {
+			t.Errorf("registry.Close() error = %v, want nil", err)
+		}
+	})
+
+	// The winner, whose load is now blocked.
+	winner := make(chan *realtime.Peer, 1)
+
+	go func() {
+		peer, err := hub.Join(t.Context(), 1, viewerGM)
+		if err != nil {
+			t.Errorf("the winning Join() error = %v, want nil", err)
+
+			return
+		}
+
+		winner <- peer
+	}()
+
+	select {
+	case <-announced:
+	case <-time.After(settleBudget):
+		t.Fatal("the winner never reached the campaign's load, so this test observed " +
+			"nothing; the fixture's blocking read is not where it thinks it is")
+	}
+
+	// The losers, all of which find the reservation un-seeded and un-openable.
+	const losers = 8
+
+	loserPeers := make([]*realtime.Peer, losers)
+	loserErrs := make([]error, losers)
+
+	var ready, done sync.WaitGroup
+
+	ready.Add(losers)
+	done.Add(losers)
+
+	for index := range losers {
+		go func() {
+			defer done.Done()
+
+			ready.Done()
+			loserPeers[index], loserErrs[index] = hub.Join(t.Context(), 1, viewerGM)
+		}()
+	}
+
+	ready.Wait()
+
+	// A cost, not the assertion: long enough for every loser to be parked inside the
+	// wait rather than about to enter it, so the release below finds them all waiting.
+	// The assertion is what they do next.
+	time.Sleep(4 * authorityPoll())
+
+	// A loser that refused rather than waited has already returned, so this releases
+	// the winner and then reads sixteen results.
+	close(release)
+
+	select {
+	case <-winner:
+	case <-time.After(settleBudget):
+		t.Fatal("the winning Join() never returned after the load was released")
+	}
+
+	done.Wait()
+
+	for index, err := range loserErrs {
+		if err != nil {
+			t.Errorf("losing join %d error = %v, want nil; a join that arrives while the "+
+				"campaign's state is still loading must wait for it", index, err)
+		}
+
+		if loserPeers[index] == nil {
+			t.Errorf("losing join %d returned no peer", index)
+		}
+	}
+
+	if got := hub.Stats().Peers; got != losers+1 {
+		t.Errorf("Stats().Peers = %d, want %d", got, losers+1)
+	}
+}
+
+// TestACampaignRefusesMorePeersThanItsLimit is the connection-count limit, and the
+// reason it is asserted against the full `MaxPeersPerCampaign` rather than a small
+// number is that a test with a smaller number is testing a different constant.
+//
+// The hub is process-wide and lives for the life of the process, so every peer is a
+// map entry and two channels that nothing reclaims until the connection ends. A
+// campaign a client script fans out across is therefore a campaign whose memory
+// grows with the script, and the limit is the only thing standing between that and
+// an unbounded hub.
+func TestACampaignRefusesMorePeersThanItsLimit(t *testing.T) {
+	hub, _ := newTestHub(t, nil)
+
+	for range realtime.MaxPeersPerCampaign {
+		join(t, hub, 1)
+	}
+
+	if got := hub.Stats().Peers; got != realtime.MaxPeersPerCampaign {
+		t.Fatalf("Stats().Peers = %d, want %d", got, realtime.MaxPeersPerCampaign)
+	}
+
+	_, err := hub.Join(t.Context(), 1, viewerGM)
+	if !errors.Is(err, realtime.ErrCampaignFull) {
+		t.Errorf("Join() past the limit error = %v, want ErrCampaignFull", err)
+	}
+
+	// The refusal created no room and no peer, and another campaign is unaffected —
+	// the limit is per campaign, and a limit that stopped the whole hub would be a
+	// denial of service rather than a bound.
+	if got := hub.Stats().Peers; got != realtime.MaxPeersPerCampaign {
+		t.Errorf("Stats().Peers = %d after a refused join, want %d",
+			got, realtime.MaxPeersPerCampaign)
+	}
+
+	join(t, hub, secondCampaignID)
+
+	if got := hub.Stats().Campaigns; got != 2 {
+		t.Errorf("Stats().Campaigns = %d, want 2; the limit is per campaign", got)
+	}
+}
+
+// TestTheShutdownLeavesNoGoroutineBehind is the boundedness claim's other half.
+//
+// `TestShutdownWithLivePeersIsCleanAndBounded` proves the shutdown *returns*. That is
+// necessary and not sufficient: a hub that closed its peers, returned, and left its
+// sweeper running would satisfy every assertion there and leak a goroutine per hub
+// for the life of the process. The only observation that reaches it is a count, and
+// it is the same count `TestJoiningAConnDoesNotStartAGoroutine` uses — which is why
+// that helper is a function and not a line copied twice.
+func TestTheShutdownLeavesNoGoroutineBehind(t *testing.T) {
+	database, writer, reader := openDatabase(t)
+
+	registry := realtime.NewRegistry(t.Context(), realtime.Config{Write: writer, Read: reader})
+
+	hub := realtime.NewHub(t.Context(), realtime.HubConfig{States: registry})
+
+	t.Cleanup(func() {
+		if err := registry.Close(context.WithoutCancel(t.Context())); err != nil {
+			t.Errorf("registry.Close() error = %v, want nil", err)
+		}
+	})
+
+	// Sampled *after* the hub exists, so the sweeper is in the baseline: the claim is
+	// that Close removes it, not that NewHub added nothing.
+	baseline := settledGoroutines()
+
+	join(t, hub, 1)
+
+	if err := hub.Close(context.WithoutCancel(t.Context())); err != nil {
+		t.Fatalf("hub.Close() error = %v, want nil", err)
+	}
+
+	settled := settledGoroutines()
+
+	if settled > baseline {
+		t.Errorf("the shutdown left %d more goroutines than it started with (%d then, "+
+			"%d now); a hub that returns before its own sweeper has exited leaks a "+
+			"goroutine per hub for the life of the process", settled-baseline, baseline, settled)
+	}
+
+	_ = database
+}
+
+// TestTheShutdownFlushesTheStateRegistry is the ordering claim in `Hub.Close`, and
+// it is asserted through the registry's own refusal rather than through a row.
+//
+// A row would not separate the two: `Registry.Open` writes one, so the table looks
+// the same whether or not `Close` flushed. What `Close` does that nothing else does
+// is make the registry *refuse* to open anything again, and that refusal is the
+// evidence that the flush ran. The placement created below is deliberately un-flushed
+// by the debounce, so the row only carries it if `Close` did its job.
+func TestTheShutdownFlushesTheStateRegistry(t *testing.T) {
+	database, writer, reader := openDatabase(t)
+
+	registry := realtime.NewRegistry(t.Context(), realtime.Config{Write: writer, Read: reader})
+
+	hub := realtime.NewHub(t.Context(), realtime.HubConfig{States: registry})
+
+	t.Cleanup(func() {
+		if err := registry.Close(context.WithoutCancel(t.Context())); err != nil {
+			t.Errorf("registry.Close() error = %v, want nil", err)
+		}
+	})
+
+	join(t, hub, 1)
+
+	// Mutate the live state through the registry, which is the only handle a caller
+	// has. The mutation is deliberately inside the debounce window, so nothing but an
+	// explicit flush will write it.
+	state, live := registry.Get(1)
+	if !live {
+		t.Fatal("the join did not open the campaign's state")
+	}
+
+	mustCreate(t, state, "p1", realtime.Placement{MaxHP: 30, HP: 30})
+
+	if err := hub.Close(context.WithoutCancel(t.Context())); err != nil {
+		t.Fatalf("hub.Close() error = %v, want nil", err)
+	}
+
+	// The registry is shut: nothing will ever flush it again.
+	if _, err := registry.Open(t.Context(), 1); !errors.Is(err, realtime.ErrStateOpen) &&
+		!errors.Is(err, realtime.ErrClosed) {
+		t.Errorf("registry.Open() after hub.Close() error = %v, want ErrStateOpen or ErrClosed; "+
+			"the hub closed the registry, so nothing can be flushed afterwards", err)
+	}
+
+	// And the mutation survived, which is what a flush means.
+	row, _, present := readRow(t, database)
+	if !present {
+		t.Fatal("campaign_state has no row after the shutdown")
+	}
+
+	if _, found := placement(row, "p1"); !found {
+		t.Errorf("the persisted document is %+v, want it to carry p1; hub.Close must flush "+
+			"before the caller closes the store, or a table loses its last session", row)
+	}
+}
+
 // TestTheRollComesFromTheResolver is S-7.3 asserted from the hub's side.
 //
 // The codec's half of the rule is `protocol_test.go`'s: no inbound field can hold a
@@ -971,7 +1411,11 @@ func TestTheRollComesFromTheResolver(t *testing.T) {
 	resolver := &stubResolver{total: 20}
 	hub, _ := newTestHub(t, resolver)
 
-	actor, watcher := join(t, hub, 1), join(t, hub, 1)
+	// The **second** campaign, deliberately. A resolver told campaign 1 when the peer
+	// joined campaign 2 would satisfy every assertion here if the peers had joined 1,
+	// so the fixture uses a campaign whose id a hardcoded default cannot guess. The
+	// `Peer`'s binding is the authority; the hub has no other source for it.
+	actor, watcher := join(t, hub, secondCampaignID), join(t, hub, secondCampaignID)
 
 	intent := decodeIntent(t, rollIntent)
 
@@ -1017,8 +1461,10 @@ func TestTheRollComesFromTheResolver(t *testing.T) {
 		t.Fatalf("the resolver was handed %d intents, want 1", len(handed))
 	}
 
-	if handed[0].Campaign != 1 {
-		t.Errorf("the resolver was told campaign %d, want 1", handed[0].Campaign)
+	if handed[0].Campaign != secondCampaignID {
+		t.Errorf("the resolver was told campaign %d, want %d; the campaign comes from the "+
+			"peer's own binding and from nowhere a client could reach",
+			handed[0].Campaign, secondCampaignID)
 	}
 
 	if handed[0].Actor != viewerGM.ID {
@@ -1201,7 +1647,7 @@ func TestTheResolverRefusalReachesTheClientAsAClosedReason(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			hub, _ := newTestHub(t, &stubResolver{refuse: testCase.refuse})
 
-			peer := join(t, hub, 1)
+			peer := join(t, hub, secondCampaignID)
 			intent := decodeIntent(t, `{"t":"intent","seq":7,"op":"roll","args":{"expr":"2d10"}}`)
 
 			// A refusal is not an error the hub propagates: the client asked a

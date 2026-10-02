@@ -196,6 +196,25 @@ const MaxPeersPerCampaign = 512
 // the three reasons a socket-side deadline is the wrong detector.
 const DefaultStaleAfter = 45 * time.Second
 
+// authorityPoll is how often a join that lost the open race re-reads the registry
+// for the winner's state.
+//
+// Sixteen milliseconds, and the reason it is a constant rather than configuration is
+// that it is not a tuning knob for anybody: it is a guess at another component's
+// load duration, so an operator who could set it would be tuning something whose
+// right value this process does not know. `awaitAuthority` says what it is for and
+// what being wrong in either direction costs.
+const authorityPoll = 16 * time.Millisecond
+
+// AuthorityPoll is how often a join that lost the open race re-reads the registry.
+//
+// Exported for one reason: the test that *manufactures* that race has to wait long
+// enough for every loser to be parked inside the wait, and hard-coding sixteen
+// milliseconds in the test would make it silently stop testing anything the moment
+// the constant were tuned. The value itself is not configuration — see the constant's
+// own comment for why an operator must not be able to set it.
+const AuthorityPoll = authorityPoll
+
 // The sentinels a caller branches on. None carries anything a log line would
 // repeat, and `ErrHubClosed` and `ErrPeerClosed` are deliberately distinct: one is
 // "this process is going away" and the other is "this connection is over", and a
@@ -710,23 +729,77 @@ func (h *Hub) openAuthority(ctx context.Context, campaignID int64) error {
 		return nil
 	}
 
-	if _, err := h.states.Open(ctx, campaignID); err != nil {
-		if !errors.Is(err, ErrStateOpen) {
-			return fmt.Errorf("realtime: open the live state for campaign %d: %w", campaignID, err)
-		}
+	_, err := h.states.Open(ctx, campaignID)
+	if err == nil {
+		return nil
+	}
 
+	if !errors.Is(err, ErrStateOpen) {
+		return fmt.Errorf("realtime: open the live state for campaign %d: %w", campaignID, err)
+	}
+
+	// Refused, so somebody else holds the campaign. `Registry.Get` reports a
+	// *reservation* as absent until its load finishes, and the reservation is taken
+	// before the load for the reason `state.go` gives — so a single `Get` here would
+	// refuse every join that arrives while the winner is reading a row, which is a
+	// window as wide as a database round trip. Two tabs opening at once on a slow
+	// laptop is enough to hit it, and the symptom is one connection works and the
+	// other fifteen fail on a campaign that is fine.
+	//
+	// So wait for the reservation to become readable, rather than reading once and
+	// refusing. Waiting is bounded by the caller's context, which is the right
+	// deadline for a join: the upgrade request's own. And the wait is per campaign and
+	// per caller, not a lock the hub holds — the other fourteen callers are in the
+	// same place, each waiting on its own deadline, and none of them holds anything
+	// the winner needs.
+	return h.awaitAuthority(ctx, campaignID)
+}
+
+// awaitAuthority polls for the reservation to become readable, and gives up on the
+// caller's context rather than on a duration of its own.
+//
+// The interval is a guess and the guess is stated rather than hidden, because a hub
+// cannot measure another component's load: `Registry` does not publish when a
+// reservation is seeded, so the only observation available is "not yet". Sixteen
+// milliseconds sits below what a person perceives as a slow page and above the cost
+// of a map lookup, and the cost of being wrong in either direction is bounded — too
+// slow adds latency to a join that lost a race, too fast burns a little CPU on a
+// join that has not arrived yet.
+//
+// It waits on the **real** clock rather than on `HubClock`, and that is deliberate
+// rather than an oversight. The injected clock exists so a test can assert a
+// staleness window exactly, and this wait is a different thing entirely: a guess at
+// how long another component's database round trip takes. Driving it from the same
+// clock would mean a test could not exercise it without also driving the sweeper,
+// which is the coupling that makes a fake clock expensive — and worse, it would make
+// the wait unobservable from a test, so the branch would be reachable only in
+// production. `TestConcurrentJoinsToOneCampaignAllSucceed` exercises this path in real
+// time and asserts a positive outcome, which costs at most one poll interval.
+//
+// A context with no deadline is the case worth naming: the wait then runs until the
+// load finishes or the process goes, which is the honest answer, because a join with
+// no deadline is a join the caller said could wait indefinitely.
+func (h *Hub) awaitAuthority(ctx context.Context, campaignID int64) error {
+	for {
 		if _, live := h.states.Get(campaignID); live {
 			return nil
 		}
 
-		return fmt.Errorf(
-			"%w: campaign %d is reserved but not readable, so a join is racing the "+
-				"holder's own load; refusing rather than handing out an empty tabletop",
-			ErrStateOpen, campaignID,
-		)
-	}
+		// Checked before the wait rather than only in the `select`, so a context
+		// that is *already* done refuses immediately instead of sleeping first.
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%w: campaign %d is reserved but not readable: %w",
+				ErrStateOpen, campaignID, err)
+		}
 
-	return nil
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: campaign %d is reserved but not readable: %w",
+				ErrStateOpen, campaignID, ctx.Err())
+
+		case <-time.After(authorityPoll):
+		}
+	}
 }
 
 // isClosed reports whether the hub has been shut down, without taking the lock for
@@ -813,10 +886,20 @@ func (h *Hub) offer(peer *Peer, payload []byte) {
 	default:
 	}
 
-	// Full. Take the stale notice out so the newest can take its place, then try
-	// again. The second `default` is reachable — the peer may have drained the slot
-	// in between — and reaching it costs one broadcast, which is the documented
-	// policy rather than a failure.
+	// Full **on arrival**, and that is the only evidence there is that this peer is
+	// behind: the frame this one is about to supersede had not been taken off the
+	// channel, so nothing is draining it. The clock is armed here rather than after
+	// the replacement — arming afterwards is a bug the test for staleness caught,
+	// because the replacement *succeeds*, so the end of this function looks exactly
+	// like the healthy case and the hub would never retire anybody.
+	if peer.behindSince.IsZero() {
+		peer.behindSince = h.clock.Now()
+	}
+
+	// Take the stale broadcast out so the newest can take its place, then try again.
+	// The second `default` is reachable — the peer may have drained the slot in
+	// between — and reaching it costs one broadcast, which is the documented policy
+	// rather than a failure.
 	select {
 	case <-peer.broadcasts:
 		peer.superseded++
@@ -828,15 +911,8 @@ func (h *Hub) offer(peer *Peer, payload []byte) {
 	select {
 	case peer.broadcasts <- payload:
 		peer.delivered++
-		peer.behindSince = time.Time{}
-
-		return
 
 	default:
-	}
-
-	if peer.behindSince.IsZero() {
-		peer.behindSince = h.clock.Now()
 	}
 }
 
@@ -854,6 +930,16 @@ func (h *Hub) offer(peer *Peer, payload []byte) {
 func (h *Hub) detach(peer *Peer) {
 	if group, open := h.rooms[peer.campaignID]; open {
 		delete(group.peers, peer.id)
+
+		// The room goes with its last peer. A hub is process-wide and lives for the
+		// life of the process, so a map entry per campaign that was ever opened is a
+		// map entry that is never reclaimed — and this instance has watched a table
+		// roll initiative, so it is worth noticing that the *only* thing standing
+		// between a long-lived hub and unbounded growth of its own index is this
+		// delete.
+		if len(group.peers) == 0 {
+			delete(h.rooms, peer.campaignID)
+		}
 	}
 
 	peer.closedOnce.Do(func() {
