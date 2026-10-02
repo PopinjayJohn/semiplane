@@ -18,6 +18,7 @@ import (
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/httpapi"
 	"github.com/semiplane/semiplane/internal/httpapi/accounts"
+	"github.com/semiplane/semiplane/internal/httpapi/events"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
@@ -161,6 +162,17 @@ func runServer(_ []string) error {
 	// becomes visible rather than invisible.
 	registry := observability.NewRegistry()
 
+	// The event hub, and it is built **here**, before anything that could publish to
+	// it and long before anything that could subscribe.
+	//
+	// Two dependencies point at it — the content pipeline, as a `ChangeSink` beside
+	// the indexer, and the event route, as its broker — and it is the process's only
+	// broker between a file changing on disk and a GM's browser. Constructing it
+	// early is what lets the pipeline take `hub.Sink()` as an argument instead of
+	// the route reaching back for a global, and it is why the shutdown order below
+	// is a statement about this value rather than about a package.
+	hub := events.NewHub()
+
 	// The account routes: sign in, sign out, and the campaign list. Constructed
 	// here rather than in the router because it is where the store meets the
 	// components, and both are already in hand.
@@ -242,12 +254,18 @@ func runServer(_ []string) error {
 		}
 	}
 
-	// Both shell routes carry the same instance view, and it is assigned from
-	// the one computation both of them need. Assigned here rather than at
-	// construction because the account routes are built before any content root
-	// exists, and a degraded campaign is only knowable once they have all been
-	// tried.
-	accountRoutes.Instance = instanceView(cfg, degraded)
+	// One instance view, computed once and shared by every document this process
+	// renders. Assigned here rather than at each construction because the account
+	// routes are built before any content root exists, and a degraded campaign is
+	// only knowable once they have all been tried — and because five handlers each
+	// building their own would be five chances for one of them to end up with a
+	// zero value, which renders an empty name, an empty version, and (worst of all)
+	// a *healthy* instance: an empty `Degraded` slice means healthy by
+	// construction, so a campaign whose content root vanished would be computed as
+	// degraded by the pipeline and then rendered as fine by the interface. Both
+	// halves reporting success is the worst shape that bug can take.
+	instance := instanceView(cfg, degraded)
+	accountRoutes.Instance = instance
 
 	if len(degraded) > 0 {
 		logger.Warn("instance degraded: some campaigns have no readable content",
@@ -261,6 +279,12 @@ func runServer(_ []string) error {
 	// for concurrent use, so this is one allocation per campaign rather than one
 	// per request. Built here from the campaigns the store just listed, because a
 	// renderer for a campaign with no root would be a renderer nothing can reach.
+	//
+	// This map is the process's **only** renderer set. The wiki route and the
+	// editor are handed views of *this* map, not copies of it — see
+	// `editorRenderers` — so "which campaigns have a renderer" has one answer in
+	// this binary rather than one per route, and a campaign cannot render on one
+	// surface and report a load error on another.
 	renderers := make(wiki.CampaignRenderers, len(registered))
 
 	// Indexed: domain.Campaign is 128 bytes, and a renderer map keyed by slug
@@ -277,7 +301,21 @@ func runServer(_ []string) error {
 	// campaign whose content root opened. `pipeline.go` states the graph; this is
 	// the wiring, and it is here rather than in a package so that the order the
 	// three are constructed and stopped in is visible in one place.
-	pipeline, err := newContentPipeline(ctx, contentRoots, registered, db, pageKinds{}, signals)
+	//
+	// `hub.Sink()` goes in beside the indexer rather than beside the watcher,
+	// which is the placement that makes the notice true: a sink on the watcher
+	// would fire on the raw filesystem event, and a GM would be told their page
+	// changed while the bytes were still moving. Off the settle filter, a notice
+	// means the file stopped changing.
+	pipeline, err := newContentPipeline(
+		ctx,
+		contentRoots,
+		registered,
+		db,
+		pageKinds{},
+		signals,
+		hub.Sink(),
+	)
 	if err != nil {
 		return fmt.Errorf("wire the content pipeline: %w", err)
 	}
@@ -311,9 +349,32 @@ func runServer(_ []string) error {
 		renderers,
 		pageKinds{},
 		pageLister{db: db},
-		accountRoutes.Instance,
+		instance,
 		logger,
 	)
+
+	// The other three campaign-scoped routes, over the same four dependencies the
+	// wiki route just got — the same confined roots, the same renderers, the same
+	// store, the same instance view — because they are four views of one campaign's
+	// content rather than four subsystems.
+	//
+	// Constructed here and passed to `NewRouter` rather than assembled inside the
+	// router, for the reason the rest of this function is the composition root at
+	// all: this is the one place that knows a `*store.Store` is what satisfies both
+	// `search.Pages` and the writer queue behind `edit.Revisions`, and putting the
+	// conversions in the router would mean the router knew about the store's
+	// internals.
+	assetRoute := newAssetRoute(contentRoots, instance, logger)
+	searchRoute := newSearchRoute(db, instance, logger)
+	editRoute := newEditRoute(
+		contentRoots,
+		db,
+		editorRenderers(renderers),
+		pageKinds{},
+		instance,
+		logger,
+	)
+	eventRoute := newEventRoute(hub, logger)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -324,6 +385,10 @@ func runServer(_ []string) error {
 			accountRoutes,
 			httpStore,
 			wikiRoute,
+			assetRoute,
+			searchRoute,
+			editRoute,
+			eventRoute,
 		),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
@@ -332,7 +397,48 @@ func runServer(_ []string) error {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 
-	if err := serve(ctx, server, logger, cfg.ShutdownTimeout); err != nil {
+	// # The shutdown order, and why each step is where it is
+	//
+	// Three things have to be stopped, and the order is the dependency rather than
+	// the tidiness:
+	//
+	//  1. **The event hub, before the HTTP server drains.** `serve` closes it, and
+	//     it is closed there rather than by a defer here because
+	//     `http.Server.Shutdown` waits for every in-flight request to return — and an
+	//     event stream never returns on its own. `events.stream` ends on the hub's
+	//     close or on a failed write, and deliberately not on the request context
+	//     being cancelled, because a stream that ended at the handler budget would be
+	//     a reconnect loop. So a hub closed *after* the drain is a drain that blocks
+	//     for the whole shutdown budget and then returns
+	//     `context deadline exceeded`, on every shutdown, for a reason that reads as
+	//     a server fault rather than as a long-lived response. Closing it first turns
+	//     the same shutdown into: streams end, the last frames are written, the
+	//     handlers return, the drain completes inside the budget.
+	//  2. **The content pipeline, before the roots and before the store.** Already
+	//     true by Go's last-in-first-out deferral — the pipeline registers its close
+	//     after both of theirs, so it runs first — and the reason is that the
+	//     pipeline is the only thing still *writing*: its watcher and its settle
+	//     filter stat through `contentRoots` and its indexer writes to `db`. Closing
+	//     either of those first is a failure manufactured by this function rather
+	//     than by anything on the host. `contentPipeline.Close` states the order
+	//     *within* the pipeline, which is the same argument one level down.
+	//  3. **The hub is closed before the pipeline, and that is also deliberate.** The
+	//     pipeline is the hub's only publisher, so after step 1 every `Publish` is a
+	//     no-op — which is correct, because there is no longer a reader to tell. The
+	//     reverse order would also be safe, so this is stated rather than claimed as
+	//     load-bearing: it is a consequence of doing 1 first, not a separate rule.
+	//
+	// The store is last of all, and that is not a close but a commit point: every
+	// writer in the process is a writer *queue* over this handle, and a queue still
+	// holding a request has to be drained before the handle under it goes away.
+	// `store.Close` is what does the draining.
+	if err := serve(
+		ctx,
+		server,
+		logger,
+		cfg.ShutdownTimeout,
+		closeEventHub(hub, logger),
+	); err != nil {
 		return err
 	}
 
@@ -341,13 +447,70 @@ func runServer(_ []string) error {
 	return nil
 }
 
+// closeEventHub returns the shutdown step that ends every open event stream.
+//
+// A function rather than `hub.Close` itself for one reason: `Hub.Close` returns an
+// error, and the shutdown step this is used as cannot — it runs while the process
+// is on its way out, after the drain has not yet happened, and there is nowhere to
+// return an error to. A `Hub.Close` that failed would leave streams open, and the
+// honest thing to do about that is record it and carry on, exactly as the store's
+// close does for the same reason.
+//
+// Idempotent by construction (`Hub.Close` is), which matters because this is a
+// value a caller might reasonably also close on a panic path.
+func closeEventHub(hub *events.Hub, logger *slog.Logger) func() {
+	return func() {
+		if err := hub.Close(); err != nil {
+			logger.Error("close the event hub", slog.String("error", err.Error()))
+
+			return
+		}
+
+		stats := hub.Stats()
+
+		logger.Info("event hub closed",
+			slog.Int64("published", stats.Published),
+			slog.Int64("delivered", stats.Delivered),
+			slog.Int64("dropped", stats.Dropped),
+			slog.Int("open_subscriptions", stats.Subscribers),
+		)
+	}
+}
+
 // serve runs the HTTP server until it fails or the context is cancelled, then
-// drains in-flight requests within the shutdown budget.
+// ends the long-lived responses and drains in-flight requests within the shutdown
+// budget.
+//
+// # Why there is a `beforeDrain` step
+//
+// `http.Server.Shutdown` closes the listeners and then **waits for every in-flight
+// request to return**, bounded by the context it is given. A request that does not
+// return on its own therefore consumes the entire budget and turns every shutdown
+// into a failure. This project has one such request: `GET /c/{slug}/events`, the
+// event stream, whose loop ends on the hub's close or on a failed write and
+// deliberately *not* on the request context's cancellation — selecting on that
+// would cut every stream at the handler budget and leave the client reconnecting
+// forever, which is a reconnect loop rather than a stream.
+//
+// So `beforeDrain` runs after the listener has stopped accepting and before
+// `Shutdown` is called, and the composition root uses it to close the event hub.
+// The order inside is therefore: stop accepting → end the streams → drain the
+// rest. Doing it the other way round is a shutdown that always times out.
+//
+// The alternative — clearing the request context, or giving the handler a way to
+// learn the server is going away — was rejected because it hands every long-lived
+// handler a new obligation, and this process has exactly one of them. A named step
+// is one line at the call site and one contract at the definition.
+//
+// Called for the error path too, not only for the signal: if `ListenAndServe`
+// fails outright there are no in-flight requests to end, and closing the hub is
+// idempotent, so the same call is correct on both exits.
 func serve(
 	ctx context.Context,
 	server *http.Server,
 	logger *slog.Logger,
 	shutdownTimeout time.Duration,
+	beforeDrain func(),
 ) error {
 	errCh := make(chan error, 1)
 
@@ -364,12 +527,21 @@ func serve(
 	select {
 	case err := <-errCh:
 		if err != nil {
+			beforeDrain()
+
 			return fmt.Errorf("listen: %w", err)
 		}
 	case <-ctx.Done():
 	}
 
 	logger.Info("shutdown signal received")
+
+	// Before the drain, and before the shutdown context exists, because a step that
+	// could block has no business holding a deadline that is about to expire.
+	// `events.Hub.Close` cannot block — it takes a mutex and closes channels — so
+	// this is immediate in practice; the placement is what makes it *safe* rather
+	// than what makes it fast.
+	beforeDrain()
 
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()

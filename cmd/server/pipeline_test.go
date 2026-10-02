@@ -20,6 +20,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi"
 	"github.com/semiplane/semiplane/internal/httpapi/auth"
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
+	"github.com/semiplane/semiplane/internal/httpapi/events"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
@@ -189,6 +190,9 @@ func (i *instance) assemble(
 		i.store,
 		pageKinds{},
 		newContentSignals(i.registry, discardLogger()),
+		// No event hub. The pipeline indexes either way, and a test asserting the
+		// index converges must not also depend on a browser being attached.
+		nil,
 	)
 	if err != nil {
 		i.t.Fatalf("wire the content pipeline: %v", err)
@@ -227,6 +231,30 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 
 	i.lister = pageLister{db: i.store}
 
+	// The instance view the product builds, so every handler here is assembled from
+	// the same parts `runServer` uses. A zero value would make these fixtures assert
+	// about handlers no deployment serves — and would report every campaign healthy,
+	// which is the bug this argument exists to stop coming back.
+	instance := instanceView(testConfig(), nil)
+
+	// One map, two routes. Hoisted rather than built twice so this helper cannot
+	// drift from the composition root on the question that matters: the wiki route
+	// and the editor must hold the same renderers, and a helper that built a second
+	// map would be a place where that quietly stopped being true.
+	renderers := i.renderers(roots, registered)
+
+	// The hub, closed with the test. An unclosed hub holds no goroutine and no
+	// resource — it is a mutex and a map — so this is hygiene rather than
+	// correctness, and it is here because a fixture that constructs one and forgets
+	// is how the next assertion about stream teardown gets written against a hub
+	// another test already closed.
+	hub := events.NewHub()
+	i.t.Cleanup(func() {
+		if err := hub.Close(); err != nil {
+			i.t.Errorf("close the event hub: %v", err)
+		}
+	})
+
 	return httpapi.NewRouter(
 		discardLogger(),
 		testConfig(),
@@ -235,17 +263,23 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 		i.store,
 		newWikiRoute(
 			roots,
-			i.renderers(roots, registered),
+			renderers,
 			pageKinds{},
 			i.lister,
-			// The instance view the product builds, so this handler is assembled
-			// from the same parts `runServer` uses. A zero value here would make
-			// the fixture assert about a handler no deployment serves — and it
-			// would report every campaign healthy, which is the bug this argument
-			// exists to stop coming back.
-			instanceView(testConfig(), nil),
+			instance,
 			discardLogger(),
 		),
+		newAssetRoute(roots, instance, discardLogger()),
+		newSearchRoute(i.store, instance, discardLogger()),
+		newEditRoute(
+			roots,
+			i.store,
+			editorRenderers(renderers),
+			pageKinds{},
+			instance,
+			discardLogger(),
+		),
+		newEventRoute(hub, discardLogger()),
 	)
 }
 
@@ -496,7 +530,14 @@ func TestReadyzRendersThePipelineCountersAsZeros(t *testing.T) {
 	// registry, with no campaign registered and nothing failed.
 	newContentSignals(registry, discardLogger())
 
-	handler := httpapi.NewRouter(discardLogger(), testConfig(), registry, nil, nil, nil)
+	// No account routes and none of the five campaign-scoped handlers. The
+	// independently-runnable invariant from architecture §15 is that the server
+	// starts and answers `/healthz` from phase 1 onward, and that has to hold for a
+	// process with no content, no store and no account surface at all — so the
+	// router is built with every one of them nil rather than with a fixture.
+	handler := httpapi.NewRouter(
+		discardLogger(), testConfig(), registry, nil, nil, nil, nil, nil, nil, nil,
+	)
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, get(t, "/readyz"))

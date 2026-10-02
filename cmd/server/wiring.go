@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 
@@ -9,10 +10,28 @@ import (
 	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/httpapi/assets"
+	"github.com/semiplane/semiplane/internal/httpapi/edit"
+	"github.com/semiplane/semiplane/internal/httpapi/events"
+	"github.com/semiplane/semiplane/internal/httpapi/search"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/store"
 	"github.com/semiplane/semiplane/internal/web/components"
 )
+
+// signOutHref is where every campaign-scoped document's sign-out form posts.
+//
+// One constant rather than a literal per handler, because the four routes that
+// render a shell all have to name the same URL: a header with two different
+// sign-out destinations is a header that signs one account out and leaves the
+// other signed in, and the only way to find that is to click both. The account
+// routes own the other end (`accounts.Router.Mount` registers `/logout`), and this
+// is the string that has to agree with it.
+//
+// `""` renders no form, so a test that does not care about the account zone does
+// not have to set it — which is why the constructors above take the instance view
+// and the href from `runServer` rather than looking either up.
+const signOutHref = "/logout"
 
 // The composition root's smaller wirings. Each is here rather than inline in
 // main because each answers a question a reader of main should not have to hold
@@ -151,8 +170,149 @@ func newWikiRoute(
 		// the interface. That is the worst shape this bug can take, because both
 		// halves reported success.
 		Instance:    instance,
-		SignOutHref: "/logout",
+		SignOutHref: signOutHref,
 	}
+}
+
+// newAssetRoute builds the campaign-scoped asset handler over the content roots.
+//
+// The dependency set is the smallest one that can serve the route, and each entry
+// is a decision rather than a convenience:
+//
+//   - `Roots` and nothing else for finding content. The route resolves a slug to a
+//     confined root and refuses anything else, so the handle it holds is the
+//     confinement boundary (S-3.5) rather than a way to reach a filesystem.
+//   - `Instance` and `SignOutHref` only for the *failure* states. A found asset is
+//     bytes and a media type from a closed table; nothing about it needs the
+//     instance's identity, and the shell exists here so a reader who mistyped a
+//     path lands on a designed page rather than net/http's plain-text 404.
+//
+// The logger is optional in the handler's own contract, and the composition root
+// passes the process logger anyway — a refused asset is a line an operator greps
+// for, and "there is no logger here" is not a reason for there to be none.
+func newAssetRoute(
+	roots *content.Registry,
+	instance components.InstanceView,
+	logger *slog.Logger,
+) *assets.Handler {
+	return &assets.Handler{
+		Roots:       roots,
+		Logger:      logger,
+		Instance:    instance,
+		SignOutHref: signOutHref,
+	}
+}
+
+// newSearchRoute builds the campaign-scoped search handler over the store.
+//
+// `Pages` is the store handle itself, because `*store.Store` satisfies
+// `search.Pages` and a second adapter would be a second place to get the campaign
+// scope right — and the campaign scope is the field this route's security rests
+// on. `store.PageSearch.CampaignID` of 0 means *every campaign the requestor may
+// read*, so an adapter that forgot to set it would not fail a test, it would leak
+// private page titles into a stranger's results. The fewer translations between
+// the composition root and the query, the fewer ways that can happen.
+func newSearchRoute(
+	pages *store.Store,
+	instance components.InstanceView,
+	logger *slog.Logger,
+) *search.Handler {
+	return &search.Handler{
+		Pages:       pages,
+		Instance:    instance,
+		SignOutHref: signOutHref,
+		Logger:      logger,
+	}
+}
+
+// newEditRoute builds the campaign-scoped editor handler.
+//
+// `Revisions` is the one field that cannot be a plain assignment, and the reason
+// is a Go language rule rather than a design preference. `store.Store.Write` takes
+// an **unexported** parameter type, `store.writeFunc`:
+//
+//	func (s *Store) Write(ctx context.Context, fn writeFunc) error
+//
+// An interface method's parameter types must be *identical*, not merely
+// assignable, and no package outside `store` can even name `writeFunc`. So there
+// is no interface `*store.Store` satisfies that expresses "run this in a
+// transaction", and the only way through is a closure — which converts one
+// function type to the other implicitly, without either being named at the call
+// site.
+//
+// The closure is not a convenience and it is not the only way to reach a
+// transaction; it is the only way to reach **the writer queue**. `Store.DB()` is
+// documented for reads, and a request goroutine writing on it bypasses the queue
+// whose entire job is to keep exactly one statement in flight so SQLite's
+// single-writer limit is never contended. Two writers is a `SQLITE_BUSY`, so the
+// second one to arrive loses a GM's save.
+//
+// `Renderers` is the *same map* the wiki route holds, not a second one. Both named
+// types are `map[string]*content.Renderer` and a Go conversion between two named
+// map types shares the underlying map rather than copying it, so there is one set
+// of renderers in this process and therefore one answer to "which campaigns have
+// a renderer". Two maps would be two answers, and the shape of the failure is the
+// bad one: a campaign present in one and absent from the other renders a page on
+// the wiki route and a load error in the editor, with nothing in the logs to say
+// which side is wrong. `TestTheEditorAndTheWikiRouteHoldTheSameRenderers` is the
+// assertion.
+//
+// The redactor is `content.NoSecrets()`, which removes nothing. P10 replaces it,
+// and the editor still calls it with `include_secrets=true` so the ordering S-5.7
+// requires is in place before the redactor starts removing things. A comment
+// saying so sits on the field rather than only here, because the field is where a
+// reader looks.
+func newEditRoute(
+	roots *content.Registry,
+	backing *store.Store,
+	renderers edit.CampaignRenderers,
+	kinds domain.PageKindRegistry,
+	instance components.InstanceView,
+	logger *slog.Logger,
+) *edit.Handler {
+	return &edit.Handler{
+		Roots: roots,
+		Revisions: edit.NewRevisionLog(
+			func(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+				return backing.Write(ctx, fn)
+			},
+		),
+		Renderers: renderers,
+		Kinds:     kinds,
+		// P10 replaces this. Until then `[!secret]` content is **not** redacted
+		// anywhere, and the editor is the surface where that matters most because
+		// it is GM-only and renders with `include_secrets=true`.
+		Redactor:    content.NoSecrets(),
+		Logger:      logger,
+		Instance:    instance,
+		SignOutHref: signOutHref,
+	}
+}
+
+// newEventRoute builds the campaign-scoped event stream over the hub.
+//
+// Two fields, and the handler holds no state: a `Handler` is shared by every
+// request, so anything per-connection has to be a local variable in the handler's
+// own goroutine, which `net/http` already accounts for.
+func newEventRoute(hub *events.Hub, logger *slog.Logger) *events.Handler {
+	return &events.Handler{Hub: hub, Logger: logger}
+}
+
+// editorRenderers is the wiki route's renderer map seen as the editor's.
+//
+// A conversion and nothing else. Go does not copy a map when converting between
+// two named types with the same underlying type — the result shares the same
+// header, so a renderer built once is the renderer both routes hold and a
+// campaign added to one is in the other. That is the whole point of doing it this
+// way rather than ranging over the map into a second one, and the assertion is
+// `TestTheEditorAndTheWikiRouteHoldTheSameRenderers`.
+//
+// The parameter is `wiki.CampaignRenderers` rather than the underlying type so
+// that the two routes' names meet in exactly one place. If either package's
+// declaration of the map changes, this is the line that stops compiling, which is
+// the moment a reader wants to know.
+func editorRenderers(renderers wiki.CampaignRenderers) edit.CampaignRenderers {
+	return edit.CampaignRenderers(renderers)
 }
 
 // instanceView assembles the instance identity every page's header and rail

@@ -1,0 +1,911 @@
+package edit
+
+// The editor surface and the conflict diff that replaces its preview pane.
+//
+// UI §4.8's editor, and this file is the server-rendered half of every contract
+// in it. Two of those contracts are worth stating here because the other half is
+// phase 9's script and nothing in this file can enforce them:
+//
+//   - **The save control is inert until then.** `data-editor-save` is a
+//     `type="button"`, not a form submission, because the write is a `PUT`
+//     carrying `If-Match` (S-6.2) and an HTML form can set neither a method nor a
+//     header. This is the same situation `ui.Dialog` is in — a trigger whose
+//     `aria-controls` names a panel no script has opened yet — and the same
+//     answer: the attributes are written now, against the contract they have to
+//     satisfy, and asserted against the markup rather than against behaviour.
+//   - **The toolbar has no roving `tabindex`.** §4.8 asks for one, and §7.4
+//     forbids `tabindex` above `-1` and the gate rejects `0` as well, so a
+//     roving value cannot appear in served markup at all. The buttons are in
+//     natural document order here, and the roving attribute is set from the
+//     script — which is the only place it can be, since the gate reads the
+//     served document.
+//
+// # The buffer is the point
+//
+// §4.8's last row and §11's risk table both say the same thing: the editor
+// buffer is unsaved work, and the 412 response re-renders the whole editor. So
+// the textarea holds `view.Buffer` — the *request's* source on a 412, never the
+// disk's — and the disk's text reaches the reader only through the diff's second
+// column. A component that filled the textarea from disk on a conflict would lose
+// the GM's work and would look correct while doing it, which is why
+// `TestTheBufferSurvivesTheConflict` asserts the value in the parsed DOM rather
+// than the presence of a diff.
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/semiplane/semiplane/internal/content"
+	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
+// SaveState is what the editor's status region says.
+//
+// A closed enum rather than a caller-supplied sentence, for the reason
+// `components.LoginFailure` is one: the wording is the interface's, and a
+// vocabulary test cannot reach a sentence a handler invented. The five values are
+// §4.8's own, and they are all *server-rendered* states — "Saving" is the one the
+// script sets while a PUT is in flight, and the rest are what a GM sees when the
+// document arrives.
+type SaveState int
+
+const (
+	// SaveIdle is the zero value: the editor is open and nothing has been sent.
+	// Zero because it is the state every successful `GET` renders, and a
+	// handler that forgot to choose would otherwise be choosing "Conflict".
+	SaveIdle SaveState = iota
+	// SaveConflict is the 412: the file on disk is not the file that was opened.
+	SaveConflict
+	// SaveSaved is a write that committed. Only reachable on a re-render after a
+	// successful save, which the script performs by re-fetching the editor.
+	SaveSaved
+	// SaveError is a write that failed for a reason the reader can act on.
+	SaveError
+)
+
+// message is the sentence the status region renders.
+//
+// `role="status"` means this is announced politely, and the record's rule is that
+// a save state is a state change rather than an interruption (S-13.3), so none of
+// these is phrased as an alarm. The conflict *detail* is the `role="alert"`
+// region's job and is not repeated here — a status line that also said the whole
+// conflict would be announced twice, once politely and once assertively.
+func (state SaveState) message() string {
+	switch state {
+	case SaveIdle:
+		return "Idle"
+	case SaveConflict:
+		return "Conflict"
+	case SaveSaved:
+		return "Saved"
+	case SaveError:
+		return "Error"
+	default:
+		// A value built by hand rather than through the enum is a bug, not a
+		// state, and the only honest thing to say about one is nothing that
+		// claims to be a fact about the save.
+		return "Idle"
+	}
+}
+
+// EditorView is the editor surface and the rail beside it.
+//
+// One model for both because §4.4's editor and §4.4's rail for this route
+// describe one screen: the rail's save state and the centre's status region are
+// the same fact, and two models would let a caller fill one and not the other.
+//
+// `Shell` is here, as it is in `components.WikiPageView`, and for the same reason:
+// the whole document is one component so that the landmarks cannot come apart from
+// the slot that fills them. A route that assembled `components.Shell` itself
+// would have to remember to pass a centre *and* a rail in the right order on a
+// 200 and on a 412, and the failure mode of getting that wrong is a document whose
+// `<main>` holds the rail.
+type EditorView struct {
+	// Shell is the chrome. Its Instance field also fills the failure states' rail.
+	Shell components.ShellView
+	// Page is the page's own name — its base name, never the front matter's
+	// `title:`. It becomes the document's single `<h1>` and the buffer's
+	// provenance in a support report, and it is the same string the wiki route
+	// puts on its heading, so a GM reading a bug report sees one name for one
+	// page.
+	Page string
+	// Buffer is the page's source: the file's bytes on a plain `GET`, and the
+	// *request's* bytes on a 412. Never the disk's text on a conflict.
+	Buffer string
+	// Validator is the `ETag` a save must present in `If-Match`, and the value
+	// the follow-up save after a conflict must present instead. It is the same
+	// salted validator the wiki route serves a GM (S-5.3), and the reason the
+	// two routes agree is that both derive it from `content.CacheKey.ETag`
+	// rather than from a hash of their own.
+	Validator string
+	// ContentHash is the hex SHA-256 of the bytes on disk. Carried beside the
+	// validator because the validator is a *salted* digest (S-5.3) and therefore
+	// not the thing a GM can paste into a diff tool when they ask what changed.
+	ContentHash string
+	// Preview is the buffer's sanitised HTML from the publication pipeline.
+	// The only unescaped value this package renders, and the only one that came
+	// out of `content.Renderer`.
+	//
+	// Rendered without its references' addresses, and that omission is
+	// deliberate: attaching a resolved `href` means writing markup no sanitiser
+	// has seen, which `internal/httpapi/wiki/links.go` owns and argues for at
+	// length. A second copy of that step in a template package would be a second
+	// implementation of a security boundary, so a wikilink shows in the preview
+	// as the renderer emits it — an anchor with no destination — until the
+	// preview's own render endpoint arrives. The extensions themselves are real:
+	// this is the same goldmark pipeline with the same five extensions, so the
+	// preview cannot lie about anything except where a link points.
+	Preview string
+	// State is what the status region says.
+	State SaveState
+	// Conflict is the 412's diff, or nil when there is no conflict. A pointer so
+	// "the preview is showing a page" and "the preview is showing a conflict"
+	// cannot be the same value — a conflict that rendered as an ordinary preview
+	// would silently drop the one thing the GM came for.
+	Conflict *Conflict
+}
+
+// Conflict is one save that was refused, and the two texts it is a conflict
+// between.
+type Conflict struct {
+	// Hunks are the differing regions, in order. Empty when the two texts are
+	// equal line for line, which a 412 can be — see `Diff`.
+	Hunks []Hunk
+	// Validator is the disk's current salted validator, and therefore the
+	// `If-Match` a resolved save must present. Distinct from the editor's own
+	// `EditorView.Validator` on a 412: the editor is holding H1, this is H2, and
+	// a follow-up save that presented the old one would be refused again.
+	Validator string
+	// ContentHash is the hex digest of the disk's bytes, for the same reason
+	// `EditorView.ContentHash` carries one.
+	ContentHash string
+}
+
+// ToolbarButton is one insertion control.
+//
+// A value with three fields rather than a struct the template reaches into,
+// because the toolbar's list is a *reviewable claim* about what the editor can
+// insert, and a list of structs in the route is a list a reviewer has to read
+// there. §4.8's six — Bold, Italic, Link, Wikilink, Code, Heading — plus the two
+// this project's own extensions add, `Statblock` and `Dice`. A button with no
+// label is not rendered at all: a control a screen reader cannot name is a focus
+// stop with no purpose.
+type ToolbarButton struct {
+	// Label is the button's visible text, and the start of its accessible name.
+	Label string
+	// Tool is the stable hook phase 9's script binds the insertion to. Equal to
+	// Label in lower case for every button today, and separate because the
+	// visible word is the interface's and the hook is the contract's — they will
+	// diverge the first time a label is reworded, and a reword must not rename a
+	// hook.
+	Tool string
+}
+
+// toolbar is §4.8's row, in the record's order.
+//
+// Bold, Italic, Link, Wikilink, Code, Heading, Statblock, Dice — the six the
+// record names, then the two the plan's own extensions add. A var rather than a
+// function because the list is constant and a function would suggest it could
+// depend on anything.
+var toolbar = []ToolbarButton{
+	{Label: "Bold", Tool: "bold"},
+	{Label: "Italic", Tool: "italic"},
+	{Label: "Link", Tool: "link"},
+	{Label: "Wikilink", Tool: "wikilink"},
+	{Label: "Code", Tool: "code"},
+	{Label: "Heading", Tool: "heading"},
+	{Label: "Statblock", Tool: "statblock"},
+	{Label: "Dice", Tool: "dice"},
+}
+
+// extensions is the textarea's description, listing what the editor's pipeline
+// understands.
+//
+// A `<p id>` rather than a `placeholder`, for §4.8's own reason: "never a
+// placeholder-only field". A placeholder disappears the moment the field has
+// content, so it is available exactly when it is least useful, and it is not
+// announced by every reader at all.
+const extensions = "Markdown, plus this campaign's extensions: " +
+	"[[wikilink]], ![[embed]], {{statblock}}, {{dice}}, and [!secret] callouts."
+
+// The element ids the editor's own references use.
+//
+// Named rather than interpolated, because every one of them is referenced from
+// two places — the element and the `for`/`aria-*` that names it — and a literal
+// in each place is two literals that a rename half-applies. The gate's reference
+// rule (§10.2) is what makes that a failure rather than a subtlety: an
+// `aria-describedby` pointing at nothing is invisible until a reader asks what
+// the field is for.
+const (
+	bufferID    = "page-content"
+	bufferDesc  = "page-content-hint"
+	saveID      = "editor-save"
+	noticeID    = "editor-change-notice"
+	previewID   = "editor-preview"
+	statusID    = "editor-status"
+	conflictID  = "editor-conflict"
+	factsID     = "editor-facts"
+	toolbarID   = "editor-toolbar"
+	validatorID = "editor-validator"
+	// sideYours and sideTheirs are the two columns' data values, and the values the
+	// accept/reject buttons carry. One constant each so that the attribute a button
+	// writes and the attribute a cell is marked with cannot drift apart — a script
+	// that looked for "theirs" in a column marked "theirs" is the whole contract,
+	// and a rename of one side is a rename of both.
+	sideYours  = "yours"
+	sideTheirs = "theirs"
+)
+
+// EditorPage is the whole editor document: the shell, the editor in its centre,
+// and the rail beside it.
+//
+// The document rather than the slot, and it is exported as one component for the
+// reason `EditorView.Shell` exists: the landmarks, the skip links and the two
+// slots are one contract, and assembling them at a call site means every refusal
+// status in `internal/httpapi/edit` has to remember to do it the same way. There
+// are four documents this route serves — the editor, the conflict, the missing
+// precondition, and the failure state — and this is the first; the other three are
+// `PreconditionPage` and `FailurePage` below.
+//
+// `components.Shell` and not `components.CampaignShell`, and the reason is that
+// the campaign navigation is another work item's surface: the wiki route renders
+// the same variant, and a second route deciding on its own whether the navigation
+// exists is how two routes end up disagreeing about a landmark.
+templ EditorPage(view EditorView) {
+	@components.Shell(view.Shell, EditorSurface(view), EditorRail(view))
+}
+
+// PreconditionView is the 428's document: the statement that a save named no
+// validator.
+//
+// A distinct type from `EditorView` rather than a field on it, because the one
+// thing this response must not do is render an editor — and a view model that
+// *could* express one is a view model a later change will reach for. `Page` is the
+// page's name, so the document title and the campaign are still the ones a GM
+// expects; `Validator` is the value the request should have carried, and it is
+// shown because a client that can see what it should have sent can recover without
+// a second round trip.
+type PreconditionView struct {
+	// Shell is the chrome.
+	Shell components.ShellView
+	// Page is the page's own name.
+	Page string
+	// Validator is the current validator for the page's bytes on disk. Empty when
+	// the page could not be read, which is the one case where the copy says so.
+	Validator string
+}
+
+// PreconditionPage is the 428's document.
+templ PreconditionPage(view PreconditionView) {
+	@components.Shell(view.Shell, preconditionNotice(view), components.InstanceRail(view.Shell.Instance))
+}
+
+// preconditionNotice is the 428's centre slot.
+//
+// **No live region, and the reason is §7.5's own table.** It names three
+// assertive announcements — a 412 conflict, a secret reveal, a capped
+// reconciliation — and a missing precondition is none of them. The 412 is
+// announced because a GM's save was refused *against their intent*; this is a
+// client that has not implemented the contract, and whoever reads the response is
+// looking at it rather than having it spoken over what they were doing.
+//
+// The heading is the document's `<h1>`, so `ui.HeadingPage` would render it as
+// one — and this notice is written here rather than added to `ui` because §4.7's
+// table has no 428 row and adding one to that package for a single caller would
+// make a set of eleven into a set of twelve with one member that exists only
+// because this route needed it.
+templ preconditionNotice(view PreconditionView) {
+	<section
+		class="notice notice--warning"
+		aria-labelledby="precondition-heading"
+		data-testid="precondition-required"
+	>
+		// The document's single <h1> is the page's name and not the condition's
+		// sentence, for the reason the editor's own heading is the page's name: a GM
+		// with two tabs open is reading two of these documents, and a heading that
+		// said "This save was not applied" in both would make them
+		// indistinguishable in a heading list while telling them nothing about
+		// which page is at stake.
+		<h1 data-testid="page-title">{ view.Page }</h1>
+		<h2 id="precondition-heading">This save was not applied</h2>
+		<p data-testid="precondition-message">
+			The request did not carry this page's validator, so nothing was written. Reopen
+			the editor and save again.
+		</p>
+		if view.Validator != "" {
+			<p class="panel-note" data-testid="precondition-validator">
+				This page's validator: <code>{ view.Validator }</code>
+			</p>
+		}
+	</section>
+}
+
+// FailureView is the document for a refusal that is neither a conflict nor a
+// missing precondition: 400, 403, 404, 413 and 500.
+//
+// `State` is the caller's rather than a `ui` value chosen here, because those five
+// statuses are not one state: four of them are the load-failure state `ui` already
+// designs, and one (413) is a statement about a save that is not a load failure at
+// all. A parameter keeps the choice at the call site, where the status is known,
+// and keeps this package from owning five sentences' worth of copy it would render
+// in exactly one combination.
+type FailureView struct {
+	// Shell is the chrome. Its Instance field fills the rail, which is the same
+	// rail the wiki route's failures use and for the same reason: §4.7's rail for
+	// an error is "empty", and the instance panel is what makes the landmark
+	// non-empty without inventing a second thing to say.
+	Shell components.ShellView
+	// State is the centre slot. Required: a failure document with an empty centre
+	// is a document with a `main` and nothing in it.
+	State templ.Component
+}
+
+// FailurePage is the document for a refusal that is neither a conflict nor a
+// missing precondition.
+templ FailurePage(view FailureView) {
+	@components.Shell(view.Shell, view.State, components.InstanceRail(view.Shell.Instance))
+}
+
+// TooLargeView is the 413's centre slot: a save whose body is over the document
+// cap.
+//
+// Its own component because `ui.LoadError`'s sentence is "semiplane could not load
+// this page", which is false here in a way a reader would notice: the page loaded
+// perfectly and the *save* was too big. The cap is `content.MaxDocumentBytes`, the
+// same one the read path applies, and it is stated rather than implied so that a
+// GM who hit it can split the page rather than guess.
+type TooLargeView struct {
+	// Limit is the cap in bytes, as a decimal string. Shown because a limit
+	// nobody can see is a limit nobody can act on, and this is the only place a GM
+	// learns it exists.
+	Limit string
+	// Heading is the heading level; the state owns the page's `<h1>`.
+	Heading ui.Heading
+}
+
+// TooLarge is the 413's centre slot.
+//
+// No live region, for the reason `preconditionNotice` gives: §7.5's assertive list
+// does not include it, and a full-document response is read rather than announced
+// in any case.
+templ TooLarge(view TooLargeView) {
+	<section
+		class="notice notice--warning"
+		aria-labelledby="too-large-heading"
+		data-testid="save-too-large"
+	>
+		@stateHeading("too-large-heading", "This page is too large to save", view.Heading)
+		<p data-testid="save-too-large-message">
+			A page may be at most { view.Limit } bytes. Nothing was written.
+		</p>
+	</section>
+}
+
+// stateHeading renders a heading at the level its placement calls for.
+//
+// A local copy of `ui`'s unexported helper of the same name, and it is a copy for
+// the reason the whole package is: `ui` is another work item's, and a state this
+// package owns cannot be rendered by a helper that package does not export. The
+// rule it implements is §7.2's "heading levels never skip" — a document whose
+// headings start at `<h3>` has exactly one `<h1>`-shaped hole and no outline at
+// all — so the branch is here rather than at the two call sites that need it.
+templ stateHeading(id, text string, heading ui.Heading) {
+	if heading == ui.HeadingPage {
+		<h1 id={ id }>{ text }</h1>
+	} else {
+		<h2 id={ id }>{ text }</h2>
+	}
+}
+
+// ChangeNoticeView is the fragment the event stream patches into the editor's
+// notice slot.
+//
+// A fragment and not a document, because §7.5 is explicit that the stream carries
+// "rendered DOM fragments" and Datastar patches the DOM with them: a client-side
+// renderer for this notice would be a second place that decides what an external
+// change is called, and the second place would be the one nobody reviews.
+//
+// `Op` is the change that happened rather than a flag, because the three
+// operations do not read the same way and a notice that said "changed" for a
+// deleted page would offer a Review action that 404s.
+type ChangeNoticeView struct {
+	// Page is the changed page's own name, used in the button's accessible name.
+	// A GM hearing "Review" with no page named cannot tell which of four open
+	// editors it acts on.
+	Page string
+	// Path is the page's root-relative path, carried as a data attribute so the
+	// client can tell whether the change concerns the page being edited. It is a
+	// path and not content (S-12.3), and it is already visible in the editor's own
+	// heading.
+	Path string
+	// ReviewHref is where the script fetches the current disk content from, to
+	// load into the diff. Empty for a removal, which has nothing to review.
+	ReviewHref string
+	// Op is what happened.
+	Op content.Op
+}
+
+// ChangeNotice is the external-change notice: what the stream patches in, and
+// what a reader sees when the patch arrives.
+//
+// `role="status"` with polite politeness, per §7.5's own table row for "Editor
+// external-change notice". It is a *notice* and not an alert: the GM's work is not
+// at risk (the buffer is untouched, and the record is explicit that this must
+// never discard it), so interrupting whatever they were doing would be the wrong
+// urgency for the wrong event. The 412 in the preview slot is the assertive one,
+// because there a save *was* refused.
+//
+// **Never auto-merges and never discards the buffer.** The Review control is a
+// `type="button"` with a `data-` hook and no navigation: a plain link to the editor
+// would replace the document, and replacing the document is how a GM's unsaved work
+// disappears. The hook is what phase 9's script binds; until then it is a control
+// that goes nowhere, which is the correct server-rendered half of a control whose
+// other half does not exist yet — the same position `ui.Dialog`'s trigger is in.
+templ ChangeNotice(view ChangeNoticeView) {
+	<section
+		class="notice notice--info"
+		role="status"
+		aria-live="polite"
+		aria-label={ changeHeading(view) }
+		data-change-notice
+		data-op={ view.Op.String() }
+		data-path={ view.Path }
+		data-testid="change-notice"
+	>
+		<p data-testid="change-notice-message">{ changeMessage(view.Op) }</p>
+		if view.ReviewHref != "" {
+			<button
+				type="button"
+				class={ ui.TargetClass + " button" }
+				data-review-change={ view.Path }
+				data-review-href={ view.ReviewHref }
+				aria-label={ "Review the change to " + view.Page }
+				data-testid="change-notice-review"
+			>
+				Review
+			</button>
+		}
+	</section>
+}
+
+// changeMessage is the sentence the notice states.
+//
+// Three sentences for three operations, and the closed set is the reason this is a
+// function rather than a field: a caller-supplied sentence is a sentence a
+// vocabulary test cannot reach and a copy editor would have to find in a handler
+// (UI §1.2, §10.2).
+func changeMessage(op content.Op) string {
+	switch op {
+	case content.OpRemove:
+		return "This page was removed from disk."
+	case content.OpRename:
+		return "This page changed name on disk."
+	case content.OpUpsert:
+		return "This page changed on disk."
+	default:
+		// An operation this build does not know. The generic sentence is honest
+		// for all three current operations and says nothing false about a fourth.
+		return "This page changed on disk."
+	}
+}
+
+// changeHeading is the notice's accessible name: what changed, named.
+func changeHeading(view ChangeNoticeView) string {
+	return "Change to " + view.Page
+}
+
+// EditorSurface is the centre slot: the page's name, the toolbar, the field, the
+// preview-or-conflict, and the status line.
+templ EditorSurface(view EditorView) {
+	<section class="editor" data-testid="editor">
+		// The single <h1> for the document (UI §7.2). It names the page being
+		// edited rather than saying "Edit", because a GM with two editor tabs
+		// open is reading two of these documents and a heading that said "Edit"
+		// twice would make the two indistinguishable in a heading list.
+		<h1 id="page-heading" data-testid="page-title">{ view.Page }</h1>
+		@toolbarBar()
+		<div class="editor-split">
+			<div class="editor-pane editor-pane--source">
+				<label class="editor-label" for={ bufferID } data-testid="editor-label">Page content</label>
+				<p class="editor-hint" id={ bufferDesc } data-testid="editor-hint">{ extensions }</p>
+				<textarea
+					id={ bufferID }
+					class={ ui.TargetClass + " editor-textarea" }
+					name="content"
+					spellcheck="false"
+					autocapitalize="off"
+					autocorrect="off"
+					autocomplete="off"
+					aria-describedby={ bufferDesc }
+					data-testid="editor-textarea"
+				>{ textareaValue(view.Buffer) }</textarea>
+			</div>
+			<div class="editor-pane editor-pane--preview">
+				@previewPane(view)
+			</div>
+		</div>
+		<div class="editor-statusbar">
+			// `role="status"` with the live-region politeness stated explicitly.
+			// The implicit value is already polite, so the attribute is redundant
+			// to a browser and load-bearing to a reader of this markup: §10.8's
+			// automated check is the attribute, and a save state that is *nearly*
+			// announced is worse than one that is.
+			<p
+				id={ statusID }
+				class="editor-status"
+				role="status"
+				aria-live="polite"
+				data-testid="editor-status"
+			>{ view.State.message() }</p>
+			// The save control. `type="button"` because the write is a PUT with a
+			// precondition and an HTML form can express neither a method nor a
+			// header; see the file comment. The precondition travels in three
+			// places and only three: the `ETag` response header, this button's
+			// `data-editor-save` for the script, and the rail's visible `<code>` for
+			// the person. There is deliberately no hidden form field — there is no
+			// form, and §10.6's audit walks *every* `input`, so a hidden field
+			// would have to carry `.target` to satisfy a rule about a control nobody
+			// can reach.
+			<button
+				id={ saveID }
+				type="button"
+				class={ ui.TargetClass + " button button--primary" }
+				data-editor-save={ view.Validator }
+				data-testid="editor-save"
+			>
+				Save
+			</button>
+		</div>
+	</section>
+}
+
+// toolbarBar is the insertion toolbar.
+//
+// `role="toolbar"` and an `aria-label`, because §4.8 requires the first and a
+// toolbar with no name is a landmark-shaped region a screen reader announces as
+// nothing in particular. The buttons carry `aria-label` *and* visible text, which
+// is redundant on purpose: the label is what a reader hears if the visible text
+// is ever replaced by an icon, and the two are the same string today.
+templ toolbarBar() {
+	<div
+		id={ toolbarID }
+		class="editor-toolbar"
+		role="toolbar"
+		aria-label="Insert"
+		data-testid="editor-toolbar"
+	>
+		for _, button := range toolbar {
+			<button
+				type="button"
+				class={ ui.TargetClass + " button editor-tool" }
+				aria-label={ button.Label }
+				data-editor-tool={ button.Tool }
+				data-testid={"editor-tool-" + button.Tool}
+			>
+				{ button.Label }
+			</button>
+		}
+	</div>
+}
+
+// previewPane is the right half of the split: the rendered page, or the conflict
+// diff that replaces it.
+//
+// §4.8 and §4.7 agree that the 412 goes *here* rather than into an error page or
+// a dialog, and the reason is in both: the editor is already a split view, so a
+// modal would hide the very buffer the reader is being asked to reconcile. The
+// conflict therefore takes the preview's place and the buffer stays where it is,
+// which is also what makes "the buffer survives a 412" a property of the layout
+// rather than of a rule somebody has to remember.
+templ previewPane(view EditorView) {
+	if view.Conflict != nil {
+		@ConflictDiff(*view.Conflict)
+	} else {
+		// `aria-live="off"` explicitly. A preview re-renders on a timer once the
+		// script exists, and a live region that re-renders on a timer is a
+		// screen-reader storm; §4.8 names the attribute and this is it.
+		<section
+			id={ previewID }
+			class="editor-preview"
+			aria-live="off"
+			aria-labelledby={ previewID + "-heading" }
+			data-testid="editor-preview"
+		>
+			<h2 id={ previewID + "-heading"}>Preview</h2>
+			// @templ.Raw is the one unescaped interpolation in this package, and
+			// the input is required to be `content.Renderer`'s sanitised output and
+			// nothing else — the same contract `components.WikiArticle` states, for
+			// the same two reasons: escaping it would show the reader the page's
+			// markup, and letting anything else reach it would undo the two layers
+			// `content/policy.go` exists to provide (ADR 0028).
+			<div class="page-body" data-testid="editor-preview-body">
+				@templ.Raw(view.Preview)
+			</div>
+		</section>
+	}
+}
+
+// EditorRail is the right rail for the editor route: the external-change notice
+// the event stream patches into, and the two facts that make a support report
+// actionable.
+//
+// §4.4 gives this slot "outline, external-change indicator, save state,
+// revision list". The outline and the revision list need a page tree and a
+// history query this phase does not have, and an empty panel is worse than an
+// absent one (§4.6), so they are absent rather than empty. The external-change
+// indicator is here because it is a *persistent* condition — a file that changed
+// on disk stays changed until the GM acts on it — and a live region that is also
+// a standing panel is the one shape that satisfies both halves of that.
+templ EditorRail(view EditorView) {
+	<section class="panel" aria-labelledby={ noticeID + "-heading" } data-testid="rail-change">
+		<h2 id={ noticeID + "-heading"}>On disk</h2>
+		// The container the event stream patches, and the target every patch
+		// names. It is empty in the served document on purpose: §7.5's live-region
+		// mechanics are that a region *present at load* announces nothing, so the
+		// `role="status"` fragment arrives by insertion — which is what makes it
+		// speak — and a container that shipped with a region inside it would be a
+		// region that never speaks.
+		//
+		// No `tabindex` and no focusable descendant, deliberately: §7.5 forbids a
+		// patch touching the focused element, and the way to guarantee that is for
+		// the target to be incapable of holding focus. The test asserts the
+		// property rather than the absence of an attribute.
+		<div
+			id={ noticeID }
+			class="editor-notices"
+			data-editor-notice
+			data-testid="editor-notice-slot"
+		></div>
+	</section>
+	<section class="panel" aria-labelledby={ factsID + "-heading" } data-testid="rail-facts">
+		<h2 id={ factsID + "-heading"}>This page</h2>
+		<dl class="panel-list">
+			<dt>Content hash</dt>
+			<dd><code data-testid="editor-content-hash">{ view.ContentHash }</code></dd>
+			<dt>Validator</dt>
+			<dd><code id={ validatorID } data-testid="editor-validator">{ view.Validator }</code></dd>
+		</dl>
+	</section>
+}
+
+// ConflictDiff is the two-column diff, framed by `ui.ConflictNotice`.
+//
+// The frame is `ui`'s rather than this package's because the frame *is* §4.7's
+// 412 state: its `role="alert"`, its assertive politeness, and its copy are all
+// decided there, and a second frame here would be a second set of words for the
+// same condition. What this component adds is the diff itself, and the hunk
+// controls inside it.
+//
+// Named `ConflictDiff` and not `Conflict` because the view model is `Conflict`
+// and one name cannot be both a data shape and the component that renders it —
+// which is the same collision `wiki.templ` avoids by calling its component
+// `WikiPage` and its model `WikiPageView`.
+templ ConflictDiff(conflict Conflict) {
+	@ui.ConflictNotice(ui.ConflictView{Heading: ui.HeadingInPage}, hunks(conflict))
+}
+
+// hunks is the diff body: one table per hunk, each with its own accept/reject
+// pair.
+//
+// A table per hunk rather than one table with a row per hunk, because §4.8 asks
+// for two columns that are *independently scrollable* and a hunk can be taller
+// than the pane; one table would scroll both columns together, which is the
+// comparison the reader is trying to make line by line.
+templ hunks(conflict Conflict) {
+	// The instruction, and the target of every hunk table's `aria-describedby`.
+	// Rendered once above the hunks rather than per hunk: it is the same sentence
+	// for each of them, and a caption per hunk that repeated it would make the
+	// tables' accessible names longer than the comparison they introduce.
+	<p class="diff-note" id={ conflictID + "-note" } data-testid="conflict-note">
+		Accept or reject each hunk, then save with the validator below. Your text stays
+		in the field until you save it.
+	</p>
+	if len(conflict.Hunks) == 0 {
+		// Reachable: a client can present a validator for content that has not
+		// changed, and then the two texts are identical and the diff has nothing
+		// to show. Saying so is better than an empty pane, which reads as a
+		// failure to compute rather than as an answer.
+		<p class="diff-note" data-testid="conflict-identical">
+			Your version and the saved version are the same text. Save again with the
+			validator below to continue.
+		</p>
+	}
+	for _, hunk := range conflict.Hunks {
+		@hunkTable(conflict, hunk)
+		@hunkActions(hunk, len(conflict.Hunks))
+	}
+	// The precondition for the follow-up save, shown rather than described. §6.2's
+	// whole shape is "save with If-Match set to the new hash", and both halves of
+	// that are here: the hex digest a GM can paste into a diff tool, and the
+	// validator a client must present. A hidden field would have carried the second
+	// for a script and a `code` element for nobody; a visible one is the same string
+	// in both readings.
+	//
+	// The hash and the validator are not the same value and the difference is not
+	// cosmetic: S-5.3 salts the validator with `include_secrets`, so it cannot be
+	// compared against a digest anybody else computed, and the digest cannot be
+	// presented in `If-Match` because it was never a validator.
+	<div
+		class="conflict-followup"
+		data-conflict-validator={ conflict.Validator }
+		data-testid="conflict-followup"
+	>
+		<p class="panel-note" data-testid="conflict-hash">
+			Saved version: <code>{ conflict.ContentHash }</code>
+		</p>
+		<p class="panel-note" data-testid="conflict-validator">
+			Save with: <code>{ conflict.Validator }</code>
+		</p>
+	</div>
+}
+
+// hunkTable is one hunk's two columns.
+//
+// A `<caption>` naming the hunk rather than a heading above it: the caption moves
+// with the table when the stylesheet makes it scrollable, and it is what a screen
+// reader announces on entering the comparison — "Hunk 2 of 3, lines 8 to 10" is
+// the only thing that tells a reader which part of a long page they have landed
+// in. `scope="col"` on both headers, for the reason `ui.Table` gives.
+templ hunkTable(conflict Conflict, hunk Hunk) {
+	<table
+		class="diff-hunk"
+		aria-describedby={ conflictID + "-note" }
+		data-hunk={ strconv.Itoa(hunk.Index) }
+		data-testid={"hunk-" + strconv.Itoa(hunk.Index)}
+	>
+		<caption>{ hunkCaption(hunk, len(conflict.Hunks)) }</caption>
+		<thead>
+			<tr>
+				<th scope="col" class="diff-head">Your version</th>
+				<th scope="col" class="diff-head">On disk</th>
+			</tr>
+		</thead>
+		<tbody>
+			for _, line := range diffRows(hunk) {
+				<tr>
+					<td class="diff-cell" data-side={ sideYours }>
+						<code data-line={ strconv.Itoa(line.left.Number) }>{ line.left.Text }</code>
+					</td>
+					<td class="diff-cell" data-side={ sideTheirs }>
+						<code data-line={ strconv.Itoa(line.right.Number) }>{ line.right.Text }</code>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+}
+
+// diffRow is one row of a hunk: the two sides at the same offset, and whether
+// this side has a line there at all.
+type diffRow struct {
+	left  DiffLine
+	right DiffLine
+}
+
+// diffRows pairs a hunk's two sides for rendering.
+//
+// The two slices have different lengths whenever one side added or removed lines,
+// and a row needs *something* on the missing side. The placeholder is a cell
+// carrying no line and no number, and it is a placeholder rather than an empty
+// line because an empty line in a diff reads as a line that exists and is blank —
+// which is a claim about the author's prose, and the one claim a diff must never
+// make up.
+func diffRows(hunk Hunk) []diffRow {
+	rows := make([]diffRow, 0, max(len(hunk.Left), len(hunk.Right)))
+
+	for at := range max(len(hunk.Left), len(hunk.Right)) {
+		row := diffRow{}
+
+		if at < len(hunk.Left) {
+			row.left = hunk.Left[at]
+		}
+
+		if at < len(hunk.Right) {
+			row.right = hunk.Right[at]
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows
+}
+
+// hunkActions is one hunk's accept/reject pair.
+//
+// Two buttons rather than a checkbox pair, because the decision is per hunk and
+// the hunk is a unit the reader is looking at as a whole; a checkbox asks about
+// a property of the hunk and a button asks for an action on it, and this is an
+// action. The `aria-label`s name the hunk so a screen reader announcing a list of
+// eight buttons says which one it is on.
+//
+// `type="button"` and a `data-` hook, for the reason the save control is: the
+// merge that consumes these is phase 9's script. Each button carries the side it
+// keeps as its value, so the script's contract is a data attribute rather than a
+// string comparison against the label — a reworded label must not change which
+// side a button keeps.
+templ hunkActions(hunk Hunk, total int) {
+	<p class="diff-actions" data-testid={"hunk-actions-" + strconv.Itoa(hunk.Index) }>
+		<button
+			type="button"
+			class={ ui.TargetClass + " button" }
+			aria-label={ acceptLabel("your version of", hunk, total, "yours") }
+			data-hunk={ strconv.Itoa(hunk.Index) }
+			data-hunk-accept={ sideYours }
+			data-testid={"hunk-" + strconv.Itoa(hunk.Index) + "-keep-yours"}
+		>
+			Keep yours
+		</button>
+		<button
+			type="button"
+			class={ ui.TargetClass + " button" }
+			aria-label={ acceptLabel("saved version of", hunk, total, "theirs") }
+			data-hunk={ strconv.Itoa(hunk.Index) }
+			data-hunk-accept={ sideTheirs }
+			data-testid={"hunk-" + strconv.Itoa(hunk.Index) + "-keep-theirs"}
+		>
+			Keep theirs
+		</button>
+	</p>
+}
+
+// hunkCaption is one hunk table's accessible name and visible caption.
+//
+// It names the hunk, its position, and the line range on each side, because
+// those three are what a reader needs to decide whether they are looking at the
+// part of the page they remember. "Hunk 2 of 3" alone sends them hunting; the
+// ranges are the locator, and the caption is the only element in a `<table>` a
+// screen reader announces on entering it.
+//
+// A side with no lines in this hunk — every line was added, or every line was
+// removed — gets a range of its own, and a side with no lines says so rather than
+// saying "lines 0 to 0", which is a range that names nothing.
+func hunkCaption(hunk Hunk, total int) string {
+	return "Hunk " + strconv.Itoa(hunk.Index) + " of " + strconv.Itoa(total) +
+		" — " + sideRange("your lines", hunk.Left) +
+		", " + sideRange("saved lines", hunk.Right)
+}
+
+// sideRange is one side's lines as a phrase.
+func sideRange(subject string, lines []DiffLine) string {
+	if len(lines) == 0 {
+		return "no " + subject
+	}
+
+	if len(lines) == 1 {
+		return subject + " " + strconv.Itoa(lines[0].Number)
+	}
+
+	return subject + " " + strconv.Itoa(lines[0].Number) +
+		" to " + strconv.Itoa(lines[len(lines)-1].Number)
+}
+
+// acceptLabel is one accept/reject button's accessible name.
+//
+// The visible text is "Keep yours" / "Keep theirs", which is right beside the
+// button and ambiguous the moment there is more than one hunk — and there always
+// is. The name therefore carries the subject, the hunk's position and the side,
+// so a reader stepping through the eight buttons is told which hunk each acts on
+// rather than hearing "Keep yours" eight times.
+func acceptLabel(subject string, hunk Hunk, total int, side string) string {
+	_ = side
+
+	return "Keep the " + subject + " in hunk " + strconv.Itoa(hunk.Index) +
+		" of " + strconv.Itoa(total)
+}
+
+// textareaValue is the buffer as a `<textarea>`'s content may hold it.
+//
+// HTML drops a newline that immediately follows a `<textarea>`'s opening tag, and
+// a Markdown page whose first line is blank is ordinary. Interpolating the raw
+// buffer would silently remove that line, which on a 412 means the diff's left
+// column and the field the GM is looking at disagree by one line — the exact
+// failure the buffer-survives rule exists to prevent. The extra newline is
+// consumed by the parser and never reaches the value.
+func textareaValue(buffer string) string {
+	if strings.HasPrefix(buffer, "\n") {
+		return "\n" + buffer
+	}
+
+	return buffer
+}

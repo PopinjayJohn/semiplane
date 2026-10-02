@@ -105,6 +105,20 @@ func statusFor(err error) int {
 // shell around it and no reference in it. A GM who mistyped a `[[wikilink]]` needs
 // to be able to tell the reader's report from an attacker's.
 //
+// The same campaign shell as the page, and for the same reason UI §4.6 gives:
+// the reader is inside a campaign. A GM who followed a broken link needs the
+// navigation to get out of here, and a page whose nav vanished because the page
+// was missing would make the *failure* the only route on the site that cannot
+// navigate anywhere.
+//
+// The navigation carries its destinations but **not** the page tree. The listing
+// is what a cache miss costs and a failure is not a cache miss: the reader is
+// here because something is wrong with one page, and spending a query to list
+// every page in the campaign so the error state has a sidebar is the wrong
+// trade. `NavView.hasWiki` is false for the nil tree, so the Wiki section is
+// absent — and §4.6's rule is that a section with nothing in it is absent, not
+// empty.
+//
 // The request id is the whole content of the state, and it comes from the
 // context rather than from the header: the middleware put it there after
 // validating it, and a reader who sent their own `X-Request-Id` gets it echoed
@@ -124,13 +138,7 @@ func (h *Handler) writeFailure(w http.ResponseWriter, r *http.Request, err error
 		heading = pageName(r.PathValue("path"))
 	}
 
-	view := components.WikiPage(components.WikiPageView{
-		Shell: components.ShellView{
-			Title:       documentTitle(heading, access.Campaign),
-			Instance:    h.Instance,
-			Account:     components.AccountView{Username: campaigns.Requestor(ctx).Username},
-			SignOutHref: h.SignOutHref,
-		},
+	view := h.document(r, h.navigation(ctx, access, nil), components.WikiPageView{
 		Heading: heading,
 		Failure: &components.LoadFailure{Reference: middleware.MustRequestID(ctx)},
 	})
@@ -145,12 +153,7 @@ func (h *Handler) writeFailure(w http.ResponseWriter, r *http.Request, err error
 
 	w.WriteHeader(status)
 
-	if renderErr := view.Render(ctx, w); renderErr != nil {
-		h.log(ctx, slog.LevelError, "wiki.failure_render_failed",
-			slog.Int("status", status),
-			slog.String("error", renderErr.Error()),
-		)
-	}
+	h.writeDocument(w, r, view, "wiki.failure_render_failed")
 
 	h.logFailure(ctx, access.Campaign.Slug, status, err)
 }

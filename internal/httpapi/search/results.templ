@@ -1,0 +1,227 @@
+package search
+
+import (
+	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
+// IdleView is the §4.7 idle state's document: a search field, focused, with a hint.
+type IdleView struct {
+	// Shell is the chrome. Its Instance field also fills the right rail.
+	Shell components.ShellView
+	// Action is where the form submits. `GET`, because §7.5 makes search
+	// submit-to-navigate over ordinary HTTP so the response is `ETag`-cacheable and
+	// the URL is shareable.
+	Action string
+	// Query is the field's current contents, echoed so a submitted-and-refined
+	// reader is not asked to type it again. Already bounded by the handler.
+	Query string
+}
+
+// EmptyView is the §4.7 no-results state's document: "No results for *q*".
+type EmptyView struct {
+	// Shell is the chrome.
+	Shell components.ShellView
+	// Action is where the form submits, exactly as in IdleView.
+	Action string
+	// Query is the term that was searched for, echoed into the heading §7.5 requires
+	// and back into the field so the reader can edit rather than retype. Already
+	// bounded by the handler.
+	Query string
+}
+
+// ResultsView is a search that matched: the count, the rows, and the field to
+// refine the query with.
+type ResultsView struct {
+	// Shell is the chrome.
+	Shell components.ShellView
+	// Action is where the refine form submits, as in IdleView.
+	Action string
+	// Query is the bounded echo, in the `<h1>` and in the refine field.
+	Query string
+	// Hits are the rows, in the order the store returned them: FTS5's rank, then
+	// path. Re-ordering them here would make the reader's second page of results a
+	// different order from the first.
+	Hits []ResultView
+	// Truncated reports that the row count reached the route's cap, and Cap is what
+	// it is. Both are the handler's decision, because only it knows what it asked
+	// for.
+	Truncated bool
+	Cap       int
+}
+
+// ResultView is one result: the page's name, where it lives, and the excerpt.
+type ResultView struct {
+	// Href is the page's wiki URL, built with `content.WikiHref`.
+	Href string
+	// Title is what the page calls itself: its front-matter `title:`, or its base
+	// name when it has none.
+	Title string
+	// Path is the campaign-relative location, without the extension a URL does not
+	// carry. Shown because a result in a folder a reader cannot see is a result they
+	// cannot place.
+	Path string
+	// Snippet is FTS5's excerpt of `body_plain`, which excludes `[!secret]` callout
+	// content for every role (S-5.11, UI §4.10.5). Plain text with the excerpt
+	// markers empty, so it is escaped once here and there is nothing a template
+	// could be tempted to interpret.
+	Snippet string
+}
+
+// FailureView is the load-error state's document.
+type FailureView struct {
+	// Shell is the chrome.
+	Shell components.ShellView
+	// Reference is the request id, which is the whole content of the state.
+	Reference string
+}
+
+// IdlePage is the §4.7 idle document.
+//
+// The pre-campaign `Shell` rather than `CampaignShell`, and the reason is that
+// `CampaignShell` needs a `chrome.NavView` — a list of a campaign's routes — which
+// is the wiki surface's work and not this route's. It is also what the wiki route
+// renders today, so the two campaign routes answer the same shape and §4.6's
+// structural difference stays a single decision in one package. When the campaign
+// navigation lands, both routes change together.
+templ IdlePage(view IdleView) {
+	@components.Shell(view.Shell, idleCentre(view), components.InstanceRail(view.Shell.Instance))
+}
+
+// idleCentre is the idle state's centre slot.
+//
+// `HeadingPage`, because the state is the whole page: §7.2 allows exactly one
+// `<h1>` and a state that renders its own heading as an `<h2>` under a heading the
+// route does not write would leave the document with a heading level skipping from
+// `<h2>` to nothing. The route writes no `<h1>` of its own on this path, so the
+// state owns it.
+templ idleCentre(view IdleView) {
+	@ui.SearchIdle(ui.SearchIdleView{
+		Action:  view.Action,
+		Value:   view.Query,
+		Heading: ui.HeadingPage,
+	})
+}
+
+// EmptyPage is the §4.7 no-results document.
+templ EmptyPage(view EmptyView) {
+	@components.Shell(view.Shell, emptyCentre(view), components.InstanceRail(view.Shell.Instance))
+}
+
+// emptyCentre is the no-results state's centre slot, and `HeadingPage` for the
+// reason `idleCentre` gives.
+templ emptyCentre(view EmptyView) {
+	@ui.SearchEmpty(ui.SearchEmptyView{
+		Action:  view.Action,
+		Query:   view.Query,
+		Heading: ui.HeadingPage,
+	})
+}
+
+// ResultsPage is the document for a search that matched.
+templ ResultsPage(view ResultsView) {
+	@components.Shell(view.Shell, SearchResults(view), components.InstanceRail(view.Shell.Instance))
+}
+
+// SearchResults is the result list: the count in the `<h1>`, the field to refine
+// with, and one row per hit.
+//
+// **The `<h1>` is the count and the query**, which is §7.5's own requirement — "12
+// results for *goblin*" — and it is the reason this component exists rather than a
+// mount of a §4.7 state. §7.2 allows one `<h1>` per document and nothing else on
+// this page renders one.
+//
+// **No live region, and no `aria-live`, anywhere.** S-13.4 and §7.5: the reader
+// submitted the query, so a polite announcement of the result count is the reader's
+// own keystroke read back to them, and this document is reached by navigation rather
+// than inserted into a page they are already on. A `role="status"` here would fire
+// on every load of this URL.
+//
+// **No `data-testid` on the rows.** A hook on every row is the same string several
+// times over, and a hook that appears more than once in a document selects nothing
+// (UI §10.2). The rows are located by `data-path` — the campaign-relative path, which
+// `pages_campaign_path_key` makes unique within a campaign — and by nothing else.
+//
+// **The title is the indexed title, verbatim; the snippet is the redacted one.** ADR
+// 0036 scopes redaction to `body_plain` — a title is one line of front matter with no
+// callout structure, so there is no boundary to redact to — and a result list is one of
+// the three surfaces `pages.title` reaches. The snippet is FTS5's excerpt of
+// `body_plain`, which excludes `[!secret]` content for every role, so no view of this
+// list carries secret text. Both go through templ's escaper; there is no `templ.Raw`
+// anywhere on this route.
+templ SearchResults(view ResultsView) {
+	<section class="search" aria-labelledby="search-results-heading" data-testid="search-results">
+		// A string expression around "for" rather than bare text: templ reads a
+		// leading `for` in text as a Go statement, and the error it raises names a
+		// parse failure rather than the word that caused it.
+		<h1 id="search-results-heading" data-testid="search-result-count">{ countLabel(view.Hits) }{ " for " }<em data-testid="search-result-query">{ view.Query }</em></h1>
+		@refine(view.Action, view.Query)
+		if view.Truncated {
+			<p class="empty-note" data-testid="search-result-cap">Showing the first { view.Cap } results. Add a word to narrow the search.</p>
+		}
+		<ol class="card-list" data-testid="search-result-list">
+			for _, hit := range view.Hits {
+				<li class="card" data-path={ hit.Path }>
+					<a class="card-link target" href={ hit.Href }>{ hit.Title }</a>
+					<p class="card-meta">{ hit.Path }</p>
+					if hit.Snippet != "" {
+						<p class="card-meta">{ hit.Snippet }</p>
+					}
+				</li>
+			}
+		</ol>
+	</section>
+}
+
+// refine is the search field on a document that already has a result list.
+//
+// The same shape as `components/ui`'s unexported form — `<label for>`, a hint wired
+// through `aria-describedby`, `.target` on both controls, `role="search"` and a
+// distinguishing label — because those are §7.7's and §7.2's rules and a second
+// copy of a rule is still the rule. `autofocus` is absent on purpose: §4.7 gives the
+// *idle* state a focused field because arriving at the search route is a request to
+// search, whereas arriving at a result list is a request to read it, and moving
+// focus away from the document a reader has just navigated to is §7.4's "a
+// background event moves focus" in everything but name.
+templ refine(action, value string) {
+	<form class="stack form" method="get" action={ action } role="search" aria-label="Search this campaign" data-testid="search-refine">
+		<div class="field">
+			<label for="search-refine-query">Search this campaign</label>
+			<input
+				id="search-refine-query"
+				class={ ui.TargetClass }
+				type="search"
+				name="q"
+				value={ value }
+				aria-describedby="search-refine-hint"
+				data-testid="search-refine-query"
+			/>
+			<p id="search-refine-hint" class="field-hint" data-testid="search-refine-hint">Change the words and submit again. Results are counted from this campaign's pages.</p>
+		</div>
+		<button type="submit" class={ ui.TargetClass + " button button--primary" } data-testid="search-refine-submit">Search</button>
+	</form>
+}
+
+// FailurePage is the load-error document.
+templ FailurePage(view FailureView) {
+	@components.Shell(view.Shell, failureCentre(view), components.InstanceRail(view.Shell.Instance))
+}
+
+// failureCentre is the failure state's centre slot.
+//
+// The route's own `<h1>` and then §4.7's `500` state beneath it at `HeadingInPage`,
+// which is the same composition `wiki` uses for its failures and the reason a
+// reader who cannot search is still told where they are. The state is a designed
+// surface using the full shell rather than a bare status page: the reader reached
+// this authenticated, so they passed a gate and "not found" from `net/http` would
+// be plain text with no reference in it.
+//
+// The heading carries neither the query nor the path. Both are caller-supplied and
+// §4.7's closing rule is that an error page does not echo them.
+templ failureCentre(view FailureView) {
+	<h1 data-testid="search-failure-heading">{ pageName }</h1>
+	@ui.LoadError(ui.LoadFailure{
+		Reference: view.Reference,
+		Heading:   ui.HeadingInPage,
+	})
+}

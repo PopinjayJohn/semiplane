@@ -94,6 +94,33 @@ and two of them read a **built artefact** — `static/dist/app.css` and the serv
 documents. A gate that can be skipped by not running a command is a gate nobody
 runs.
 
+**Naming a route in `A11Y_ROUTE_PKGS` is a claim that it has §10.2 audits, and the
+target enforces it.** `go test -run` exits **0** when the pattern matches nothing,
+so a listed package can hold fifty tests, contribute none of them, and the gate
+prints `ok` — which is indistinguishable from a pass. It happened: the wiki route
+held 23 tests and the assets route 49, and not one was a §10.2 audit, while
+`make a11y` was green because `A11Y_PKGS` named only three packages. The guard
+fails when a listed package contributes no test matching `A11Y_TESTS`, naming the
+package. **It caught two more silent passes the moment it landed**, which is the
+argument for it.
+
+So `A11Y_ROUTE_PKGS` is a `$(wildcard …)`: naming a route is a matter of creating
+its directory, and a new route cannot be added without the claim. Three rules
+follow, and each cost a PR:
+
+- **A test's name is what makes the gate find it.** `A11Y_TESTS` is a list of
+  substrings; the search route had 33 tests including a landmark audit, a
+  `.target` audit and a vocabulary audit, and matched **none** of them.
+- **Renaming a test to match the pattern is not the fix** — it makes the guard
+  quiet without making the gate stronger. Write the entry point, and add
+  `TestEveryRouteAuditRejectsTheViolationItClaimsTo`, a meta-test proving each audit
+  rejects a fixture that violates its rule.
+- **An audit nobody can fail is not an audit**, and neither is one no fixture
+  reaches. A `case "search"` branch asserting two landmark names was unreachable
+  because no audited document carried a second `search` landmark; adding the
+  fixture made it reachable and it immediately failed three unrelated rules, which
+  is the audit working.
+
 ```bash
 make check          # the full gate
 make a11y           # just the UI §10.1/§10.2/§10.6 gate
@@ -322,6 +349,18 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   — CommonMark behaviour, and the test that says so is
   `TestRawHTMLBlockTextIsDropped`. Do not "fix" it by enabling unsafe HTML.
   [0028](docs/content/en/decisions/0028-render-output-is-permission-neutral.md)
+- **The one thing the pipeline *adds* to sanitised output is `.target`, and it is added after the
+  sanitiser.** `content/target.go` writes `class="target"` onto every focusable element in the page
+  body, which is safe because the value is a fixed constant semiplane owns, the element set is
+  written out rather than derived from anything a vault can reach, the value resolves to two minimum
+  sizes and no behaviour, and the pass mutates a **parsed tree** rather than matching markup as a
+  string — so it cannot resurrect what the sanitiser removed, structurally rather than by promise.
+  `target` is deliberately **absent** from `policy.go`'s class allowlist: adding it there would let an
+  author mint a class that is semiplane's, and would be a second source of truth for one value. The
+  pass is unexported and confined to the page body, which is why a plugin rendering through the
+  pipeline inherits the class — the mechanism UI §4.11.1 asks for. Do not move it before the
+  sanitiser: the class is not on the allowlist, so the sanitiser would strip it straight back off.
+  [0038](docs/content/en/decisions/0038-target-class-is-applied-by-the-render-pipeline.md)
 - **Redaction runs on the source, before the render.** A redactor that ran after would leave the
   unredacted text in the renderer's buffers, the sanitiser's input and the cache. The seam is
   `content.Redactor`, and `content.NoSecrets()` is a pass-through that **removes nothing** until
@@ -350,6 +389,21 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
 - **Obsidian Sync is untrusted input.** Shared vaults, community plugins, compromised devices.
   Validate all YAML — front matter is attacker-reachable — and resolve all paths inside
   `os.Root`.
+- **A page's `title:` is not redacted, and must not hold a secret.** S-5.11 and migration 0007's
+  comment both scope redaction to `body_plain`, because a title is one line of front matter with no
+  callout structure and therefore **no boundary to redact to** — a rule that stripped titles would have
+  to guess at which words are secret, and a guess that fires breaks a real title while a guess that
+  misses leaks the secret. `pages.title` is indexed verbatim, and it is served in three places: the
+  **search index**, the **nav tree**, and the **`<h1>`**. A `[!secret]` body is protected by its page's
+  access gate; the title of that page appears in a result list a different reader can see. Verified
+  live: `title: The passphrase is hunter2` lands in `pages.title` in every reveal state.
+  [0036](docs/content/en/decisions/0036-page-titles-are-not-redacted.md)
+- **Every gate response is `private, no-store`.** `writeError` in `internal/httpapi/campaigns` answers
+  404/401/403, and every one of those is **reader-dependent**: the same URL is a 404 for an anonymous
+  requestor and a 200 for a member, because S-8 answers "no access" without saying why. Nothing in the
+  body distinguishes them — deliberately, so the status cannot become an existence oracle — which is
+  exactly what makes the response unsafe to store. A reverse proxy in front of a self-hosted instance is
+  the ordinary deployment, and one that cached an anonymous 404 would serve it to an entitled member.
 - **Secret redaction is omission, not hiding.** Not `display:none`, not a comment, not a class.
   The callout is removed entirely, before sanitisation and before any template sees it.
 - **The `ETag` is salted with `include_secrets`.** A GM response and a player response must
@@ -392,6 +446,23 @@ resolves two conflicts inside the UI record.
   of smuggling the word in and requires it to object to each. An audit that
   cannot fail is worse than no audit, because it is a green light wired to
   nothing.
+- **Zero is a fixed point, so a zero-length sample is not a settled size.** The
+  settle filter (S-4.3) confirms a path by two `stat` samples agreeing. A writer
+  that truncates in place with `open(O_TRUNC)` and is descheduled before its
+  `write` leaves a window in which the file is **0 bytes** — and the truncation
+  delivers no fsnotify event, because the event belongs to the write. An empty page
+  and an unwritten page have the same `stat`, so the two samples agree and
+  agreement is the filter's only evidence. The indexer then wrote a **wrong row**:
+  `content_hash` of the empty string, `byte_size` 0, `title` `""`. Semiplane's own
+  atomic write (S-6.4) cannot produce it, which is why the product's writer never
+  exposed it; a sync client writing in place produces it routinely, and this broke
+  CI twice on tests belonging to a different phase. A zero-length sample is now
+  re-armed **the way an event re-arms it** — the quiet period restarts, the first
+  sample is discarded, and the **budget is not re-taken**, because this is the same
+  confirmation being patient rather than a new one. A path still zero at budget
+  expiry *does* settle, as `outcomeSettledEmpty`, because a blank note is a
+  legitimate page.
+  [0037](docs/content/en/decisions/0037-zero-bytes-is-not-a-stable-size.md)
 - **A gate test that cannot fail is not a gate.** Every rule added in phase 5 was
   checked by mutation: remove the import, lower `--target-min`, wrap a TV rule
   in a `min-width` band, drop a field from a conversion. Three of the first

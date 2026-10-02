@@ -159,7 +159,22 @@ test: ## Run tests
 # committed Go test instead, and every one of them below is. Adding a browser here
 # would make CI depend on a Node toolchain this repository deliberately does not
 # have.
-A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi
+# The packages carrying a §10.2 audit. One per route package, because a route
+# that is not named here does not run its audits at all — and "the gate is green"
+# then means the gate looked somewhere else.
+#
+# `./internal/httpapi/wiki` and `./internal/httpapi/search` and
+# `./internal/httpapi/assets` are here because each renders a distinct document
+# under the same shell, and §10.2 says *every* route.
+#
+# `$(wildcard ...)` over the route packages, so naming a route is a matter of
+# creating its directory rather than of editing this line — and so this target
+# cannot fail on a package that does not exist yet, which is the mistake a literal
+# list makes the moment one lands before another.
+A11Y_ROUTE_PKGS := $(wildcard ./internal/httpapi/wiki ./internal/httpapi/search \
+	./internal/httpapi/assets ./internal/httpapi/edit)
+
+A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi $(A11Y_ROUTE_PKGS)
 
 # The pattern is a list of substrings of the gate's test names, and it is
 # deliberately *readable* rather than exhaustive-looking: a new gate test is added
@@ -177,11 +192,38 @@ A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi
 #   ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget
 #     |EntitledToAssert|DegradedWarning
 #                             the composition's own invariants
-A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType
+A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType|ExactlyOneH1|SkipLink
 
 .PHONY: a11y
 a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 	@echo "==> a11y"
+	@# The guard below exists because `go test -run` reports success when the
+	@# pattern matches nothing. A route package can be listed in A11Y_PKGS, hold
+	@# forty-nine tests, and contribute **zero** to this gate — which is what the
+	@# assets route did: no target-size audit, no vocabulary audit, no landmark
+	@# audit, and `make a11y` green because the package answered "[no tests to
+	@# run]" and exited 0.
+	@#
+	@# "The gate is green" must mean the gate looked. So a listed package that runs
+	@# nothing fails the gate, with the package named.
+	@for pkg in $(A11Y_ROUTE_PKGS); do \
+		listing=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>&1 >/dev/null); \
+		if [ -n "$$listing" ]; then \
+			echo "a11y: $$pkg does not build, so the gate cannot look at it:"; \
+			echo "$$listing" | sed 's/^/a11y:   /'; \
+			echo "a11y: report this as the build failure it is. Claiming it"; \
+			echo "a11y: 'contributes no test' sends a reader looking for missing"; \
+			echo "a11y: audits instead of a missing generated file."; \
+			exit 1; \
+		fi; \
+		ran=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>/dev/null | grep -c '^Test' || true); \
+		if [ "$$ran" -eq 0 ]; then \
+			echo "a11y: $$pkg contributes no test matching A11Y_TESTS."; \
+			echo "a11y: naming a package here is a claim that it has §10.2 audits."; \
+			echo "a11y: add them, or drop the package from A11Y_ROUTE_PKGS."; \
+			exit 1; \
+		fi; \
+	done
 	$(GO) test -race -count=1 -run '$(A11Y_TESTS)' $(A11Y_PKGS)
 
 .PHONY: cover
