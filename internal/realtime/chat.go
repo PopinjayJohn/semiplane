@@ -808,8 +808,12 @@ type ExportRequest struct {
 	At time.Time
 	// IncludeSecrets asks for the secret messages to be exported too.
 	//
-	// **It is off, and the zero value is the safe one, and that is a security
-	// property rather than a preference.** See `Export`.
+	// **Nothing satisfies it today, and the exclusion is unconditional.** See
+	// `Export`: the field is the seam the opt-in will be built behind, and a field
+	// that does nothing cannot be flipped by a route that wires a query parameter
+	// to it by accident. Turning it into a leak requires an edit to *this* file,
+	// and whoever makes it reads the three conditions the opt-in would have to
+	// satisfy.
 	IncludeSecrets bool
 }
 
@@ -829,8 +833,9 @@ type Exported struct {
 	Revision Revision
 	// Included is how many messages are in the page.
 	Included int
-	// Excluded is how many were withheld, which is zero unless `IncludeSecrets`
-	// was asked for and refused.
+	// Excluded is how many secret messages were withheld. Never zero on a successful
+	// export that had secret messages to withhold, because the exclusion is
+	// unconditional — see `ExportRequest.IncludeSecrets`.
 	Excluded int
 }
 
@@ -872,8 +877,10 @@ func NewExporter(chat *Chat, roots RootLookup, revisions Revisions) *Exporter {
 //     separator and no traversal however the clock is set; see `JournalFileName`
 //     for the property and its test.
 //
-//  2. **Secret exclusion, by default.** `ExportRequest.IncludeSecrets` is false
-//     unless a caller sets it, and the messages it governs are *not written*.
+//  2. **Secret exclusion, unconditional.** `ExportRequest.IncludeSecrets` is the
+//     seam the opt-in will be built behind and **nothing satisfies it today** — the
+//     exclusion is a property of `Chat.exportable` taking no parameter at all, so a
+//     route cannot reach it.
 //
 //     Why default-on would be wrong even though a GM might want it: the exported
 //     page is a **wiki page in the vault**, and everything that makes a vault page
@@ -887,13 +894,13 @@ func NewExporter(chat *Chat, roots RootLookup, revisions Revisions) *Exporter {
 //     property; an export that wrote a secret into prose would be the one page in
 //     the vault with no boundary on it at all.
 //
-//     The opt-in, when it is built, would have to be all three of: a GM-only action
-//     carrying an explicit field (never a query parameter, S-5.7), secret messages
-//     written **inside `[!secret]` callouts** rather than as bare prose so the
-//     boundary travels with the text, and the resulting page still behind the
-//     campaign's read gate. Anything less writes a page that leaks by existing.
-//     It is not built here, and `includeSecrets` exists only so the seam is in the
-//     right place when it is.
+//     What the opt-in would have to be — all three, and **none of them a branch**:
+//     a GM-only action carrying an explicit field (never a query parameter,
+//     S-5.7); secret messages written **inside `[!secret]` callouts** so the
+//     boundary travels with the text, which means the export has to produce a page
+//     that goes through `content.Redact` rather than bytes that bypass it; and the
+//     resulting page behind the campaign's read gate, which it is.
+//     `Chat.exportable` says the same three at the place the change would be made.
 //
 //  3. **The revision row, then the file.** S-6.4's order, and the argument is
 //     which of the two failures is recoverable: a revision row for content that did
@@ -930,7 +937,7 @@ func (e *Exporter) Export(ctx context.Context, request ExportRequest) (Exported,
 		)
 	}
 
-	messages, excluded := e.chat.exportable(request.IncludeSecrets)
+	messages, excluded := e.chat.exportable()
 	if len(messages) == 0 {
 		return Exported{}, fmt.Errorf("%w: nothing to publish for this campaign", ErrNoExport)
 	}
@@ -1026,17 +1033,39 @@ func (e *Exporter) target(
 // exportable returns the messages an export would publish, and how many it is
 // withholding.
 //
-// **The load-bearing line in this file is the `if`.** When `includeSecrets` is
-// false, a secret message is not marked, not replaced by a placeholder and not
-// moved to the end of the list: it is never copied into the slice that becomes the
-// page's bytes. A placeholder would satisfy "the export does not show the secret"
-// while shipping the secret's text into the file, the index, the sync client and
-// every browser that ever fetches the page — which is the failure ADR 0029 exists
-// to prevent, arrived at from the export side rather than the render side.
+// **The load-bearing line in this file is the `if`, and the load-bearing property
+// is that it takes no parameter.** A secret message is not marked, not replaced by a
+// placeholder and not moved to the end of the list: it is never copied into the
+// slice that becomes the page's bytes. A placeholder would satisfy "the export does
+// not show the secret" while shipping the secret's text into the file, the index,
+// the sync client and every browser that ever fetches the page — which is the
+// failure ADR 0029 exists to prevent, arrived at from the export side rather than
+// the render side.
+//
+// The absence of a parameter is the security property rather than an oversight.
+// The moment this function takes an `includeSecrets bool`, a route can pass it a
+// query parameter and S-5.7's "the viewer's entitlement is never an input from the
+// request" becomes a convention rather than a type. So the opt-in is not a branch
+// here; it is an edit to this file, made by somebody who reads what the opt-in
+// would have to be — three conditions, all of which are beyond what a ring buffer
+// can supply:
+//
+//  1. A GM-only action carrying an explicit field. Not a query parameter, and not
+//     an inference from the caller already being a GM: a GM pressing "export" and a
+//     GM pressing "export with the whispers" are two actions, because one of them
+//     writes plaintext into a synced file.
+//  2. The secret messages written **inside `[!secret]` callouts**, so the boundary
+//     travels with the text. `content.Redact` is the thing that finds those, and it
+//     runs on the source before the render — which means the export has to produce
+//     a *page* that goes through the pipeline rather than bytes that bypass it.
+//     That is a bigger change than a branch, and it is why this is not one.
+//  3. The resulting page behind the campaign's read gate, which it is, and which is
+//     the only reason the other two are worth building.
 //
 // `excluded` is counted rather than inferred from the lengths, because "how many
-// lines are missing from this page" is something a GM is entitled to be told.
-func (c *Chat) exportable(includeSecrets bool) (messages []Message, excluded int) {
+// lines are missing from this page" is something a GM is entitled to be told — and
+// a count is not a disclosure.
+func (c *Chat) exportable() (messages []Message, excluded int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1045,7 +1074,7 @@ func (c *Chat) exportable(includeSecrets bool) (messages []Message, excluded int
 	for offset := range c.count {
 		message := c.ring[(c.start+offset)%len(c.ring)]
 
-		if message.Secret && !includeSecrets {
+		if message.Secret {
 			excluded++
 
 			continue
@@ -1265,8 +1294,12 @@ func ParseJournal(body string) ([]Message, error) {
 	var messages []Message
 
 	for line := range strings.Lines(body) {
+		// One trim, not two: `strings.Lines` keeps the newline it found, and a CRLF
+		// transcript is a transcript a GM edited on Windows, so both carriage return
+		// and newline come off. Nothing is lost by removing every trailing one — a
+		// real trailing `\r` in a message body is escaped by `escapeJournalText` and
+		// arrives here as the two characters `\` and `r`.
 		line = strings.TrimRight(line, "\r\n")
-		line = strings.TrimSuffix(line, "\n")
 
 		if !strings.HasPrefix(line, journalBullet) {
 			continue
