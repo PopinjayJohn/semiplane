@@ -207,6 +207,15 @@ a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 	@# "The gate is green" must mean the gate looked. So a listed package that runs
 	@# nothing fails the gate, with the package named.
 	@for pkg in $(A11Y_ROUTE_PKGS); do \
+		listing=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>&1 >/dev/null); \
+		if [ -n "$$listing" ]; then \
+			echo "a11y: $$pkg does not build, so the gate cannot look at it:"; \
+			echo "$$listing" | sed 's/^/a11y:   /'; \
+			echo "a11y: report this as the build failure it is. Claiming it"; \
+			echo "a11y: 'contributes no test' sends a reader looking for missing"; \
+			echo "a11y: audits instead of a missing generated file."; \
+			exit 1; \
+		fi; \
 		ran=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>/dev/null | grep -c '^Test' || true); \
 		if [ "$$ran" -eq 0 ]; then \
 			echo "a11y: $$pkg contributes no test matching A11Y_TESTS."; \
