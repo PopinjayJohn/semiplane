@@ -57,7 +57,7 @@ import (
 // against a column list that does not match the table, a typo in a constraint, or
 // a migration that renamed something.
 //
-// The `countingWriter` wrapper is layered on top and counts *commits*, so the
+// The `stateWriteRecorder` wrapper is layered on top and counts *commits*, so the
 // coalescing test asserts a number the reader cannot get from the table.
 
 const (
@@ -160,13 +160,13 @@ func openDatabase(t *testing.T) (*store.Store, realtime.Writer, realtime.Reader)
 // every test therefore exercises `Registry.Close`, which is the path the
 // composition root depends on. A test that wanted to observe the crash case
 // cancels the *clock*'s context instead, which is the documented difference.
-func newRegistry(t *testing.T) (*realtime.Registry, *fakeClock, *countingWriter) {
+func newRegistry(t *testing.T) (*realtime.Registry, *fakeClock, *stateWriteRecorder) {
 	t.Helper()
 
 	_, writer, reader := openDatabase(t)
 
 	clock := newFakeClock()
-	counter := &countingWriter{write: writer}
+	counter := &stateWriteRecorder{write: writer}
 
 	registry := realtime.NewRegistry(t.Context(), realtime.Config{
 		Write: counter.commit,
@@ -193,20 +193,20 @@ func newRegistry(t *testing.T) (*realtime.Registry, *fakeClock, *countingWriter)
 	return registry, clock, counter
 }
 
-// countingWriter counts commits and, optionally, fails.
+// stateWriteRecorder counts commits and, optionally, fails.
 //
 // Counting commits rather than calls is the point: a coalescing test that counted
 // *calls* would pass against an implementation that issued one write per mutation
 // into a transaction that rolled back, and the difference between the two is the
 // whole of S-7.5.
-type countingWriter struct {
+type stateWriteRecorder struct {
 	mu      sync.Mutex
 	writes  int
 	failure error
 	write   realtime.Writer
 }
 
-func (c *countingWriter) commit(
+func (c *stateWriteRecorder) commit(
 	ctx context.Context,
 	fn func(context.Context, *sql.Tx) error,
 ) error {
@@ -229,21 +229,21 @@ func (c *countingWriter) commit(
 	return nil
 }
 
-func (c *countingWriter) count() int {
+func (c *stateWriteRecorder) count() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	return c.writes
 }
 
-func (c *countingWriter) fail(err error) {
+func (c *stateWriteRecorder) fail(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.failure = err
 }
 
-func (c *countingWriter) repair() {
+func (c *stateWriteRecorder) repair() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -276,7 +276,7 @@ func readRow(t *testing.T, db *store.Store) (realtime.Document, int64, bool) {
 		t.Fatalf("read campaign_state: %v", err)
 	}
 
-	document, err := realtime.Decode(blob)
+	document, err := realtime.DecodeDocument(blob)
 	if err != nil {
 		t.Fatalf("decode the persisted state: %v", err)
 	}
@@ -304,7 +304,7 @@ func mustCreate(
 	state *realtime.CampaignState,
 	id realtime.PlacementID,
 	initial realtime.Placement,
-) realtime.Change {
+) realtime.Mutation {
 	t.Helper()
 
 	change, err := state.Create(id, initial)
@@ -323,7 +323,7 @@ func mustMutate(
 	id realtime.PlacementID,
 	seen uint64,
 	apply func(*realtime.Placement),
-) realtime.Change {
+) realtime.Mutation {
 	t.Helper()
 
 	change, err := state.Mutate(id, seen, apply)
@@ -340,7 +340,7 @@ func mustRemove(
 	state *realtime.CampaignState,
 	id realtime.PlacementID,
 	seen uint64,
-) realtime.Change {
+) realtime.Mutation {
 	t.Helper()
 
 	change, err := state.Remove(id, seen)
@@ -689,7 +689,7 @@ func TestShutdownWritesThePendingState(t *testing.T) {
 func TestShutdownWithNothingPendingWritesNothing(t *testing.T) {
 	db, writer, reader := openDatabase(t)
 
-	counter := &countingWriter{write: writer}
+	counter := &stateWriteRecorder{write: writer}
 
 	registry := realtime.NewRegistry(t.Context(), realtime.Config{
 		Write: counter.commit,
@@ -854,7 +854,7 @@ func TestTheCrashFloorIsTheLastDebouncedState(t *testing.T) {
 func TestAFailedWriteIsNotAWrite(t *testing.T) {
 	_, writer, reader := openDatabase(t)
 
-	counter := &countingWriter{write: writer}
+	counter := &stateWriteRecorder{write: writer}
 	broken := errors.New("the disk is full")
 
 	clock := newFakeClock()
@@ -1285,7 +1285,7 @@ func TestZeroBytesIsNotAnEmptyTabletop(t *testing.T) {
 		"wrong magic": []byte(`spstate2:{"revision":3,"placements":[]}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			document, err := realtime.Decode(blob)
+			document, err := realtime.DecodeDocument(blob)
 			if !errors.Is(err, realtime.ErrStateUnreadable) {
 				t.Fatalf("Decode() error = %v, want ErrStateUnreadable", err)
 			}
@@ -1328,7 +1328,7 @@ func TestADocumentThatCouldNotHaveBeenWrittenIsRefused(t *testing.T) {
 			// changed.
 			prefix := encodingPrefix(t)
 
-			if _, err := realtime.Decode([]byte(prefix + body)); !errors.Is(
+			if _, err := realtime.DecodeDocument([]byte(prefix + body)); !errors.Is(
 				err, realtime.ErrStateUnreadable,
 			) {
 				t.Errorf("Decode() error = %v, want ErrStateUnreadable", err)
@@ -1352,7 +1352,7 @@ func TestADocumentThatCouldNotHaveBeenWrittenIsRefused(t *testing.T) {
 func encodingPrefix(t *testing.T) string {
 	t.Helper()
 
-	blob, err := realtime.Encode(realtime.Document{
+	blob, err := realtime.EncodeDocument(realtime.Document{
 		Revision:   1,
 		Placements: []realtime.Placement{{ID: "p1", Version: 1}},
 	})
@@ -1368,8 +1368,10 @@ func encodingPrefix(t *testing.T) string {
 	// Round-trip it: a prefix that this package's own encoder does not recognise
 	// would make every case below fail for the wrong reason, which is the mistake
 	// this helper exists to prevent and the one it made the first time.
-	if _, err := realtime.Decode([]byte(prefix + `{"revision":1,"paused":false,"placements":` +
-		`[{"id":"p1","version":1}]}`)); err != nil {
+	if _, err := realtime.DecodeDocument(
+		[]byte(prefix + `{"revision":1,"paused":false,"placements":` +
+			`[{"id":"p1","version":1}]}`),
+	); err != nil {
 		t.Fatalf("the derived prefix %q does not round-trip: %v", prefix, err)
 	}
 
@@ -1390,7 +1392,7 @@ func encodingPrefix(t *testing.T) string {
 func TestCreateThenRemoveStillWrites(t *testing.T) {
 	db, writer, reader := openDatabase(t)
 
-	counter := &countingWriter{write: writer}
+	counter := &stateWriteRecorder{write: writer}
 	clock := newFakeClock()
 
 	registry := realtime.NewRegistry(t.Context(), realtime.Config{
@@ -1731,12 +1733,12 @@ func TestTheSameStateAlwaysEncodesToTheSameBytes(t *testing.T) {
 
 	ids := []realtime.PlacementID{"p1", "p2", "p3", "p4", "p5"}
 
-	forward, err := realtime.Encode(buildState(t, registry, 1, ids))
+	forward, err := realtime.EncodeDocument(buildState(t, registry, 1, ids))
 	if err != nil {
 		t.Fatalf("Encode() error = %v, want nil", err)
 	}
 
-	backward, err := realtime.Encode(buildState(t, registry, 2, reversed(ids)))
+	backward, err := realtime.EncodeDocument(buildState(t, registry, 2, reversed(ids)))
 	if err != nil {
 		t.Fatalf("Encode() error = %v, want nil", err)
 	}

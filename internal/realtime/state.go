@@ -250,8 +250,6 @@ var (
 // are never written to files, so this string never becomes a filename and never
 // reaches `os.Root`. A placement is an instance of a game object, and the game
 // object is a page.
-type PlacementID string
-
 // valid reports whether id is usable as a placement id.
 //
 // The rules are few, and the one that is not obvious is the control character.
@@ -398,7 +396,7 @@ func (p *Placement) clone() Placement {
 	return copied
 }
 
-// Change is the outcome of one applied mutation: enough for a caller to
+// Mutation is the outcome of one applied mutation: enough for a caller to
 // broadcast it and for a client to reconcile its optimistic copy.
 //
 // It carries no operation name and no arguments, and that is a boundary rather
@@ -407,7 +405,7 @@ func (p *Placement) clone() Placement {
 // operation field here would be a second record of the same fact, free to drift
 // from the code that performed the change. The protocol vocabulary is R2's
 // (§7.1) and it is assembled where the broadcast is assembled.
-type Change struct {
+type Mutation struct {
 	// Placement is the placement the mutation applied to, and is meaningful for a
 	// removal too: the id is what a client needs in order to drop its copy, and
 	// it is no longer in the state.
@@ -477,7 +475,7 @@ type Document struct {
 	Placements []Placement `json:"placements"`
 }
 
-// Encode renders a document as the bytes stored in `campaign_state.state`.
+// EncodeDocument renders a document as the bytes stored in `campaign_state.state`.
 //
 // The magic prefix is the first thing written and `Decode` refuses anything
 // without it, for the reason in the file comment: a zero-length blob, a truncated
@@ -487,7 +485,7 @@ type Document struct {
 // A sorted `Document` is required, not produced. `CampaignState.Snapshot` is the
 // only thing that builds one and it sorts; re-sorting here would be a second place
 // where an order could be wrong, and this function's job is bytes.
-func Encode(document Document) ([]byte, error) {
+func EncodeDocument(document Document) ([]byte, error) {
 	body, err := json.Marshal(document)
 	if err != nil {
 		// Unreachable for this type — every field is an integer, a bool, a string
@@ -500,7 +498,7 @@ func Encode(document Document) ([]byte, error) {
 	return append([]byte(documentMagic), body...), nil
 }
 
-// Decode reads bytes written by `Encode` into a document.
+// DecodeDocument reads bytes written by EncodeDocument into a document.
 //
 // Every failure is `ErrStateUnreadable` and every one of them is loud. There is
 // no path through this function that returns a zero `Document` and a nil error,
@@ -517,7 +515,7 @@ func Encode(document Document) ([]byte, error) {
 // different states. And a duplicate id is refused because a document listing one
 // placement twice has two answers to "where is p1", which is the ambiguity
 // per-placement versioning exists to remove.
-func Decode(blob []byte) (Document, error) {
+func DecodeDocument(blob []byte) (Document, error) {
 	body, prefixed := strings.CutPrefix(string(blob), documentMagic)
 	if !prefixed {
 		return Document{}, fmt.Errorf(
@@ -1098,7 +1096,7 @@ func (r *Registry) load(ctx context.Context, campaignID int64) (Document, error)
 		return Document{}, fmt.Errorf("realtime: read campaign %d state: %w", campaignID, err)
 	}
 
-	document, err := Decode(row.Blob)
+	document, err := DecodeDocument(row.Blob)
 	if err != nil {
 		return Document{}, fmt.Errorf("realtime: campaign %d: %w", campaignID, err)
 	}
@@ -1378,23 +1376,23 @@ func (s *CampaignState) Snapshot() Document {
 // The supplied placement's `ID` and `Version` are ignored and overwritten. An
 // initial `Version` of zero is what every legal placement arrives with, and
 // requiring it would be a rule about a field the caller does not own.
-func (s *CampaignState) Create(id PlacementID, initial Placement) (Change, error) {
+func (s *CampaignState) Create(id PlacementID, initial Placement) (Mutation, error) {
 	if !id.valid() {
-		return Change{}, fmt.Errorf("%w: %q is not a usable placement id", ErrNoState, id)
+		return Mutation{}, fmt.Errorf("%w: %q is not a usable placement id", ErrNoState, id)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.mutableLocked(); err != nil {
-		return Change{}, err
+		return Mutation{}, err
 	}
 
 	if _, taken := s.placements[id]; taken {
 		// Not a version mismatch. The caller said "place this" about something that
 		// is already on the table, and the answer to that is that the request is
 		// wrong, not that it is stale.
-		return Change{}, fmt.Errorf("%w: %q is already placed", ErrNoPlacement, id)
+		return Mutation{}, fmt.Errorf("%w: %q is already placed", ErrNoPlacement, id)
 	}
 
 	placement := initial
@@ -1413,7 +1411,7 @@ func (s *CampaignState) Create(id PlacementID, initial Placement) (Change, error
 	s.placements[id] = &placement
 	s.advanceLocked()
 
-	return Change{Placement: id, Version: placement.Version, Revision: s.revision}, nil
+	return Mutation{Placement: id, Version: placement.Version, Revision: s.revision}, nil
 }
 
 // Mutate applies apply to the placement named by id, and returns the change.
@@ -1442,12 +1440,12 @@ func (s *CampaignState) Mutate(
 	id PlacementID,
 	seen uint64,
 	apply func(*Placement),
-) (Change, error) {
+) (Mutation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.mutableLocked(); err != nil {
-		return Change{}, err
+		return Mutation{}, err
 	}
 
 	placement, live := s.placements[id]
@@ -1456,17 +1454,17 @@ func (s *CampaignState) Mutate(
 			// The caller describes a version of something that is not here. Its
 			// copy is stale — most likely a resume against a placement that has since
 			// been removed — and the answer is the same: resynchronise.
-			return Change{}, fmt.Errorf(
+			return Mutation{}, fmt.Errorf(
 				"%w: %q is not placed, and the caller holds version %d of it",
 				ErrVersionMismatch, id, seen,
 			)
 		}
 
-		return Change{}, fmt.Errorf("%w: %q", ErrNoPlacement, id)
+		return Mutation{}, fmt.Errorf("%w: %q", ErrNoPlacement, id)
 	}
 
 	if placement.Version != seen {
-		return Change{}, fmt.Errorf(
+		return Mutation{}, fmt.Errorf(
 			"%w: %q is at version %d, the caller holds %d",
 			ErrVersionMismatch,
 			id,
@@ -1483,7 +1481,7 @@ func (s *CampaignState) Mutate(
 	placement.Version = s.stampLocked(id)
 	s.advanceLocked()
 
-	return Change{Placement: id, Version: placement.Version, Revision: s.revision}, nil
+	return Mutation{Placement: id, Version: placement.Version, Revision: s.revision}, nil
 }
 
 // Remove takes a placement off the tabletop and returns the change.
@@ -1492,21 +1490,21 @@ func (s *CampaignState) Mutate(
 // version map keeps it, so a re-created placement of the same id is stamped above
 // it. The returned `Change` is the only place that number exists afterwards: the
 // row is gone, and a delta-only client learns of the removal from the broadcast.
-func (s *CampaignState) Remove(id PlacementID, seen uint64) (Change, error) {
+func (s *CampaignState) Remove(id PlacementID, seen uint64) (Mutation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.mutableLocked(); err != nil {
-		return Change{}, err
+		return Mutation{}, err
 	}
 
 	placement, live := s.placements[id]
 	if !live {
-		return Change{}, fmt.Errorf("%w: %q", ErrNoPlacement, id)
+		return Mutation{}, fmt.Errorf("%w: %q", ErrNoPlacement, id)
 	}
 
 	if placement.Version != seen {
-		return Change{}, fmt.Errorf(
+		return Mutation{}, fmt.Errorf(
 			"%w: %q is at version %d, the caller holds %d",
 			ErrVersionMismatch,
 			id,
@@ -1520,7 +1518,7 @@ func (s *CampaignState) Remove(id PlacementID, seen uint64) (Change, error) {
 	version := s.stampLocked(id)
 	s.advanceLocked()
 
-	return Change{Placement: id, Version: version, Revision: s.revision}, nil
+	return Mutation{Placement: id, Version: version, Revision: s.revision}, nil
 }
 
 // SetPaused sets the tabletop's paused flag and returns the new campaign revision.
@@ -2038,7 +2036,7 @@ func (s *CampaignState) writeState(ctx context.Context, document Document) error
 		)
 	}
 
-	blob, err := Encode(document)
+	blob, err := EncodeDocument(document)
 	if err != nil {
 		return err
 	}
