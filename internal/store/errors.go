@@ -69,6 +69,25 @@ var (
 	// because a query that cannot match is a mistake in the request rather than a
 	// fault worth a 500.
 	ErrInvalidSearchQuery = errors.New("store: search query has no usable terms")
+
+	// ErrInvalidRuleModuleConfig means a house-rule module's configuration is not
+	// a JSON object. The shape and nothing else, and the shape is what migration
+	// 0010's `DEFAULT '{}'` asserts: a row whose config is the empty string or a
+	// bare number is a row no house-rule application can read, and it would fail
+	// at campaign load rather than at the write that created it. Which keys a
+	// module understands is the module's own vocabulary and is deliberately not
+	// checked here.
+	ErrInvalidRuleModuleConfig = errors.New("store: rule module config is not a JSON object")
+
+	// ErrDuplicateRuleModule means one module appeared twice in a set being written.
+	//
+	// Distinct from ErrConflict, which is what the primary key would report: that
+	// is the database noticing a duplicate it cannot explain, with the driver's
+	// message and nothing about which of the two rows was meant to win. This is the
+	// store noticing it in the caller's slice, where the caller can be told what to
+	// change — and a caller assembling a set from a form has no other way to learn
+	// it submitted the same module twice.
+	ErrDuplicateRuleModule = errors.New("store: a rule module appears twice in the set")
 )
 
 // SQLite extended result codes, from sqlite3.h. SQLite assigns each one once and
