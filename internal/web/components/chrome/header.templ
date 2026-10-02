@@ -1,0 +1,144 @@
+package chrome
+
+// Header is the banner: `role="banner"`, 56px, and the landmarks' fixed
+// reference point for the skip links (UI §4.1, §4's diagram).
+//
+// # The zones, and where each one comes from
+//
+// UI §4.1's left zone is a menu button, a campaign switcher and a mode
+// switcher. Only the campaign is here, and it is a link rather than a switcher:
+// a switcher is a `<button aria-haspopup="menu">` and a menu needs the client
+// layer, so what renders instead is the campaign's own address, which is also
+// what UI §8.3's rank 1 — the current location — wants in a 56px bar. The menu
+// button and the mode switcher are named in the integration report; both are
+// client-layer features and neither would be honest to render now.
+//
+// # Per tier
+//
+// UI §3.2's header row is a CSS switch over this one DOM, not four variants:
+//
+//	compact        3.5rem, title, search, account
+//	compact-short  2.5rem, the same zones in less room
+//	medium, large  3.5rem with the search field inline
+//	wide           4rem, a wider field
+//
+// The height comes from `--header-h` in the stylesheet and the field's width from
+// the same sheet, so nothing here needs to know which tier it is in — which is
+// the point of §3.7's one canonical DOM. What the tier does change is which
+// zones fit at all, and that is a stylesheet decision: a 320px viewport has room
+// for a title, a field and an account, and not for much else.
+templ Header(view HeaderView) {
+	<header class="shell-header" role="banner" data-testid="shell-header">
+		// §8.3's rank 1: the current location, and the first focusable element
+		// inside the banner. A campaign's name when there is a campaign, and the
+		// instance's own name when there is not — which is the pre-campaign case
+		// and the only place the brand link appears, because inside a campaign
+		// the campaign name already answers "where am I?".
+		if view.Campaign.Slug != "" {
+			<a
+				class="header-campaign target"
+				href={ view.Campaign.href() }
+				data-testid="header-campaign"
+			>{ view.Campaign.label() }</a>
+		} else {
+			<a class="shell-brand target" href="/" data-testid="header-home">{ view.instanceLabel() }</a>
+		}
+		if view.Search.Action != "" {
+			@headerSearch(view.Search)
+		}
+		// The connection indicator is the banner's only live region, and it
+		// exists only on a live route. §7.5's search rule is why: search is not
+		// live, so a caller on that route leaves Connection at its zero value
+		// and this element is not in the document at all. §4.1 fixes the region
+		// and the three labels, and §6.5 fixes the rest — the state is a word,
+		// so hue never carries it alone. The client rewrites the text and never
+		// the element, because adding and removing a live region is what makes
+		// one announce twice.
+		if view.Connection != ConnectionNone {
+			<p
+				class="header-connection"
+				role="status"
+				aria-live="polite"
+				data-chrome="connection"
+				data-testid="header-connection"
+			>
+				{ view.Connection.label() }
+			</p>
+		}
+		// §4.1: a single button cycling auto → light → dark, with `aria-pressed`
+		// and a label naming the *result*. It cannot cycle until the client
+		// layer exists, so it renders the one state that is true of the
+		// document it is in — the default — and the client rewrites the label.
+		<button
+			type="button"
+			class="target header-theme"
+			aria-pressed={ view.Theme.pressed() }
+			data-chrome="theme"
+			data-testid="header-theme"
+		>{ view.Theme.label() }</button>
+		@headerAccount(view.Account)
+	</header>
+}
+
+// headerSearch is the banner's centre zone: a `GET` form over ordinary HTTP.
+//
+// `role="search"` makes it a landmark, so it is labelled, and the label is not
+// the word "Search": the centre slot of the search route is also a search form,
+// and two unlabelled or identically-labelled search landmarks are the same
+// failure §7.2 names for navigation. §7.5 is why this is a form and not a fetch
+// with a live region: search is submit-to-navigate, `GET /c/{slug}/search?q=`,
+// and its result list is cacheable content that never flows through a reactive
+// transport.
+//
+// No submit button. One text field submits on Enter in every browser, and a
+// second control in the banner is a focus stop for something the keyboard
+// already has.
+templ headerSearch(form SearchForm) {
+	<form
+		class="header-search"
+		role="search"
+		aria-label="Search pages"
+		method="get"
+		action={ form.Action }
+		data-testid="header-search"
+	>
+		<label class="visually-hidden" for="header-search-input">Search pages</label>
+		// §7.7: a real `<label for>`, never a placeholder. A placeholder is
+		// gone the moment the field has a character in it, which is the moment
+		// a reader most needs to know what they are typing into.
+		<input
+			id="header-search-input"
+			class="target header-search-input"
+			type="search"
+			name="q"
+			value={ form.Query }
+			data-testid="header-search-input"
+		/>
+	</form>
+}
+
+// headerAccount is the banner's right zone: the identity, and the one action that
+// works without a client.
+//
+// UI §4.1 wants an account *menu*. Until the client layer exists a menu that
+// cannot open is a dead control, so the zone renders the identity and a real
+// form instead — which is also what `components/shell.templ` does, and for the
+// same reason. The menu is the phase-9 replacement.
+//
+// Absent entirely for a reader who is not signed in, which is the normal state
+// of /login: a sign-out button on the page a reader reaches precisely because
+// they are not signed in is a control that cannot help.
+templ headerAccount(account AccountView) {
+	if account.Username != "" {
+		<div class="shell-account" data-testid="header-account">
+			<span class="shell-account-name">{ account.Username }</span>
+			// A POST, not a link: signing out changes state, and a link that
+			// does is a prefetch a browser and a proxy may both follow.
+			if account.SignOutHref != "" {
+				<form method="post" action={ account.SignOutHref }>
+					<button type="submit" class="target" data-testid="header-sign-out">Sign out</button>
+				</form>
+			}
+		</div>
+	}
+}

@@ -100,6 +100,52 @@ func ReadUIPreferences(r *http.Request) UIPreferences {
 	return parseUIPreferences(cookie.Value)
 }
 
+// uiFieldSeparator is the byte between the cookie's fields: `&`.
+//
+// And not `;`, which this file's own comment previously named. `;` is reserved in a
+// cookie value: `http.Cookie.String()` quotes the value and **drops** every `;`,
+// logging "invalid byte ';' in Cookie.Value" on every write. The round trip is
+// therefore lossy rather than merely untidy — `theme=dark; ui=tv` goes out as
+// `theme=dark ui=tv`, the parser sees one field, cuts it at the first `=`, reads
+// the value as `dark ui=tv`, rejects it as unknown, and `ReadUIPreferences`
+// returns all-defaults for a user who explicitly chose dark and tv.
+//
+// The failure is silent in the worst direction: a GM who picked TV mode gets the
+// laptop layout, with nothing on screen to explain it and no error anywhere. And
+// it was invisible for as long as it existed because the parser and the writer
+// agreed with each other and nothing compared them to a browser.
+//
+// No separator this parser splits on can be `;`, because the only one it split on
+// was the one the transport destroys. `&` survives quoting intact and is what
+// `WriteUIPreferences` writes.
+//
+// Whitespace is accepted too, because a browser, a proxy and a hand-edited cookie
+// each introduce it, and tolerating it costs nothing: a segment that is empty
+// after trimming carries nothing either way.
+// uiFieldSeparatorString is what `parseUIPreferences` splits on.
+//
+// `&` alone would be enough; the rest are tolerated because a browser, a proxy
+// and a hand-edited cookie each introduce them, and tolerating them costs
+// nothing. `;` is here so that a cookie an older build wrote still parses — a
+// value arriving with either separator must read identically, rather than
+// depending on which build touched the cookie last.
+const uiFieldSeparatorString = "&; \t"
+
+// uiFieldSeparator is the same set as a predicate, for the same reason.
+//
+// Two spellings of one set rather than one, because `strings` offers two
+// shapes: `SplitSeq` takes a single separator string and `FieldsFunc` a
+// predicate. Passing the four characters as a separator string to `SplitSeq`
+// splits on the *literal* four-character sequence, so "theme=dark&ui=tv" comes
+// back as one segment and the parse quietly returns all-defaults again — the same
+// silent failure as the bug being fixed, reintroduced by the fix.
+//
+// The test asserting that both spellings agree on a real value is what holds
+// them together; a helper with a comment is a promise, not a constraint.
+func uiFieldSeparator(r rune) bool {
+	return strings.ContainsRune(uiFieldSeparatorString, r)
+}
+
 // parseUIPreferences parses a raw `sp_ui` value.
 //
 // An unknown key is ignored rather than preserved. Ignoring is the only safe
@@ -122,7 +168,7 @@ func parseUIPreferences(raw string) UIPreferences {
 	prefs := DefaultUIPreferences()
 	seen := make(map[string]bool, 2)
 
-	for pair := range strings.SplitSeq(raw, ";") {
+	for pair := range strings.FieldsFuncSeq(raw, uiFieldSeparator) {
 		if strings.TrimSpace(pair) == "" {
 			// An empty segment carries nothing. Tolerated because a trailing
 			// separator is the one malformation browsers add for free.
@@ -220,9 +266,15 @@ func WriteUIPreferences(w http.ResponseWriter, prefs UIPreferences) {
 	// rather than a convenience. Secure is omitted for the same reason as on the
 	// session cookie: it would silently discard preferences on any self-hoster
 	// serving plain HTTP on a LAN.
+	// The value and `parseUIPreferences`'s separator are one contract, and
+	// `TestUIPreferencesRoundTripThroughAnHTTPCookie` is what holds the two ends
+	// together: it writes through this function, sends the cookie back over the
+	// wire, and reads it with `ReadUIPreferences`. A parser and a writer that
+	// agree with each other but not with a browser are a preference that silently
+	// does nothing, which is how this shipped.
 	http.SetCookie(w, &http.Cookie{
 		Name:  UICookieName,
-		Value: "theme=" + string(theme) + "; ui=" + string(mode),
+		Value: "theme=" + string(theme) + "&ui=" + string(mode),
 		Path:  "/",
 		// Left false deliberately, and asserted in a test. See UICookieName.
 		HttpOnly: false,

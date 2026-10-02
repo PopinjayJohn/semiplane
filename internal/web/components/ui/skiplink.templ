@@ -1,0 +1,47 @@
+package ui
+
+// The two class names the stylesheet defines for the whole application, and the
+// one component that has to carry one of them.
+//
+// They are declared here rather than in a `classes.go` because of a mechanical
+// fact about the build: Tailwind scans `.templ` files and nothing else
+// (`internal/web/static/css/app.css`'s `@source` directives), and a hand-written
+// `.go` file under `components/` is invisible to it. Every class name this
+// package's components render has to be visible to the scanner, so the
+// declarations live beside the markup. A `.templ` file with no templ block is
+// not an option either: templ writes an unconditional import of its runtime into
+// every generated file, so a declaration-only `.templ` does not compile.
+
+// TargetClass is the one class every interactive element carries.
+//
+// UI §7.3 enforces target size by construction rather than by review: a shared
+// utility sets `min-inline-size: var(--target-min); min-block-size:
+// var(--target-min)`, and every interactive element uses it — a plugin's
+// included, because §4.11.1 makes the utility part of the plugin contract and
+// §10.6's audit greps rendered markup without being able to tell whose output
+// it is reading. A constant rather than a literal in each template so a test can
+// assert the contract against the same name the markup uses, and so the
+// stylesheet has one spelling to match.
+const TargetClass = "target"
+
+// SkipLinkClass is the class a skip link carries, and the hook the stylesheet's
+// off-screen-until-focused rule targets.
+//
+// UI §7.2 fixes the skip links as the first focusable elements in the document,
+// and `components.Shell` already renders them. This is the contract for the
+// class and the component below is the same anchor it renders, so a future shell
+// replaces two inline anchors with SkipLink and the served markup is unchanged.
+const SkipLinkClass = "skip-link"
+
+// SkipLink renders one skip link: a document's first focusable element, pointing
+// at a landmark this route actually renders.
+//
+// The target is a bare id because UI §7.2's targets are real focusable elements
+// carrying `tabindex="-1"`, so activating the link moves focus somewhere a screen
+// reader announces rather than to the top of a scroll container. A caller may
+// only pass an id this document renders: a link to a landmark that is not here
+// moves focus nowhere, which is why §4.6 removes the campaign-navigation link
+// from a pre-campaign route rather than leaving it inert.
+templ SkipLink(target, label, testID string) {
+	<a class={ SkipLinkClass + " " + TargetClass } href={ "#" + target } data-testid={ testID }>{ label }</a>
+}

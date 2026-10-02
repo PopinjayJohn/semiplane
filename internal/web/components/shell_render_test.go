@@ -9,6 +9,8 @@ import (
 
 	"github.com/semiplane/semiplane/internal/domain"
 	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/chrome"
+	"github.com/semiplane/semiplane/internal/web/components/ui"
 )
 
 // These tests are UI §10.2, which is gate-blocking, run against rendered
@@ -173,17 +175,42 @@ func TestInterfaceVocabularyCoversEveryExportedState(t *testing.T) {
 				templ.NopComponent,
 			),
 		},
-		{name: "InstanceRail", component: components.InstanceRail(instanceFixture())},
-		{name: "DegradedNotice", component: components.DegradedNotice(degradedFixture())},
 		{
-			name: "FirstRun",
-			component: components.FirstRun(
-				campaignListView(CampaignListViewOptions{firstRun: true}),
+			// §4.6's other side. The campaign variant is a *different* component
+			// rather than a parameter, and the reason is in the skip-link block:
+			// §7.2 puts "Skip to campaign navigation" in the document only where
+			// the navigation exists. A variant reachable with a parameter would
+			// make the skip link and the nav two separate conditions to keep in
+			// step, and the bug in that pairing is invisible in a rendered diff.
+			name: "CampaignShell/empty-slots",
+			component: components.CampaignShell(
+				components.ShellView{
+					Instance: components.InstanceView{Name: "Greyhaven"},
+					Campaign: chrome.CampaignRef{Name: "Greyhaven", Slug: "greyhaven"},
+				},
+				chrome.NavView{},
+				templ.NopComponent,
+				templ.NopComponent,
 			),
 		},
+		{name: "InstanceRail", component: components.InstanceRail(instanceFixture())},
+		{name: "DegradedNotice", component: components.DegradedNotice(degradedFixture())},
+		// §4.7's states moved to `components/ui` so the whole set is in one
+		// package. These two are exercised here rather than only in `ui`'s own
+		// tests because the thing this test checks is the *vocabulary*, and the
+		// vocabulary is a whole-interface property: a state that is correct in
+		// isolation and says "session" is only caught by a test that walks the
+		// same word list against every exported surface.
 		{
-			name:      "LoadError",
-			component: components.LoadError(components.LoadFailure{Reference: "req-2"}),
+			name: "ui.FirstRun",
+			component: ui.FirstRun(ui.FirstRunView{
+				CreateHref: "/c/new",
+				DocsHref:   "/docs",
+			}),
+		},
+		{
+			name:      "ui.LoadError",
+			component: ui.LoadError(components.LoadFailure{Reference: "req-2"}),
 		},
 	}
 
@@ -505,5 +532,98 @@ func TestUnconfiguredInstanceStillNamesItself(t *testing.T) {
 
 	if !strings.Contains(document, "<title>Campaigns — semiplane</title>") {
 		t.Errorf("document title does not fall back to the product name: %s", document)
+	}
+}
+
+// TestTheDegradedWarningIsRenderedExactlyOnce is the composition-level claim that
+// the route-level audit cannot reach.
+//
+// UI §4.2 puts a persistent "Not working" warning in the footer, and the
+// pre-campaign rail carries `DegradedNotice` under the same heading. A composition
+// that passes the subsystems to both renders `<h2>Not working</h2>` twice in one
+// document — and §7.2's rules all pass, because the `<h1>` count is right, the
+// levels never skip, and both copies render correctly. It is still wrong: a
+// screen reader's heading list is the reader's table of contents, and two identical
+// entries in it point at two different regions.
+//
+// It lives here rather than in `internal/httpapi/shell_render_test.go` because no
+// route populates `InstanceView.Degraded` yet — the status route that will is a
+// later phase — so every route fixture is healthy and the bug is invisible there.
+// This renders the composition directly with a degraded instance, which is the
+// only way to reach the branch while nothing populates it.
+//
+// Both variants are checked, and they check *opposite* things, which is the point:
+// the pre-campaign shell must not pass the list to the footer (the rail has it),
+// and the campaign shell must (the rail there is the campaign's own panels and
+// renders none of them).
+func TestTheDegradedWarningIsRenderedExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	degraded := components.InstanceView{
+		Name:     "Greyhaven",
+		Version:  "0.2.0",
+		Degraded: degradedFixture(),
+	}
+
+	cases := []struct {
+		name string
+		// carriedBy names the landmark expected to render the warning. It is in
+		// the table because the two cases are *opposite*, and a reader who saw
+		// only the count would not know which landmark each one is testing.
+		carriedBy string
+		document  string
+	}{
+		{
+			name:      "the pre-campaign shell: the rail carries it",
+			carriedBy: "the rail",
+			document: render(t, components.Shell(
+				components.ShellView{Instance: degraded},
+				templ.NopComponent,
+				components.InstanceRail(degraded),
+			)),
+		},
+		{
+			name:      "the campaign shell: the footer carries it",
+			carriedBy: "the footer",
+			document: render(t, components.CampaignShell(
+				components.ShellView{
+					Instance: degraded,
+					Campaign: chrome.CampaignRef{Name: "Greyhaven", Slug: "greyhaven"},
+				},
+				chrome.NavView{},
+				templ.NopComponent,
+				// The campaign rail describes the campaign and renders none of
+				// the instance's subsystems, which is precisely why the footer is
+				// the only place §4.2's warning can go on this route.
+				templ.NopComponent,
+			)),
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Counted as markup rather than parsed: the claim is about a literal
+			// heading string appearing twice, and the string is a constant in this
+			// repository rather than anything a caller supplies. The two copies do not
+			// share a `data-testid` either -- `footer-degraded` is on the footer's
+			// wrapper and `degraded-warning` is on the rail's -- which is itself why
+			// the heading text is the thing to count.
+			if got := strings.Count(testCase.document, "Not working"); got != 1 {
+				t.Errorf("the document renders %q %d times, want 1, carried by %s. Two "+
+					"headings with the same text in one document are two entries in the "+
+					"reader's heading list pointing at two different regions",
+					"Not working", got, testCase.carriedBy)
+			}
+
+			// And the fixture must actually be reaching the branch. A composition that
+			// rendered *neither* copy would pass the count above with zero copies in
+			// it, so the fixture is checked for carrying a heading at all.
+			if !strings.Contains(testCase.document, "<h2") {
+				t.Error("the document carries no <h2> at all; the fixture is not " +
+					"reaching the branch it claims to exercise")
+			}
+		})
 	}
 }

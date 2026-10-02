@@ -1,0 +1,491 @@
+/* ==========================================================================
+   tokens.css — the design token layer. Spec §6.1, §6.2, §6.3, §6.4, §6.5,
+   §6.7, with §5.1's scale and §4.12.1's protected-variable list.
+
+   Three layers, in the order §6.1 fixes:
+
+     1. Primitive  — oklch ramps, --space-*, --radius-*, --dur-*, the elevation
+                     shadows. No meaning. A step of --color-accent-600 is a
+                     colour; it is not "the button".
+     2. Semantic   — --bg, --surface, --text, --accent, --callout-*, --brand-*.
+                     Meaning, no component knowledge. §6.2 light, §6.3 dark.
+     3. Component  — --btn-primary-bg, --tab-selected-fg. The small set that
+                     cannot be expressed semantically, because "the label of the
+                     selected tab" is not "the accent" and the semantic layer has
+                     no way to know what the tab rail's surface is.
+
+   HOW A TOKEN REACHES THE BUILT STYLESHEET
+   -----------------------------------------
+   Tailwind v4's @theme is global: it emits its variables into @layer theme,
+   which is `:root`, and it cannot express a value that depends on a selector.
+   The two theme blocks below therefore live in *plain* CSS scoped to
+   [data-theme="…"], which is the only way a value can be per-theme, and each
+   name is then bridged into Tailwind's own namespace by the @theme inline block
+   below. `inline` is what makes the bridge work: it substitutes the reference
+   into the utility instead of re-declaring a theme variable, so
+
+       .bg-surface { background-color: var(--surface) }
+
+   rather than a second `:root { --color-surface: … }` that would have to be
+   overridden per theme. Unlayered rules also outrank @layer theme, so the
+   [data-theme] blocks win over anything @theme emits without a specificity war.
+
+   Primitive variables need no bridge: they are global, so they go in a plain
+   @theme block and generate utilities directly (--color-* -> bg-*, text-*;
+   --radius-* -> rounded-*; --spacing-* -> p-*, gap-*). Two of the scale names
+   have no Tailwind namespace at all — --dur-* and --space-* — so they are
+   consumed by plain CSS only. That is stated again where they are declared
+   rather than left for a reader to discover from a missing utility.
+
+   THE GATE
+   --------
+   tokens_contrast_test.go parses THIS FILE, not a copy of the palette, and
+   every value here is transcribed from §6.2/§6.3 as written. Editing a hex
+   above fails the build; that is the point of §10.1. The ratios in the record
+   are not asserted as numbers — only the floors are — because three of the
+   record's own ratios are rounded in its second decimal (light --callout-border
+   3.24 against a computed 3.21, --callout-secret 8.30 against 8.22, --warning
+   5.49 against 5.48). All three clear their floors. Pinning the record's
+   rounded ratio would fail on correct values and train the next reader to
+   "fix" the test instead of the file.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   PROTECTED VARIABLES — §4.12.1, and the rule that enforces them
+   --------------------------------------------------------------------------
+   Overridable by a campaign:        Never overridable — ever
+     --brand-accent                   --text, --text-muted, --text-subtle
+     --brand-accent-ink               --border, --border-subtle, --border-w
+     --brand-header-image             --focus-ring, --focus-ring-offset
+                                      --callout-surface, --callout-border,
+                                        --callout-secret, --callout-revealed
+                                      --type-scale, --space-scale, --target-min
+                                      --dur-*, --radius-*
+
+   The right-hand column is the accessibility contract: a stylesheet that could
+   set --focus-ring or --target-min would break 1.4.11, 1.4.3 or 2.5.5 with no
+   gate able to catch it across every campaign.
+
+   Enforcement is structural, not advisory (§6.5's last bullet, §4.12.2): the
+   server validates a campaign's theme manifest and *generates* /c/{slug}/theme.css,
+   and the generator never emits a protected name — so a campaign cannot set one
+   even by writing a raw .css into its content root, because a raw file is served
+   as a static asset and never linked from the shell. "Don't set it" is a rule
+   somebody breaks; "it is never emitted" is a property of the code.
+
+   --type-scale, --space-scale, --target-min, --font-* and the --text-* type
+   steps are declared by the shell stylesheet, not here: §5.1 applies them as
+   calc() multipliers per [data-ui], and that is a layout concern. They are
+   listed above because §4.12.1 protects them whether or not this file is where
+   they are written.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   LAYER 1 — PRIMITIVE.  §6.1: no meaning.
+   --------------------------------------------------------------------------
+   These are scales. Nothing here is referenced by the semantic layer, and that
+   is deliberate. §6.2/§6.3 are hex, the record's ratios were computed from
+   those hex values, and the gate measures what the stylesheet says — so a
+   semantic token that resolved through a ramp would make the record's numbers
+   unverifiable. The ramps are the *additive* direction (§4.11.1): a plugin that
+   genuinely needs a new colour picks a ramp step and passes the same floor
+   instead of inventing a constant. Do not re-derive --bg from --color-neutral-*.
+
+   Every value is inside the sRGB gamut. An out-of-gamut oklch is not an error
+   in a browser — it is silently clipped, so the colour that ships is not the
+   colour written here and the contrast test would be measuring a value nobody
+   sees. TestPrimitiveRampsAreInGamut is the guard.
+
+   `static` is load-bearing, and removing it is the kind of tidy-up that costs a
+   day. A default `@theme` emits a variable only if some generated utility
+   references it, so a ramp step no template happens to use is dropped from the
+   built stylesheet — and §4.11.1's plugin contract is precisely a *not yet used*
+   colour: a plugin asks for `var(--color-accent-600)`, gets an undefined value,
+   and falls back to inventing a constant, which is the outcome the contract
+   exists to prevent. `static` emits every declaration regardless of usage.
+   ========================================================================== */
+@theme static {
+  /* A warm grey, to sit with §6.2's "parchment". Fixed hue and chroma: a ramp
+     whose steps drift in hue is not a ramp, it is nine unrelated colours. */
+  --color-neutral-50: oklch(0.985 0.006 70);
+  --color-neutral-100: oklch(0.96 0.006 70);
+  --color-neutral-200: oklch(0.91 0.006 70);
+  --color-neutral-300: oklch(0.85 0.006 70);
+  --color-neutral-400: oklch(0.72 0.006 70);
+  --color-neutral-500: oklch(0.58 0.006 70);
+  --color-neutral-600: oklch(0.45 0.006 70);
+  --color-neutral-700: oklch(0.32 0.006 70);
+  --color-neutral-800: oklch(0.22 0.006 70);
+  --color-neutral-900: oklch(0.15 0.006 70);
+
+  /* The hue of §6.2/§6.3's --accent family. Chroma tapers at both ends because
+     sRGB does not: a blue that saturated at L 0.97 is not a blue that exists. */
+  --color-accent-50: oklch(0.97 0.012 255);
+  --color-accent-100: oklch(0.93 0.028 255);
+  --color-accent-200: oklch(0.87 0.055 255);
+  --color-accent-300: oklch(0.79 0.091 255);
+  --color-accent-400: oklch(0.7 0.135 255);
+  --color-accent-500: oklch(0.62 0.173 255);
+  --color-accent-600: oklch(0.54 0.151 255);
+  --color-accent-700: oklch(0.45 0.125 255);
+  --color-accent-800: oklch(0.36 0.1 255);
+  --color-accent-900: oklch(0.28 0.075 255);
+
+  /* The spacing scale. --spacing is Tailwind's own root multiplier, so p-4 and
+     --space-4 are the same length by construction; the test asserts the
+     invariant rather than trusting the arithmetic to stay true. */
+  --spacing: 0.25rem;
+
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
+
+  /* §6.7: every one of these becomes 1ms under prefers-reduced-motion, so they
+     are read through var() and never hard-coded into a transition shorthand. */
+  --dur-instant: 0ms;
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  /* §6.7's first rule is about these three by name: forced-colors: active drops
+     shadows, so a null in that block is the whole mechanism by which the
+     separation each shadow carried can come back as a border. Named rather
+     than numbered because elevation is a meaning and a number is not. */
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.06), 0 1px 3px oklch(0 0 0 / 0.1);
+  --shadow-overlay: 0 4px 12px oklch(0 0 0 / 0.12), 0 2px 4px oklch(0 0 0 / 0.08);
+  --shadow-modal: 0 12px 32px oklch(0 0 0 / 0.2), 0 4px 8px oklch(0 0 0 / 0.12);
+}
+
+
+/* ==========================================================================
+   THE BRIDGE — §6.1's layers 2 and 3 into Tailwind's namespaces.
+   --------------------------------------------------------------------------
+   Every colour name declared in the theme blocks below appears here under
+   --color-*, so a component may write bg-surface / text-muted / border-border /
+   ring-focus-ring instead of var() by hand, and the utility follows the theme
+   because `inline` substituted the reference rather than copying a value.
+
+   --border-w is deliberately absent: it is a length, and mapping it into
+   --color-* would invent a `bg-border-w` that paints a border colour.
+   ========================================================================== */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-border-subtle: var(--border-subtle);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-solid: var(--accent-solid);
+  --color-on-accent: var(--on-accent);
+  --color-accent-surface: var(--accent-surface);
+  --color-callout-surface: var(--callout-surface);
+  --color-callout-border: var(--callout-border);
+  --color-callout-secret: var(--callout-secret);
+  --color-callout-revealed: var(--callout-revealed);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-focus-ring: var(--focus-ring);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-ink: var(--brand-accent-ink);
+  --color-map-dim: var(--map-dim);
+  --color-map-outline: var(--map-outline);
+  --color-btn-primary-bg: var(--btn-primary-bg);
+  --color-btn-primary-fg: var(--btn-primary-fg);
+  --color-tab-selected-bg: var(--tab-selected-bg);
+  --color-tab-selected-fg: var(--tab-selected-fg);
+
+  /* The bridge mirrors the token name exactly, so a token called --text-muted
+     surfaces as the utility `text-text-muted` — the doubled prefix is
+     Tailwind's colour utility meeting a token name that already begins with
+     "text", not a typo. Renaming a layer-2 token to make its utility prettier
+     would break §4.12.1's protected list, so the spelling stays. Plain
+     `var(--text-muted)` in a component stylesheet is the normal way to consume a
+     layer-2 token; the utilities are for the cases where one is enough. */
+}
+
+
+/* ==========================================================================
+   LAYER 2 + 3 — SEMANTIC AND COMPONENT, PER THEME.  §6.1, §6.2, §6.3.
+   --------------------------------------------------------------------------
+   §6.1: "a token present in only one theme is a bug", and the contrast test
+   fails on it. TestNoTokenIsMissingFromEitherTheme compares the two key sets
+   in both directions, so a token added to dark and forgotten in light fails as
+   loudly as the reverse.
+
+   These are the record's own hex values, transcribed. The gate measures the file,
+   so a change here is a change to the design, not a refactor.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   §6.2 — LIGHT, "parchment and ink"
+   -------------------------------------------------------------------------- */
+[data-theme="light"] {
+  /* Surfaces. --bg is the page; the other two are raised and sunken wells, and
+     a control or a panel can sit on either, which is why the test measures the
+     text and border tokens on all three rather than only on the page. */
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --surface-sunken: #efede8;
+
+  /* §6.7 makes every shadow-based separation a border in forced-colors: active.
+     These two carry that fallback, so a component that uses them gets the
+     1px ButtonBorder hairline with no second rule of its own. They are aliases,
+     not literals, so overriding --border-subtle below reaches them too. */
+  --surface-border: var(--border-subtle);
+  --surface-sunken-border: var(--border-subtle);
+
+  /* Text. --text-subtle is the weakest token that may still carry text: §6.2's
+     floor for it is 4.5, not 3. It clears 6.42 on the page and 5.93 on the
+     sunken well, and under prefers-contrast: more it stops existing as a
+     separate value. */
+  --text: #16130f;
+  --text-muted: #4a443c;
+  --text-subtle: #5f594f;
+
+  /* §6.5: --border-subtle is decorative and may not be the only boundary of an
+     interactive element. A control outline uses --border, which is the token
+     that clears 3:1 — 3.47 here, and 3.21 even on the sunken well, the worst
+     surface in this theme. */
+  --border-subtle: #d6d2c9;
+  --border: #8a8377;
+  --border-w: 1px;
+
+  /* --accent is the accent *as text and marks*: a link, an icon, a selected
+     state. §6.4: --accent-solid is not the same colour, and in this theme it
+     happens to be equal — see the note there before changing either. */
+  --accent: #1b4d8f;
+  --accent-solid: #1b4d8f;
+  --on-accent: #ffffff;
+  --accent-surface: #e8eff8;
+
+  /* §4.10's callouts. --callout-surface is the sunken well, so the secret text
+     and the callout's own border are measured against the well rather than the
+     page — 8.22 and 3.21 in this theme, and both clear their floors. */
+  --callout-surface: #efede8;
+  --callout-border: #8a8377;
+  --callout-secret: #4a443c;
+  --callout-revealed: #1b4d8f;
+
+  /* §6.5: --warning is a text and icon colour and is never a fill. Dark amber
+     on white is the classic illegible pairing, and a fill is the one place
+     where the foreground is chosen for us. If a control needs an amber fill it
+     needs its own --*-solid token, validated like --accent-solid. */
+  --success: #1e6b3a;
+  --warning: #8a5a00;
+  --danger: #a4262c;
+
+  /* §6.5: the ring is two-tone — --focus-ring against --focus-ring-offset — so
+     it survives landing on a control of the same hue, where a one-tone ring
+     would simply vanish. --focus-ring-offset resolves --local-surface, which a
+     component sets once (--local-surface: var(--surface) on a panel,
+     var(--on-accent) on a solid fill) and every focus ring inside inherits. The
+     var() fallback is the page, so a ring that nobody has given a local surface
+     still measures against --bg. */
+  --focus-ring: #0a58ca;
+  --focus-ring-offset: var(--local-surface, var(--bg));
+
+  /* §4.12.1: overridable, and the ONLY two names a campaign theme may set.
+     §4.12.3 validates the pair at >=4.5:1 and --brand-accent against --bg at
+     >=3:1, and rejects the theme toward the default on failure, so these two
+     aliases are the last unvalidated colour in the file. */
+  --brand-accent: var(--accent);
+  --brand-accent-ink: var(--on-accent);
+
+  /* §6.2's map row names --map-outline as what carries 1.1.1 for the map, and
+     gives --map-dim no luminance because it is translucent: what a 18%-black
+     fill measures is a function of whatever is under it, so the token layer
+     forbids an alpha-bearing token in any contrast-bearing slot and the outline
+     is the token that has to clear 3:1. --map-outline is an alias of
+     --text-subtle for exactly that reason — the strongest token still allowed
+     to be a graphic — and it follows --text-subtle when prefers-contrast: more
+     promotes it. */
+  --map-dim: rgb(0 0 0 / 0.18);
+  --map-outline: var(--text-subtle);
+
+  /* Layer 3 — §6.1's small set. A solid fill is not expressible as "the accent"
+     because §6.4 makes it theme-dependent, and a selected tab's label is not
+     expressible as "the accent" because the semantic layer cannot know what the
+     tab rail's surface is. */
+  --btn-primary-bg: var(--accent-solid);
+  --btn-primary-fg: var(--on-accent);
+  --tab-selected-bg: var(--accent-surface);
+  --tab-selected-fg: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   §6.3 — DARK, "slate and ember"
+   -------------------------------------------------------------------------- */
+[data-theme="dark"] {
+  --bg: #14181d;
+  --surface: #1b2027;
+  --surface-sunken: #0e1116;
+
+  --surface-border: var(--border-subtle);
+  --surface-sunken-border: var(--border-subtle);
+
+  --text: #edeef0;
+  --text-muted: #a8b0ba;
+  --text-subtle: #8b94a0;
+
+  --border-subtle: #2b323b;
+  --border: #6b7684;
+  --border-w: 1px;
+
+  /* §6.4 — THE POLARITY RULE. --accent-solid is a *lighter* blue here than
+     --accent, and the two are not the same colour, which reads like a mistake
+     and is not one.
+
+     A solid fill's own shape has to clear 3:1 against the page it sits on
+     (1.4.11), not merely carry a label that clears 4.5. §6.4's worked example:
+     this theme's light fill, #1B4D8F, on this theme's #14181D page measures
+     2.13:1 — its label passes at 8.38:1 and the button itself fails. So the
+     fill inverts: #5B9BE8 measures 6.20:1 on the page, with the near-black
+     --on-accent at 6.51:1 on the fill.
+
+     Do not "simplify" this to --accent, do not reuse the light theme's value,
+     and do not let a campaign reach it. The same inversion applies to every
+     filled control, and it is a hard requirement, not a preference. */
+  --accent: #7fb2f0;
+  --accent-solid: #5b9be8;
+  --on-accent: #0b1220;
+  --accent-surface: #1d2a3d;
+
+  --callout-surface: #0e1116;
+  --callout-border: #6b7684;
+  --callout-secret: #a8b0ba;
+  --callout-revealed: #7fb2f0;
+
+  /* §6.5 again: --warning is legible as text in this theme at 9.08:1 and would
+     be illegible as a white-on-amber fill, which is the same rule the light
+     theme states from the other direction. */
+  --success: #5fcb8e;
+  --warning: #e0b341;
+  --danger: #f0877f;
+
+  --focus-ring: #9cc4ff;
+  --focus-ring-offset: var(--local-surface, var(--bg));
+
+  --brand-accent: var(--accent);
+  --brand-accent-ink: var(--on-accent);
+
+  --map-dim: rgb(0 0 0 / 0.32);
+  --map-outline: var(--text-subtle);
+
+  --btn-primary-bg: var(--accent-solid);
+  --btn-primary-fg: var(--on-accent);
+  --tab-selected-bg: var(--accent-surface);
+  --tab-selected-fg: var(--accent);
+}
+
+
+/* ==========================================================================
+   §6.7 — FORCED COLOURS, CONTRAST, MOTION
+   --------------------------------------------------------------------------
+   All three blocks follow the two theme blocks on purpose, and not only for
+   readability. `:root` and `[data-theme="light"]` have identical specificity,
+   so a value re-declared here wins on source order alone; moving a media block
+   above a theme block silently disables it, and the symptom is a system theme
+   that is not honoured rather than an error. Keep them last.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   prefers-reduced-motion: reduce — §6.7
+   --------------------------------------------------------------------------
+   Every duration collapses to 1ms. 1ms rather than 0ms: a zero-duration
+   transition still dispatches its events, and the phase 9 live plane and the
+   transport that closes a connection on transitionend both key off them.
+
+   "Nothing may depend on an animation to become visible" is enforced
+   structurally rather than by convention: this file declares no @keyframes and
+   no --animate-* token, so there is nothing here for an element to wait on.
+   TestTokenFileDeclaresNoAnimation is the guard, and it is the reason the
+   elevation shadows above are the only depth in the system. Anything that must
+   appear, appears in its final state; --dur-* governs decoration and nothing
+   else. A pan, a zoom or a reveal that waited on a transition would be a
+   content state reachable only through motion.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 1ms;
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   prefers-contrast: more — §6.7
+   --------------------------------------------------------------------------
+   The two weak text tokens stop existing as separate values, so a muted label
+   a low-vision user can no longer read is promoted rather than merely
+   contrasted-in-place, and the boundary that carries 1.4.11 doubles in width.
+
+   --text-subtle is also --map-outline's value, so the map outline is promoted
+   with it: custom properties are substituted at use, not at declaration, so
+   the alias needs no second rule here.
+   -------------------------------------------------------------------------- */
+@media (prefers-contrast: more) {
+  :root {
+    --text-muted: var(--text);
+    --text-subtle: var(--text);
+    --border-w: 2px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   forced-colors: active — §6.7
+   --------------------------------------------------------------------------
+   Our palette does not survive this mode: every value above is discarded by the
+   user agent in favour of the system palette, which is the point — a forced
+   palette exists because the user's is the one that works. `forced-color-adjust:
+   auto` throughout, stated once here rather than opted into per component,
+   because the failure mode is asymmetric: a single `forced-color-adjust: none`
+   anywhere in the stylesheet disables the whole mode for that subtree, and
+   nothing in the contrast gate can see it.
+
+   Shadows are dropped in this mode, so all three elevation tokens go to none —
+   and the separation each of them carried comes back as a 1px system hairline.
+   --border-subtle becomes ButtonBorder, which reaches --surface-border and
+   --surface-sunken-border through their aliases, so a component that already
+   draws a border needs no second declaration to stay separated here.
+
+   Focus switches to Highlight, and the offset to Canvas: a two-tone ring whose
+   offset is one of our colours would be a ring drawn in a colour this mode
+   exists to remove.
+   -------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  :root {
+    forced-color-adjust: auto;
+
+    --shadow-raised: none;
+    --shadow-overlay: none;
+    --shadow-modal: none;
+
+    --border-w: 1px;
+    --border-subtle: ButtonBorder;
+    --border: ButtonBorder;
+
+    --focus-ring: Highlight;
+    --focus-ring-offset: Canvas;
+  }
+}

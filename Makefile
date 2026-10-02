@@ -143,6 +143,47 @@ lint-verify: ## Validate .golangci.yml against the v2 schema
 test: ## Run tests
 	$(GO) test -race -count=1 $(PKGS)
 
+# UI §10.1, §10.2 and §10.6 are gate-blocking, so they get their own target —
+# `make a11y` — and it is in `check` rather than only in `ci`, for the reason
+# `css` and `templ` are: these tests read a *built* artefact
+# (internal/web/static/dist/app.css) and the shell's rendered documents, and a
+# target a developer can forget is a gate nobody runs.
+#
+# Split from `test` so a failure names the accessibility contract rather than
+# "a test failed", and so `go test ./...` stays fast enough to run in a loop while
+# the a11y subset stays explicit about what it covers.
+#
+# Deliberately NOT wired to any Playwright step. UI §10.3-§10.7 are the
+# agent-assisted sweeps, and the plan is explicit that the MCP must not become a
+# CI dependency: §10.9 requires every *finding* from those sweeps to become a
+# committed Go test instead, and every one of them below is. Adding a browser here
+# would make CI depend on a Node toolchain this repository deliberately does not
+# have.
+A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi
+
+# The pattern is a list of substrings of the gate's test names, and it is
+# deliberately *readable* rather than exhaustive-looking: a new gate test is added
+# here by naming it, and `make a11y` is the review point where somebody notices
+# it was not. An over-broad pattern would be worse -- it would run half the suite
+# and look thorough.
+#
+# Each alternative names one test or one family:
+#   Contrast*                 UI §10.1, tokens_contrast_test.go (S1)
+#   Structural|Vocabulary     UI §10.2, the per-route DOM audit and its self-tests
+#   ...RepresentsTheRoutes    the audit's self-tests over the §10.2 rules
+#   Target|TvMode|Preferences
+#     AreNever|FocusIndicator UI §10.6 and §3.3, the stylesheet gate in a11y_test.go
+#   BuiltStylesheet           that no layer is missing from the build
+#   ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget
+#     |EntitledToAssert|DegradedWarning
+#                             the composition's own invariants
+A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType
+
+.PHONY: a11y
+a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
+	@echo "==> a11y"
+	$(GO) test -race -count=1 -run '$(A11Y_TESTS)' $(A11Y_PKGS)
+
 .PHONY: cover
 cover: ## Run tests and report coverage
 	$(GO) test -race -covermode=atomic -coverprofile=coverage.out $(PKGS)
@@ -153,7 +194,7 @@ test-integration: ## Run integration-tagged tests
 	$(GO) test -race -count=1 -tags=integration $(PKGS)
 
 .PHONY: check
-check: ## Mandatory gate: fmt-check, css, templ, build, vet, lint, test
+check: ## Mandatory gate: fmt-check, css, templ, build, vet, lint, a11y, test
 	@echo "==> format check"
 	@diffs="$$($(GOENV) golangci-lint fmt --diff 2>/dev/null)"; \
 		if [ -n "$$diffs" ]; then echo "unformatted files:"; echo "$$diffs"; \
@@ -163,6 +204,7 @@ check: ## Mandatory gate: fmt-check, css, templ, build, vet, lint, test
 	@echo "==> build";  $(MAKE) --no-print-directory build
 	@echo "==> vet";    $(MAKE) --no-print-directory vet
 	@echo "==> lint";   $(MAKE) --no-print-directory lint
+	@echo "==> a11y";   $(MAKE) --no-print-directory a11y
 	@echo "==> test";   $(MAKE) --no-print-directory test
 	@echo "==> all checks passed"
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/semiplane/semiplane/internal/campaignroots"
+	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
@@ -97,6 +99,14 @@ func (l pageLister) PagesForCampaign(
 	return pages, nil
 }
 
+// productVersion is the build's version as the rail shows it.
+//
+// A constant rather than an ldflag-injected variable because nothing injects one
+// yet and an empty version is a truthful answer where "0.0.0" would not be. The
+// moment the release workflow stamps a version this becomes a var, and nothing
+// else changes: the rail renders whatever it holds.
+const productVersion = ""
+
 // newWikiRoute builds the campaign-scoped wiki handler over the content roots, the
 // per-campaign renderers, the kind registry and the maintained page index.
 //
@@ -116,6 +126,7 @@ func newWikiRoute(
 	renderers wiki.CampaignRenderers,
 	kinds domain.PageKindRegistry,
 	pages wiki.Pages,
+	instance components.InstanceView,
 	logger *slog.Logger,
 ) *wiki.Handler {
 	return &wiki.Handler{
@@ -125,12 +136,58 @@ func newWikiRoute(
 		Pages:     pages,
 		// P10 replaces this. Until then `[!secret]` content is **not** redacted,
 		// and this is the one place on the request path that fact is written down.
-		Redactor:    content.NoSecrets(),
-		Cache:       content.NewCache(renderCacheEntries),
-		Logger:      logger,
-		Instance:    components.InstanceView{},
+		Redactor: content.NoSecrets(),
+		Cache:    content.NewCache(renderCacheEntries),
+		Logger:   logger,
+		// The instance's own identity, carried from the composition root rather
+		// than left zero.
+		//
+		// A zero `InstanceView` renders an empty name and an empty version in the
+		// header and the rail on every page. `displayName()` falls back to the
+		// product name, so the *name* survives — but the rail's version line and,
+		// more importantly, `Degraded` cannot: an empty slice means healthy by
+		// construction, so a campaign whose content root vanished (S-4.5) was
+		// computed as degraded by the pipeline and then rendered as healthy by
+		// the interface. That is the worst shape this bug can take, because both
+		// halves reported success.
+		Instance:    instance,
 		SignOutHref: "/logout",
 	}
+}
+
+// instanceView assembles the instance identity every page's header and rail
+// renders.
+//
+// Two jobs, and the second is the one that mattered. `campaignroots.Open` already
+// knows which campaigns have no readable content root (S-4.5) — it returns that
+// list and the server logs it — and nothing carried it into the interface. The
+// pipeline marks a campaign degraded and logs `watch.degraded`; the rail then
+// rendered "everything is fine", because an empty `Degraded` slice means healthy
+// by construction and nothing ever put an entry in it.
+//
+// So the degradation the boot already computed becomes the notice the operator
+// sees. It is a value rather than a call into a registry, because it is read on
+// every request and must not be a thing that can fail at render time.
+//
+// The version is the product name alone until the build stamps one; a build
+// without a version is the normal case here, and an empty version line is better
+// than a fabricated one.
+func instanceView(cfg config.Config, degraded campaignroots.Degraded) components.InstanceView {
+	view := components.InstanceView{
+		Name:    cfg.InstanceName,
+		Version: productVersion,
+	}
+
+	for _, entry := range degraded {
+		view.Degraded = append(view.Degraded, components.DegradedView{
+			// The campaign's slug is operator-supplied, from their own
+			// registration, so naming it here discloses nothing.
+			Name:   "Campaign " + entry.Slug,
+			Detail: "its content root is not readable, so its pages cannot load",
+		})
+	}
+
+	return view
 }
 
 // mustListCampaigns enumerates campaigns at startup.

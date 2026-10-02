@@ -79,7 +79,7 @@ container lacks it, `apt-get install -y --no-install-recommends gcc libc6-dev`.
 
 **No Go change is complete until `make check` passes.** It runs, in order:
 format diff check, `make css`, `make templ`, `go build`, `go vet`,
-`golangci-lint run`, `go test -race`.
+`golangci-lint run`, `make a11y`, `go test -race`.
 
 `css` and `templ` precede `build` because `internal/web` embeds both outputs.
 The binary is the first place a missing stylesheet shows up, so `build` also
@@ -88,14 +88,34 @@ pattern. `make tailwind` downloads ~110MB once per checkout into `.toolbin/`
 and verifies it against a committed digest of its release manifest;
 [0019](docs/content/en/decisions/0019-tailwind-standalone-pinned.md).
 
+`make a11y` runs UI §10.1 (contrast), §10.2 (structural a11y, every route) and
+§10.6 (target size), and it is in `check` because those three are gate-blocking
+and two of them read a **built artefact** — `static/dist/app.css` and the served
+documents. A gate that can be skipped by not running a command is a gate nobody
+runs.
+
 ```bash
 make check          # the full gate
+make a11y           # just the UI §10.1/§10.2/§10.6 gate
 make lint-fix       # auto-fix what is fixable, then reformat
 make lint-verify    # validate .golangci.yml against the v2 schema
 make run            # dev server on :8080
 make vuln           # govulncheck
 make ci             # lint-verify + check
 ```
+
+**The stylesheet is assembled in `internal/web/static/css/app.css` and nowhere
+else.** `@import "tailwindcss"` is followed by `tokens.css`, `shell.css` and
+`tv.css`, in that order, and the order is load-bearing: the `@theme` blocks need
+Tailwind's layers, `shell.css` reads tokens `tokens.css` declares, and every
+`tv.css` rule overrides a `shell.css` rule at equal specificity.
+
+Omitting an import is **not** a compile error and not a test failure — it is a
+product that renders unstyled while every other gate passes. `grep -c
+'data-theme' internal/web/static/dist/app.css` must be non-zero, and
+`TestTheBuiltStylesheetCarriesTheTokensAndTheGrid` is what holds it, because
+"the shell renders" and "the shell is unstyled" are the same observation from
+every angle a test can take unless the test asks whether the bytes exist.
 
 Run `make lint-verify` after **any** edit to `.golangci.yml`. In golangci-lint
 v2, `linters` and `formatters` are separate top-level sections; a v1-style file
@@ -234,6 +254,10 @@ internal/httpapi/ handlers, routing, middleware
   └─ wiki/       the read path, and the S-5.7 redaction ordering
 internal/campaignroots/ opens one os.Root per campaign at startup
 internal/web/     templ components and static assets
+  ├─ components/  the shell document, the auth pages, and their view models
+  │  ├─ chrome/   the four landmarks: banner, nav, rail, contentinfo
+  │  └─ ui/       §4.7's eleven states and the primitive library
+  └─ static/css/  app.css imports tokens.css, shell.css and tv.css in that order
 docs/             Hugo documentation site (its own project root)
 demo-vault/       the demo campaigns (phase 11)
 scripts/          sync-labels.sh, check-site-links.sh, check-site-structure.sh
@@ -351,6 +375,56 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   added quietly: four `index.*`, `content.settle_failed`, and the uncounted `index.renamed`.
   `observability.AllEventNames()` is 24 where §13.2 lists 18, and its test asserts the count —
   so a seventh addition without a record fails the build.
+
+## Accessibility invariants
+
+These are gate-blocking in a way most conventions are not: `make a11y` runs in
+`check`, and a change that breaks one does not merely get a review comment.
+[0034](docs/content/en/decisions/0034-tv-mode-not-a-width-band.md) and
+[0035](docs/content/en/decisions/0035-no-vary-cookie-and-one-blocking-script.md)
+are the phase's records; [0033](docs/content/en/decisions/0033-two-conflicts-in-the-ui-record.md)
+resolves two conflicts inside the UI record.
+
+- **Parse the DOM; never substring-match the markup.** It is how "no `world`"
+  passes while the word sits in an HTML comment, an `aria-label`, or a
+  `data-` attribute. Every §10.2 rule runs against `golang.org/x/net/html`,
+  and `TestTheVocabularyAuditFindsTheWordWhereverItIs` feeds the audit six ways
+  of smuggling the word in and requires it to object to each. An audit that
+  cannot fail is worse than no audit, because it is a green light wired to
+  nothing.
+- **A gate test that cannot fail is not a gate.** Every rule added in phase 5 was
+  checked by mutation: remove the import, lower `--target-min`, wrap a TV rule
+  in a `min-width` band, drop a field from a conversion. Three of the first
+  versions of those tests did **not** fail, and the reason is in the code: one
+  scanned forward from a selector when the mutation wraps the selector *outside*,
+  and one counted an absent attribute as an empty one.
+- **TV is `[data-ui="tv"]`, never a width band.** A 55" television and a 12.9"
+  tablet in landscape are indistinguishable to CSS and need opposite layouts, so
+  no rule selecting TV mode may sit inside a `@media` naming `min-width`,
+  `orientation`, `pointer` or `hover`. `prefers-*` and `forced-colors` are
+  *required* in every mode and are deliberately not banned.
+- **No `Vary` header names `sp_ui`**, and the document's independence from that
+  cookie is held by asserting the bytes are byte-identical across five cookie
+  values, not by asserting the header's absence. The absence catches today; the
+  bytes catch a later phase that adds a cookie dependency with no header change
+  to notice.
+- **The wiki route does carry `Vary: Cookie`, and that is correct.** The shell
+  carries the reader's name and a sign-out form, so two 200 responses to one
+  public URL differ — measured at 4460 bytes for a GM and 4227 for an
+  anonymous reader. "No `Vary` at all" was claimed in ADR 0035 and is **false**;
+  the record is corrected. A test asserting a header's *absence* cannot see the
+  variation that header was protecting, so byte-identity is the substantive
+  check and header-absence is only a symptom.
+- **`.target` is enforced by construction**, so §10.6's audit is a per-route walk
+  over parsed HTML: every `a[href]`, `button`, `input`, `select`, `textarea`,
+  `summary` and `[tabindex]` must carry the class. `--target-min` is 44px at
+  compact and 56px at TV, and both are asserted from the **built** stylesheet —
+  the markup carries the class and the stylesheet decides what it means.
+- **A skip link and the landmark it names are one condition in two places.**
+  §4.6 removes the navigation before a campaign exists and §7.2 puts the
+  navigation's skip link in the document only where the navigation does. Both
+  directions are asserted, because "a link with no landmark" and "a landmark with
+  no link" are both failures and only one is visible in a rendering.
 
 ## Conventions that the linter will not catch
 

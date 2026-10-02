@@ -238,6 +238,12 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 			i.renderers(roots, registered),
 			pageKinds{},
 			i.lister,
+			// The instance view the product builds, so this handler is assembled
+			// from the same parts `runServer` uses. A zero value here would make
+			// the fixture assert about a handler no deployment serves — and it
+			// would report every campaign healthy, which is the bug this argument
+			// exists to stop coming back.
+			instanceView(testConfig(), nil),
 			discardLogger(),
 		),
 	)

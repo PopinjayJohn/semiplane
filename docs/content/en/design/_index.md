@@ -77,6 +77,31 @@ record — they are listed here:
   regenerates in a millisecond is a second copy that can disagree with the
   first, and the failure is a per-page disagreement with no error anywhere. See
   [0027]({{ "decisions/0027-no-front-matter-column-and-the-index-is-a-cache/" | relURL }}).
+- **The UI specification's `§4.3` and `§6.6` disagree about persisting the
+  collapsed navigation.** §4.3 puts it in `sp_ui`; §6.6 fixes `sp_ui` to two
+  fields and says "no density field — a dangling token is worse than no token".
+  §6.6 governs: it is later, it defines the cookie's schema rather than one
+  field's use, and its stated reason covers this case exactly. The collapse is a
+  `data-nav` attribute, so it is per-device rather than per-account. The
+  interface consequences of §4.3 — the 3.5rem icon rail, and each row keeping
+  its full accessible name — are unaffected. See
+  [0033]({{ "decisions/0033-two-conflicts-in-the-ui-record/" | relURL }}).
+- **The UI specification's `§4.1` switchers are deferred to the client layer.**
+  It specifies a campaign switcher as a popup menu and a mode switcher as a
+  `<select>`; §3.7 requires one canonical DOM across tiers and forbids the
+  document varying by `sp_ui`, so neither can be server-rendered: a popup needs a
+  menu to open, and a `<select>` that submits its value would make the response
+  depend on the cookie. What ships now is the campaign's own address as a link
+  (which is also §8.3's rank 1) and a `data-chrome` hook on each control the
+  client will take over. The mode switcher must write `sp_ui.ui` client-side;
+  the server never reads it back into the document. See
+  [0033]({{ "decisions/0033-two-conflicts-in-the-ui-record/" | relURL }}).
+- **The UI specification's `§4.7` state table has ten rows where its own task
+  list says eleven.** §7.5's live-region table attributes three conditions to
+  §4.7, of which two are not designed; the eleventh is `ConnectionLost`, which
+  has state behind it. The twelfth, "game ended", is deliberately absent — there
+  is no domain state for it, and §4.9 says of exactly this case to flag it
+  rather than invent a client-side flag. See the states package's header.
 - Diagrams render as code blocks. They are readable as source, which is how they
   were written.
 

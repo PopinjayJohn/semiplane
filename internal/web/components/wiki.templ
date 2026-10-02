@@ -1,5 +1,9 @@
 package components
 
+import (
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
 // The wiki page: one page of a campaign, inserted into the shell's centre slot.
 //
 // This is a placeholder that establishes the seam, not the final article. P5
@@ -55,7 +59,10 @@ templ WikiPage(view WikiPageView) {
 templ WikiArticle(view WikiPageView) {
 	<h1 id="page-heading" data-testid="page-title">{ view.Heading }</h1>
 	if view.Failure != nil {
-		@LoadError(*view.Failure)
+		// The alias means the route's `*LoadFailure` *is* a `*ui.LoadFailure`,
+		// so the state package renders the value the handler built. §4.7's `500`
+		// row and the wording it uses are one thing in one package.
+		@ui.LoadError(*view.Failure)
 	} else {
 		// @templ.Raw is the one unescaped interpolation in this package, and the
 		// input is required to be the render pipeline's sanitised output and

@@ -1,5 +1,14 @@
 package components
 
+// The two states below are `components/ui`'s, alongside the other nine of
+// UI §4.7's, so the whole set is in one package and a state added in P6 has one
+// obvious home. This file names the campaign's *routes* — the addresses, which
+// are URL scheme decisions — and hands the ui package its wording.
+
+import (
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
 // campaignsPageName is this route's own name in a document title (UI §7.2's
 // first part). The plural is what the reader is looking at, not the singular
 // entity they will find inside it.
@@ -25,9 +34,15 @@ templ CampaignListPage(view CampaignListView) {
 templ CampaignList(view CampaignListView) {
 	<h1 data-testid="campaigns-heading">Campaigns</h1>
 	if view.Failure != nil {
-		@LoadError(*view.Failure)
+		// `components.LoadFailure` is an alias of `ui.LoadFailure`, so this is a
+		// dereference of the same value the route built — no conversion, and no
+		// second type that could hold different fields.
+		@ui.LoadError(*view.Failure)
 	} else if len(view.Campaigns) == 0 {
-		@FirstRun(view)
+		// Two fields out of three: `Heading` stays at its zero value,
+		// `HeadingInPage`, because the `<h1>` above is the route's and §7.2 wants
+		// exactly one of them.
+		@ui.FirstRun(ui.FirstRunView{CreateHref: view.CreateHref, DocsHref: view.DocsHref})
 	} else {
 		<ul class="card-list" data-testid="campaign-list">
 			for _, card := range view.Campaigns {
