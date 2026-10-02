@@ -48,6 +48,22 @@ func (e *classifiedError) Error() string { return "something went wrong: " + e.c
 func (e *classifiedError) Unwrap() error { return e.cause }
 func (e *classifiedError) Class() string { return e.class }
 
+// sentinelClassError is a classified error that is ALSO an `fs` sentinel, which is
+// the only shape that observes the *order* the two are consulted in.
+//
+// Real, and the reason the order is documented rather than left to whichever case
+// arrives first: a package's own "no such page" error almost always wraps
+// `fs.ErrNotExist` so that its own callers can use `errors.Is` on the sentinel. With
+// the sentinels consulted first, that package's carefully chosen class never reaches
+// a log line and every one of its errors reads as the errno it wraps.
+type sentinelClassError struct {
+	class string
+}
+
+func (e *sentinelClassError) Error() string { return "no such page" }
+func (*sentinelClassError) Unwrap() error   { return fs.ErrNotExist }
+func (e *sentinelClassError) Class() string { return e.class }
+
 // silentClassError declares the interface and returns nothing, which is the case
 // `ErrorClass` has to fall through rather than log an empty class for.
 type silentClassError struct{}
@@ -94,6 +110,11 @@ func TestErrorClassAsksTheErrorItself(t *testing.T) {
 				Err:  &classifiedError{class: "ENOENT"},
 			},
 			want: "ENOENT",
+		},
+		{
+			name: "a classified error that is also an fs sentinel, so the order is observable",
+			err:  &sentinelClassError{class: "no_such_page"},
+			want: "no_such_page",
 		},
 		{
 			name: "an empty class falls through rather than logging nothing",

@@ -308,10 +308,13 @@ func TestAFailedWriteLogsTheErrorClassAndNotTheBucket(t *testing.T) {
 		t.Errorf("level = %v, want WARN", got)
 	}
 
-	// The latency is still recorded: a dropped observation would make the histogram
-	// describe a process that is faster than it is.
-	if got := writes.Snapshot().Observations; got != 1 {
-		t.Errorf("Observations = %d, want 1: a failed write is still an observation", got)
+	// The latency is still recorded, and the assertion is on the **histogram's** count
+	// rather than the counter's. Those are two different numbers that happen to be
+	// equal here, and reading the counter is how a mutation that drops the failed
+	// write from the distribution survives: the counter still counted it, so the
+	// test still passed while the histogram described a process faster than it is.
+	if got := writes.Snapshot().Latency.Observations; got != 1 {
+		t.Errorf("Latency.Observations = %d, want 1: a failed write is still an observation", got)
 	}
 }
 
