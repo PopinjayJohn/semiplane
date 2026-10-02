@@ -825,9 +825,33 @@ func (i *instance) assertNoCampaignState(t *testing.T, slug string) {
 func (i *instance) assertCampaignStateUnchanged(t *testing.T, slug string, before stateCounts) {
 	t.Helper()
 
-	if after := i.campaignState(); after != before {
-		t.Errorf("a refused /c/%s/play moved campaign state from %+v to %+v; a refused "+
-			"request must join nothing, open no state and write no row", slug, before, after)
+	after := i.campaignState()
+
+	// **Only the row count is compared here, and that is the whole point of this
+	// helper.**
+	//
+	// `peers` and `live` are **global** to the hub and the registry, and the rows
+	// above this one have already admitted a GM and a player on the same plane.
+	// Closing those sockets makes the hub detach their peers, and the detach is
+	// asynchronous — the read loop notices the closed connection, then the peer
+	// leaves. On a fast machine that completes before the next row samples; on a
+	// loaded runner it lands *inside* this row, and the count moves for reasons that
+	// have nothing to do with the request under test.
+	//
+	// It failed on CI exactly that way: 18.25s for the test, and the refusal row at
+	// 0.01s reporting a move it did not cause.
+	//
+	// The row is the campaign-scoped fact, and it is the one that matters: `Registry.Open`
+	// writes its row immediately, so a refusal that opened a state leaves a row
+	// saying the game was played, and no in-process count can refute that. The
+	// **absolute** claim — a refusal leaves zero peers, zero live states, zero rows —
+	// is `TestARefusedPlayCarriesNoCampaignState`, which runs against a plane that
+	// has never admitted anybody and so is immune to this entirely.
+	if after.rows != before.rows {
+		t.Errorf("a refused /c/%s/play wrote a campaign_state row: %d before, %d after. "+
+			"A refusal must open no state, and `Registry.Open` writes its row "+
+			"immediately, so this is the trace of one that did", slug, before.rows,
+			after.rows)
 	}
 }
 
