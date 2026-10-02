@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/a-h/templ v0.3.1020
+	github.com/coder/websocket v1.8.15
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/yuin/goldmark v1.8.6
@@ -14,7 +15,6 @@ require (
 
 require (
 	github.com/aymerick/douceur v0.2.0 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
