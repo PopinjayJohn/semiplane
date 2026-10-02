@@ -768,11 +768,24 @@ func TestAShutdownWaitsForAReaderThatIsInsideAResolver(t *testing.T) {
 
 	resolver := newBlockingResolver()
 	harness := newHarness(t, resolver)
+
+	// The floor is taken **before** the dial, and that ordering is the whole
+	// assertion.
+	//
+	// The test then waits for `NumGoroutine() > floor` to learn that this route's
+	// reader has started. Sampled after the dial, the floor already contains that
+	// reader, the count never rises above it, and the wait times out — which is
+	// what it did: 3 failures in 3 runs, alone, with no load. A test that fails
+	// deterministically is a broken test rather than a slow one, and reading it as
+	// a timing problem is how it survived review.
+	//
+	// `settleGoroutines` waits for the count to stop moving, so taking it first
+	// also means the baseline is a settled one rather than a snapshot mid-dial.
+	floor := settleGoroutines(t)
+
 	conn := harness.dialAs(gmSlug, gmUserID)
 
 	waitFor(t, "the peer to join", func() bool { return harness.hub.Stats().Peers == 1 })
-
-	floor := settleGoroutines(t)
 
 	waitFor(t, "the reader goroutine", func() bool {
 		return runtime.NumGoroutine() > floor
