@@ -403,10 +403,18 @@ resolves two conflicts inside the UI record.
   no rule selecting TV mode may sit inside a `@media` naming `min-width`,
   `orientation`, `pointer` or `hover`. `prefers-*` and `forced-colors` are
   *required* in every mode and are deliberately not banned.
-- **No `Vary` header at all**, and the document's independence from `sp_ui` is
-  held by asserting the bytes are byte-identical across five cookie values, not
-  by asserting the header's absence. The absence catches today; the bytes catch
-  a later phase that adds a cookie dependency with no header change to notice.
+- **No `Vary` header names `sp_ui`**, and the document's independence from that
+  cookie is held by asserting the bytes are byte-identical across five cookie
+  values, not by asserting the header's absence. The absence catches today; the
+  bytes catch a later phase that adds a cookie dependency with no header change
+  to notice.
+- **The wiki route does carry `Vary: Cookie`, and that is correct.** The shell
+  carries the reader's name and a sign-out form, so two 200 responses to one
+  public URL differ — measured at 4460 bytes for a GM and 4227 for an
+  anonymous reader. "No `Vary` at all" was claimed in ADR 0035 and is **false**;
+  the record is corrected. A test asserting a header's *absence* cannot see the
+  variation that header was protecting, so byte-identity is the substantive
+  check and header-absence is only a symptom.
 - **`.target` is enforced by construction**, so §10.6's audit is a per-route walk
   over parsed HTML: every `a[href]`, `button`, `input`, `select`, `textarea`,
   `summary` and `[tabindex]` must carry the class. `--target-min` is 44px at
