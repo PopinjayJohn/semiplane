@@ -320,6 +320,49 @@ func (fx *settleFixture) tornWrite(slug, rel, body string) {
 	fx.debouncer.Touch(fx.ids[slug], slug, rel)
 }
 
+// stalledWrite truncates a page in place, produces **no** event for the
+// truncation, and is then descheduled before its first write.
+//
+// The shape of a writer stopped between two syscalls, and it is the one case
+// `tornWrite` cannot reach: `open(O_TRUNC)` empties the file and the `write` that
+// refills it is a separate call, so the file spends an interval existing, being a
+// page by name, and holding nothing — with an armed deadline over it and no event
+// to restart the quiet period. `tornWrite` calls `Touch` between its two writes
+// and therefore never leaves that state unobserved.
+//
+// `stall` is how long the writer is descheduled. Longer than a quiet period plus
+// a sample interval is what puts **both** of the confirmation's samples inside the
+// empty window, and shorter than the settle budget is what makes the writer slow
+// rather than stuck — which is the distinction the filter has to be able to make.
+func (fx *settleFixture) stalledWrite(slug, rel, body string, stall time.Duration) {
+	fx.t.Helper()
+
+	full := filepath.Join(fx.dirs[slug], filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		fx.t.Fatalf("create the directory for %s: %v", rel, err)
+	}
+
+	handle, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		fx.t.Fatalf("open %s for a stalled write: %v", rel, err)
+	}
+
+	// Arranging the empty window, not synchronising on it: the filter must not
+	// settle inside it, and the assertion that proves it is made from the arrival
+	// channel afterwards.
+	time.Sleep(stall)
+
+	if _, err := handle.WriteString(body); err != nil {
+		fx.t.Fatalf("write %s: %v", rel, err)
+	}
+
+	if err := handle.Close(); err != nil {
+		fx.t.Fatalf("close %s: %v", rel, err)
+	}
+
+	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+}
+
 // touch reports an event for a path that already exists.
 func (fx *settleFixture) touch(slug, rel string) {
 	fx.debouncer.Touch(fx.ids[slug], slug, rel)
@@ -660,6 +703,115 @@ func TestSizeStableConfirmationGates(t *testing.T) {
 
 	if version := seenVersion(t, seen.raw); version != 2 {
 		t.Fatalf("settled version = %d, want the grown page (2)", version)
+	}
+
+	fx.silent(wantSilence)
+}
+
+// **Zero bytes is not a stable size.** It is the first state of every in-place
+// write rather than a state any of them end in, so two samples that agree on it
+// agree on a file that has not been written yet.
+//
+// The window this asserts is the one `tornWrite` cannot produce, and it is the
+// one a sync client produces routinely (S-3.5): the writer truncates in place, its
+// first `write` has not happened yet, and the truncation delivered no event
+// because the event a watcher sees belongs to the *write*. `stalledWrite` holds
+// the file at zero for a quiet period plus a sample interval, which puts both of
+// the confirmation's samples inside the window — a filter that believed them would
+// settle an upsert of **no bytes**, and hand the index a row whose `content_hash`
+// is the digest of the empty string. The stall is shorter than the settle budget,
+// so the writer is slow rather than stuck and the page must settle whole.
+func TestAZeroLengthSampleIsNotASettledSize(t *testing.T) {
+	t.Parallel()
+
+	fx := newSettleFixture(t, settleTimings, "zero-window")
+	const rel = "zero-window.md"
+
+	// The event a watcher delivers for the create, which arms the deadline.
+	fx.write("zero-window", rel, "")
+
+	fx.stalledWrite("zero-window", rel, pageVersion(1), quietPeriod+2*sampleGap)
+
+	seen := fx.next()
+	fx.mustBeWhole(seen)
+
+	if version := seenVersion(t, seen.raw); version != 1 {
+		t.Fatalf("settled version = %d, want 1", version)
+	}
+
+	// No stuck-writer signal either: the writer was slow, not stuck, and the
+	// filter waited for it rather than reporting it.
+	if fx.hasEvent(string(observability.EventContentStableReadTimeout)) {
+		t.Errorf("a slow-but-live writer reported a stable-read timeout:\n%s", fx.logs.String())
+	}
+
+	fx.silent(wantSilence)
+}
+
+// The shape Obsidian Sync produces: the page appears as a directory entry and its
+// bytes arrive afterwards. The event for the create is delivered; the bytes are
+// late.
+//
+// Nothing may settle in the interval between the two, and that interval is
+// asserted at half the settle budget rather than at the old threshold of a quiet
+// period plus a sample interval — because half a budget is the honest lower bound
+// on how patient the filter has to be to tell this writer from a blank note.
+func TestACreatedButUnwrittenPageIsNotSettledEarly(t *testing.T) {
+	t.Parallel()
+
+	fx := newSettleFixture(t, settleTimings, "syncing")
+	const rel = "synced.md"
+
+	fx.write("syncing", rel, "")
+
+	fx.silent(settleBudget / 2)
+
+	// The bytes land, and the page settles as one whole version.
+	fx.write("syncing", rel, pageVersion(1))
+
+	seen := fx.next()
+	fx.mustBeWhole(seen)
+
+	if version := seenVersion(t, seen.raw); version != 1 {
+		t.Fatalf("settled version = %d, want 1", version)
+	}
+
+	fx.silent(wantSilence)
+}
+
+// The other half of the rule above, and the reason it is a rule about *time*
+// rather than a refusal: a blank note is a page a user can legitimately create,
+// so the filter must still settle one.
+//
+// A filter that treated zero bytes as "never settled" would drop it, and the
+// periodic rescan (S-4.5) would index it minutes later — so the operator would
+// see a page appear on its own and a `content.stable_read_timeout` line for every
+// new empty note in the vault. A stuck-writer signal that fires on healthy input
+// is an audit of nothing.
+func TestAnEmptyPageSettlesAndIsReported(t *testing.T) {
+	t.Parallel()
+
+	fx := newSettleFixture(t, settleTimings, "blank")
+	const rel = "blank.md"
+
+	fx.write("blank", rel, "")
+
+	seen := fx.next()
+	if seen.change.Op != content.OpUpsert {
+		t.Fatalf("settled operation = %s, want upsert (%s)", seen.change.Op, seen.change)
+	}
+
+	if len(seen.raw) != 0 {
+		t.Fatalf("an empty page settled %d bytes, want none", len(seen.raw))
+	}
+
+	// Reported, though: a path that holds zero bytes for a whole settle budget is
+	// the only place a writer stalled between its `open` and its `write` leaves a
+	// trace, and the settle is what says the trace was a slow writer rather than a
+	// blank note.
+	line := fx.awaitEvent(string(observability.EventContentStableReadTimeout))
+	if !strings.Contains(line, `"path":"`+rel+`"`) {
+		t.Errorf("the settled empty page reported a timeout for another path: %s", line)
 	}
 
 	fx.silent(wantSilence)

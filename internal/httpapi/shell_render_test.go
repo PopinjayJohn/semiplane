@@ -273,6 +273,28 @@ func auditedRoutes(t *testing.T) []renderedRoute {
 		// precondition handling — a hand-written 412 body would be a document
 		// the product never serves.
 		campaign.staleSave(),
+
+		// --- A fixture, because no served route carries the pair --------------
+		//
+		// Two `search` landmarks in one document, so the rule the landmark case
+		// states — that the header's form and the search route's own form are
+		// named differently — is actually exercised. With the campaign routes
+		// wired, the search route renders its own form; the header's is still
+		// suppressed in production, so the pair no served document carries is
+		// hand-written here on purpose.
+		//
+		// Without it the `case "search"` branch is unreachable: no audited route
+		// renders a second search landmark, so an assertion in it can be wrong in
+		// either direction and nothing notices. That is not hypothetical: the
+		// first version of this fix asserted one literal name instead of a set,
+		// which would have failed the search route's own landmark the moment that
+		// route landed, and which no mutation could catch because the branch never
+		// ran. A rule with no reachable instance is not a rule.
+		{
+			where:         "a document carrying both search landmarks",
+			body:          []byte(searchLandmarkFixture),
+			themeVariants: themeVariantsOf(searchLandmarkFixture),
+		},
 	}
 }
 
@@ -655,6 +677,50 @@ func pathOf(where string) string {
 
 // renderRoute GETs a path through a handler with a cookie, and re-renders it once
 // per theme-cookie value.
+
+// searchLandmarkFixture is a minimal document carrying the header's search form
+// and a search route's own, each named as the design record fixes them.
+//
+// Hand-written rather than rendered from a route on purpose: it is the *pair* the
+// rule is about, and no single route renders both — with the campaign routes
+// wired, `/c/{slug}/search` now renders a second search landmark, but the header
+// form is still suppressed there (`chrome.SearchForm.Action` is empty in
+// production), so no single served document carries both. Keeping the fixture here
+// means the landmark audit has an instance of the case regardless of which routes
+// are wired.
+//
+// It carries a skip link and `.target` on every focus stop, because the fixture
+// is audited by **every** §10.2 rule and not only the landmark one: a fixture that
+// violates three unrelated rules fails the audit three times and buries the
+// assertion it was written for. That is what happened the first time.
+const searchLandmarkFixture = `<!doctype html>
+<html lang="en"><head><title>Fixture</title></head><body>
+<a class="skip-link target" href="#main">Skip to content</a>
+<header role="banner"><form role="search" aria-label="Search pages" data-testid="header-search"><input class="target" type="search" name="q"/></form></header>
+<main id="main" class="target" tabindex="-1"><h1>Fixture</h1>
+<form role="search" aria-label="Search this campaign"><input class="target" type="search" name="q"/></form>
+</main></body></html>`
+
+// themeVariantsOf is the same document repeated once per entry in
+// `themeCookieValues`, which is what a served route produces when it does not vary
+// by the cookie.
+//
+// Five identical copies rather than one, and not for the sake of the count: the
+// audit refuses to score a document that was rendered fewer times than the list
+// names, because a fixture standing in for the byte-identity claim has to be
+// *checked against* that claim or it is not standing in for it. The bytes here are
+// the same for every cookie because the fixture is hand-written and reads no
+// cookie at all — which is the property being asserted, arrived at honestly.
+func themeVariantsOf(document string) [][]byte {
+	variants := make([][]byte, 0, len(themeCookieValues))
+	for range themeCookieValues {
+		variants = append(variants, []byte(document))
+	}
+
+	return variants
+}
+
+// renderRoute GETs a path through a handler with a cookie.
 func renderRoute(
 	t *testing.T,
 	handler http.Handler,

@@ -22,6 +22,15 @@
 //     never becomes markup, and bluemonday then removes what a future change
 //     could let through. Two layers, one boundary. The policy is explained where
 //     it is built.
+//
+//   - **One thing runs after the sanitiser, and it adds rather than removes.**
+//     `applyTargetClass` writes §7.3's `.target` onto the page body's focusable
+//     elements. It is the pipeline's only post-sanitisation *addition*, it is
+//     confined to the page body, and it is explained in target.go and ADR 0037 —
+//     because a step that runs last and widens the output is the one a reader of
+//     this file cannot infer from the shape of the code, and the comment above
+//     saying "sanitisation is the last thing" would otherwise be a lie about a
+//     caller that reads only this comment.
 
 package content
 
@@ -345,6 +354,45 @@ type Anchor struct {
 // One thing this method is *not* safe against is being mutated while in use:
 // there is no mutator, and that is deliberate.
 func (r *Renderer) Render(doc Document) (Rendered, error) {
+	result, err := r.sanitised(doc)
+	if err != nil {
+		return Rendered{}, err
+	}
+
+	// §7.3's `.target` class, added to the page body's focusable elements. The
+	// last step, and after the sanitiser rather than before it: the class is not on
+	// the `class` allowlist, because it is semiplane's and not an author's to
+	// write, so a pass in front of the sanitiser would have the sanitiser take it
+	// straight back off again. See target.go and ADR 0037.
+	//
+	// The one thing this pipeline *adds* to its own output, and the reason that is
+	// safe is that the value is a fixed constant, the element set is fixed, and it
+	// runs on a tree parsed from bytes the sanitiser already approved.
+	body, err := applyTargetClass(result.HTML)
+	if err != nil {
+		return Rendered{}, fmt.Errorf("render %s: %w", r.slug, err)
+	}
+
+	result.HTML = body
+
+	return result, nil
+}
+
+// sanitised runs the pipeline as far as the sanitiser and stops.
+//
+// The rest of `Render`, factored out so the `.target` pass is the only thing
+// between the sanitiser and the return value — which is what makes "the pass adds
+// the class and nothing else" a claim about one call rather than about the shape of
+// a function. It is also what lets `export_test.go` reach the sanitised body for the
+// comparison in `TestTheRenderedBodyIsTheSanitisedBodyPlusOneTokenPerFocusStop`
+// without a second copy of these four steps, which would have been a second copy
+// that could drift.
+//
+// Everything above the pass is unchanged, and in particular `collect` runs here: the
+// extension renderers read the index it assigns off each node, so a pipeline that
+// skipped it would emit a different `data-ref-index` and the comparison would be
+// between two different documents rather than two renderings of one.
+func (r *Renderer) sanitised(doc Document) (Rendered, error) {
 	source := []byte(doc.Body)
 	reader := text.NewReader(source)
 
