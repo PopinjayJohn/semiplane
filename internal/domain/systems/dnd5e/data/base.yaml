@@ -1,0 +1,284 @@
+# The base 5e data pack: the mechanics every edition of 5e shares.
+#
+# §10.4 calls a pack "stat blocks, conditions, reference tables, and the set of
+# `kind`s the system recognises", and this file is all four. What it deliberately
+# is **not** is a rule: every place a rule would be is a table row, a formula
+# string, a toggle, or the name of a Go hook, so that the difference between two
+# editions is a reviewable diff of this file rather than a fork of the engine.
+#
+# `version` is one of the four components of `realtime.Fingerprint` and is what
+# makes a pack revision gate a resume (ADR 0018). Bump it whenever a row below
+# changes what an operation **means**; a row that only changes a number nobody has
+# resolved yet still gets a bump, because the whole point is that the refusal is
+# conservative and nobody has to prove it was safe not to.
+
+system: "dnd5e"
+version: "1.0.0"
+notation: "dnd5e"
+title: "D&D 5e — shared base"
+
+# The dice the notation is written in.
+#
+# `sizes` is what makes the grammar **data** rather than a hardcoded d20 parser:
+# `Grammar` builds its RE2 patterns from this list, and `Parse` refuses a die
+# face that is not in it. A system whose primary die were not twenty would change
+# this list and two constants and nothing else.
+dice:
+  sizes: [4, 6, 8, 10, 12, 20, 100]
+  primary:
+    faces: 20
+    count: 1
+
+# Switches. This is where ADR 0012's first house-rule example lives: a module
+# "may toggle `flanking_optional`", and it may do so by flipping one of these
+# without touching a line of Go and without moving the ruleset fingerprint
+# (ADR 0018 — a house rule changes outcomes, not the meaning of a stored
+# mutation).
+toggles:
+  # Whether a flanking creature grants advantage on melee attacks it makes.
+  flanking_optional: true
+  # Whether cover contributes to the attacker's own armour class.
+  cover_affects_ac: false
+  # Declared and **read by nothing in this engine build**. An edition's switch list is
+  # larger than any one build reads, and a pack carrying a switch its engine ignores is
+  # harmless while a pack missing a switch its engine needs is a rule that never fires.
+  # Declaring the whole list is what makes reading one a change to this engine rather
+  # than a change to every pack.
+  inspiration: false
+  # The critical rule, and the whole of the 2014-versus-2024 difference that §10.4
+  # names: 2014 crits only on a natural 20 from the attack die, and 2024 also
+  # crits when a damage die shows its maximum face. **Data, not two Go rules** —
+  # see ADR 0045.
+  crit_attack_die_max: true
+  crit_damage_die_max: false
+  # Whether an unconscious or paralysed creature is exempt from the critical rule
+  # for attacks made against it, which 2024 adds. The conditions it exempts are
+  # named by the rows themselves (`critical_exempt`), so adding one is a YAML edit.
+  crit_ignored_by_incapacitated: false
+
+# The scoring model. Declaration order is the display order and the order every
+# derivation walks, so nothing ever iterates the scores map.
+abilities:
+  - { slug: strength,     label: "Strength",     short: "STR" }
+  - { slug: dexterity,    label: "Dexterity",    short: "DEX" }
+  - { slug: constitution, label: "Constitution", short: "CON" }
+  - { slug: intelligence, label: "Intelligence", short: "INT" }
+  - { slug: wisdom,       label: "Wisdom",       short: "WIS" }
+  - { slug: charisma,     label: "Charisma",     short: "CHA" }
+
+# Conditions.
+#
+# Each row says what being in the condition *does*, in the four ways this engine
+# reads. A house rule's third example — "disable a condition" — is
+# `disabled: true` on one row, and an overlay adds a row. `attack` is what the
+# affected creature suffers on its own attacks; `attacks_against` is what an
+# attacker suffers against it. Both are `none`, `advantage` or `disadvantage`, and
+# an advantage and a disadvantage cancel — which is a rule, and it lives in the
+# resolver rather than in this file.
+conditions:
+  - slug: blinded
+    label: "Blinded"
+    summary: "Cannot see and cannot hear imagined sounds; attacks against it have advantage."
+    attack: disadvantage
+    attacks_against: advantage
+  - slug: charmed
+    label: "Charmed"
+    summary: "Cannot attack the charmer and has disadvantage against it."
+    attack: disadvantage
+    attacks_against: advantage
+  - slug: deafened
+    label: "Deafened"
+    summary: "Cannot hear and fails any check requiring hearing."
+  - slug: exhausted
+    label: "Exhausted"
+    summary: "A track of accumulated harm, which this engine carries and does not yet score."
+  - slug: frightened
+    label: "Frightened"
+    summary: "Has disadvantage on attacks while the source of the fear is visible."
+    attack: disadvantage
+  - slug: grappled
+    label: "Grappled"
+    summary: "Its speed is zero and it has disadvantage on attacks."
+    attack: disadvantage
+    speed_multiplier: 0
+  - slug: incapacitated
+    label: "Incapacitated"
+    summary: "Cannot take actions; attacks have disadvantage."
+    attack: disadvantage
+  - slug: invisible
+    label: "Invisible"
+    summary: "Attacks against it have advantage, and so do its own until it attacks or casts."
+    attack: advantage
+    attacks_against: advantage
+  - slug: paralyzed
+    label: "Paralyzed"
+    summary: "Its speed is zero, attacks against it have advantage, and it cannot act."
+    attack: disadvantage
+    attacks_against: advantage
+    speed_multiplier: 0
+  - slug: petrified
+    label: "Petrified"
+    summary: "Transformed into stone; its speed is zero and it is unaware."
+    speed_multiplier: 0
+  - slug: poisoned
+    label: "Poisoned"
+    summary: "Has disadvantage on attacks."
+    attack: disadvantage
+  - slug: prone
+    label: "Prone"
+    summary: "Attacks against it have advantage and its own have disadvantage."
+    attack: disadvantage
+    attacks_against: advantage
+  - slug: restrained
+    label: "Restrained"
+    summary: "Its speed is zero and it has disadvantage on attacks."
+    attack: disadvantage
+    speed_multiplier: 0
+  - slug: stunned
+    label: "Stunned"
+    summary: "Incapacitated, has disadvantage on attacks, and attacks against it have advantage."
+    attack: disadvantage
+    attacks_against: advantage
+  - slug: unconscious
+    label: "Unconscious"
+    summary: "Incapacitated, its speed is zero, attacks against it have advantage, and hits are critical."
+    attack: disadvantage
+    attacks_against: advantage
+    speed_multiplier: 0
+
+# Weapon masteries.
+#
+# A mastery grants `effects`, and an effect is one of a closed set of kinds the
+# engine understands. Each kind is a small procedural rule; the *pairings* are
+# data. 2014 has no masteries at all, which is the overlay difference §10.4 names
+# as "no mastery properties", and it is expressed by clearing `attack.mastery`
+# below rather than by a second Go rule.
+masteries:
+  - slug: finesse
+    label: "Finesse"
+    summary: "Damage uses the better of two listed abilities rather than the attack's own."
+    effects:
+      - { kind: damage_ability_from_best, of: [strength, dexterity] }
+  - slug: great_weapon
+    label: "Great Weapon Mastery"
+    summary: "Shatters a shield on a critical hit; nothing else this engine scores."
+  - slug: heavy
+    label: "Heavy"
+    summary: "Wieldable when the wielder's Strength is at least the stated value."
+    effects:
+      - { kind: requires_ability_at_least, ability: strength, value: 13 }
+  - slug: light
+    label: "Light"
+    summary: "Wieldable when the wielder's Strength is below the stated value."
+    effects:
+      - { kind: requires_ability_below, ability: strength, value: 13 }
+  - slug: two_handed
+    label: "Two-Handed"
+    summary: "Damage adds the wielding ability's modifier."
+    effects:
+      - { kind: add_ability_to_damage }
+  - slug: mounted
+    label: "Mounted"
+    summary: "Rides rather than walks; nothing this engine scores."
+  - slug: versatile
+    label: "Versatile"
+    summary: "Wieldable one-handed or two-handed."
+  - slug: reach
+    label: "Reach"
+    summary: "Reaches one size further than its reach would otherwise."
+  - slug: thrown
+    label: "Thrown"
+    summary: "May be thrown at a range equal to its reach."
+  - slug: loading
+    label: "Loading"
+    summary: "May only be fired once per action."
+  - slug: magic
+    label: "Magic"
+    summary: "Never a proficiency bonus to hit or damage; not this engine's scoring."
+
+# Reference tables and the constants every formula is written against.
+reference:
+  constants:
+    # Armour class: base plus Dexterity, capped so a low Dexterity cannot make a
+    # creature easier to hit than the base.
+    ac_base: 10
+    ac_dex_cap: 10
+    # A critical hit multiplies the damage dice by this and nothing else.
+    crit_multiplier: 2
+    # Proficiency bonus is base plus a step for every band, read from the table
+    # below rather than computed, because the table is where a house rule looks.
+    prof_bonus_base: 2
+    prof_bonus_step: 3
+    # A save DC is the base plus proficiency plus the relevant ability.
+    save_dc_base: 8
+  proficiency:
+    - { from: 1,  to: 4,  bonus: 2 }
+    - { from: 5,  to: 8,  bonus: 3 }
+    - { from: 9,  to: 12, bonus: 4 }
+    - { from: 13, to: 16, bonus: 5 }
+    - { from: 17, to: 20, bonus: 6 }
+  # Named difficulty classes other rules reference by slug.
+  dcs:
+    - { slug: cover_partial, label: "Partial cover", dc: 5 }
+    - { slug: cover_total, label: "Total cover", dc: 15 }
+
+# Formulas.
+#
+# A formula is a **sum, difference or product of named values**, and nothing else:
+# no division (a DC formula needing one is a formula whose rounding rule is not
+# expressed by the data), no calls, and no way to reach anything but the scope the
+# engine builds for one resolution. `expr` is parsed once when the pack loads, so a
+# malformed expression is a broken pack caught at the composition root rather than
+# a panic at the table.
+#
+# `for` binds `ability` to one ability and says the formula is evaluated once per
+# of them; `for: every` is every ability, and its absence means once. A formula
+# that names `ability` without saying what to bind it to is refused at load.
+#
+# `clamp` bounds the result. Its two bounds are expressions over the same scope, so
+# a house rule that changes a DC formula constant needs no new code — ADR 0012's
+# second example.
+formulas:
+  armour_class:
+    expr: "ac_base + ability.dexterity"
+    clamp:
+      min: "0"
+      max: "ac_base + ac_dex_cap"
+  attack_bonus:
+    for: every
+    expr: "prof + ability"
+  damage_bonus:
+    for: every
+    expr: "prof + ability"
+  save_dc:
+    for: every
+    expr: "save_dc_base + prof + ability"
+
+# How an attack is resolved. `mastery.enabled` is the switch 2014 turns off.
+attack:
+  mastery:
+    enabled: true
+  # The maximum a single attack may do before multipliers, so that a GM's
+  # house-capped table is data.
+  damage_cap: 0
+
+# The procedural rules this pack names. Each is a Go function in the engine; the
+# pack chooses by name, and a name this engine does not ship is a broken pack
+# refused by `New` rather than a rule silently skipped. See ADR 0045 for why these
+# two are hooks and the rest of the file is not.
+hooks:
+  critical: "default"
+  mastery: "default"
+
+# The kinds this system recognises, which is `ContentKinds()` read from the pack
+# rather than written in Go twice. §10.4 names this as one of the four things a
+# pack carries.
+kinds:
+  - { slug: creature, label: "Creature" }
+  - { slug: spell, label: "Spell" }
+  - { slug: class, label: "Class" }
+  - { slug: feat, label: "Feat" }
+  - { slug: ancestry, label: "Ancestry" }
+  - { slug: background, label: "Background" }
+  - { slug: condition, label: "Condition" }
+  - { slug: item, label: "Item" }
