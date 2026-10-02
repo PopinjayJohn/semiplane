@@ -1,0 +1,544 @@
+package chat
+
+// The chat surface: the log, the compose form, and the export control.
+//
+// # Why chat is one of the few justified live regions
+//
+// UI §7.5 gives the play page's sidebar a live region for the chat line, and the
+// same section says the **search route must have none**. Those two facts are one
+// rule, and the rule is about whether the content changes *while the reader is
+// looking at it*:
+//
+//   - **Chat qualifies** because a message arrives at a reader who did nothing to
+//     ask for it. Somebody else types. The alternative — polling — is a request
+//     every reader on the table makes forever to learn that nothing happened, and a
+//     `role="log"` is the one construct that exists for "a list that grows while
+//     nobody is interacting with it". The log is also the only region on this
+//     surface whose *content* is the announcement: a reader who missed a line
+//     cannot find it by looking again, because the scrollback has moved past it.
+//   - **Search must not have one** because a search result list is reached by
+//     navigation. The reader submitted the query; the response is a document; the
+//     result count is in the `<h1>` (§7.5). A live region there would fire on every
+//     load of that URL, and — worse — a *type-ahead* live region would read the
+//     reader's own keystrokes back to them as they type, which is the opposite of
+//     what a live region is for.
+//
+// So the contrast is not "chat is special and search is not". It is **arrival is
+// announced; delivery is not.** A chat line is an event. A search result is a
+// document. This file is one half of that sentence and
+// `internal/httpapi/search/results.templ` is the other, and the test that holds
+// both is `TestTheChatSurfaceCarriesALiveRegionAndTheSearchSurfaceDoesNot` — one
+// predicate, two documents, because a rule only one route could violate is not a
+// rule.
+//
+// # Why the history and the live log are two elements
+//
+// §7.5's other rule for this surface is the sharpest in the file: "the chat and
+// dice logs **must not replay history into a live region on connect** — a user
+// joining mid-table would otherwise hear the whole table read aloud."
+//
+// The two ways to satisfy that are both wrong on their own. `aria-live="off"` on
+// the log means it never announces anything, because the attribute is read from the
+// document and nothing in this phase rewrites it. Turning it to `polite` from
+// script means the reader's first half-second after the script loads is decided by
+// whether the script has run yet.
+//
+// So the markup is split: `ChatHistory` carries the messages that arrived **with
+// the document**, marked `aria-live="off"` so they are never announced; `ChatLog` is
+// the region, `role="log"` with `aria-live="polite"` and `aria-relevant="additions"`,
+// and it is **empty at load**. The client appends arriving messages into it. A
+// reader who has never had script hears the whole table; a reader with script hears
+// only what arrives after they did. Neither case requires the other half of the
+// contract to hold.
+//
+// `aria-atomic="false"` for the same reason: with it, an appended `<li>` is
+// announced as itself rather than as the whole log read out again from the top.
+//
+// # `role="log"`, and where §7.5's `role="status"` went
+//
+// §7.5's table names `role="status"` for a chat line, and this uses `role="log"`.
+// The two are not interchangeable and the difference is the whole reason this is
+// written down rather than just done:
+//
+//   - `role="status"` is a **live region that is not a container**. Putting it on
+//     the `<ol>` announces every child as a change to the region as a whole, and
+//     putting it on each `<li>` is N live regions for one conversation.
+//   - `role="log"` is a container **whose implicit `aria-live` is `polite`**. It is
+//     defined for exactly this: a list of messages added over time. It also carries
+//     the semantics a screen reader uses to offer "read from here", which a status
+//     region does not.
+//
+// `aria-live="polite"` is written out explicitly even though `log` implies it,
+// because the gate and the next reader both look at the attribute and an implicit
+// politeness is invisible to both.
+//
+// The role deviation from §7.5's table is a **record change, not a code change**:
+// this file's PR description asks the integrator for a note in the UI record's
+// channel section. It is not an ADR — the design records are immutable, and
+// AGENTS.md's rule is that a correction is an entry in the design index's "Known
+// staleness" or an ADR, neither of which this work item owns the path to.
+//
+// # What the reader sees, and what is not said
+//
+// Every message body is campaign content and goes through templ's escaper; there is
+// no `templ.Raw` anywhere in this package, and a chat message is the one piece of
+// this surface a reader cannot be trusted to have authored. §10.2's vocabulary rule
+// is therefore scoped to *this package's* copy — see `chat_test.go`, which is where
+// that scoping is written down and mutation-checked.
+//
+// Secret messages are **absent**, not marked and not classed. `Message` is only
+// ever handed a message the caller has already decided this reader may see, and the
+// test for that is in `internal/realtime`, where the omission happens.
+
+import (
+	"strconv"
+	"time"
+
+	"github.com/semiplane/semiplane/internal/web/components"
+)
+
+// The test hooks, in one place.
+//
+// Named rather than written inline for the reason `ui.headingID` derives heading
+// ids from them: §10.2's hook rule asserts every `data-testid` appears exactly once
+// and is not empty, so a hook that is spelled two ways in two files is a hook that
+// appears twice and fails the audit for a reason nobody would guess. Each is also
+// the id the `aria-labelledby` that names the panel's heading resolves to, so a
+// rename has to move both ends and the audit is what catches the one that did not.
+const (
+	// PanelTestID is the panel's `<section>`.
+	PanelTestID = "chat-panel"
+	// PanelHeadingID is the panel's heading, which `Panel`'s
+	// `aria-labelledby` names.
+	PanelHeadingID = "chat-panel-heading"
+	// HistoryTestID is the list of messages that arrived with the document.
+	HistoryTestID = "chat-history"
+	// HistoryHeadingID is the history's own heading, and the live log's
+	// `aria-labelledby`.
+	HistoryHeadingID = "chat-history-heading"
+	// LogTestID is the live region the client appends into.
+	LogTestID = "chat-log"
+	// LogTestIDHook is the `data-chrome` selector the client layer hooks, kept
+	// separate from the test hook because they are different contracts: one is
+	// asserted by the a11y gate and the other is a promise to phase 9's script.
+	LogChromeHook = "chat-log"
+	// ComposeTestID is the form a reader types into.
+	ComposeTestID = "chat-compose"
+	// ComposeFieldID is the textarea's id, which the form's `<label for>` names.
+	ComposeFieldID = "chat-compose-body"
+	// ComposeFieldTestID is the textarea's test hook.
+	ComposeFieldTestID = "chat-compose-body"
+	// ComposeHintID is the hint's id, which the field's `aria-describedby` names.
+	ComposeHintID = "chat-compose-hint"
+	// ComposeErrorID is the refusal's id, appended to the field's
+	// `aria-describedby` when there is one.
+	ComposeErrorID = "chat-compose-error"
+	// ComposeErrorTestID is the refusal's test hook.
+	ComposeErrorTestID = "chat-compose-error"
+	// ComposeSubmitTestID is the send button.
+	ComposeSubmitTestID = "chat-compose-send"
+	// ExportTestID is the "export to journal" control.
+	ExportTestID = "chat-export"
+	// EmptyTestID is the no-messages-yet state.
+	EmptyTestID = "chat-empty"
+	// MessageCountTestID is the panel's own count line.
+	MessageCountTestID = "chat-message-count"
+	// StateTestID is the panel's `<section>`'s state hook, carrying the empty or
+	// populated state so a test asserts one rather than inferring it from a count.
+	StateTestID = "chat-state"
+)
+
+// Message is one chat line as the interface sees it.
+//
+// A separate type rather than `realtime.Message` for the reason
+// `components.WikiPageView` holds a rendered body rather than a domain type: this
+// package must not import `internal/realtime`, so that the wire codec, the hub and
+// the interface can change independently, and so a template is never handed a
+// value with fields nobody has decided a reader may see.
+//
+// The consequence is that the **decision to omit a secret message happens before
+// this type exists** — in the route, from `Chat.Visible`. A message that reached a
+// `Message` has already been judged visible, and there is no `Secret` field
+// here for a template to forget to check.
+type Message struct {
+	// Seq is the message's position in the campaign's chat, and the value a
+	// reader's client stores as its cursor. Rendered as `data-seq` on the row so a
+	// fragment arriving over SSE can be reconciled without parsing prose.
+	Seq uint64
+	// Author is who said it.
+	Author string
+	// Body is the text. Already decided visible by the caller; escaped here.
+	Body string
+	// At is when it was said. Carried in UTC from the buffer so the rendering does
+	// not depend on the reader's timezone.
+	At time.Time
+}
+
+// ComposeView is the form a reader sends a message with.
+type ComposeView struct {
+	// Action is where the form posts.
+	Action string
+	// Value is what is in the textarea. Set after a refused send so a reader does
+	// not have to retype, and the reason `internal/httpapi/edit` hands the GM's own
+	// buffer back on a 412.
+	Value string
+	// Placeholder is the field's prompt. Empty renders no attribute rather than an
+	// empty one.
+	Placeholder string
+	// Max is the byte ceiling the server enforces (`realtime.MaxChatBodyBytes`),
+	// written onto the field so the browser refuses before the request does. The
+	// server's check is the one that counts; this is a courtesy.
+	Max int
+	// Error is a refusal to send, rendered as §4.7's load-error shape under the
+	// form rather than as an alert: a message the server would not take is not an
+	// emergency.
+	Error string
+	// SignedIn reports whether there is an account to send as. False renders the
+	// form as a paragraph rather than a disabled one: a textarea a reader cannot
+	// use is a focus stop that does nothing.
+	SignedIn bool
+}
+
+// ExportView is the "export to journal" control and what it last did.
+type ExportView struct {
+	// Href is where the control posts.
+	Href string
+	// Allowed reports whether this reader may export at all. Content writing is
+	// GM-only (S-8) and an export writes a page, so a player sees the count and not
+	// the control — the same line `internal/httpapi/edit` draws between the editor
+	// and the reader.
+	Allowed bool
+	// Withheld is how many secret messages were left out of the last export, and is
+	// zero when there was no export. Shown because a GM who pressed the button is
+	// entitled to know a line is not in the page.
+	Withheld int
+	// LastPath is the page the last export wrote, as a root-relative path. Shown
+	// because a transcript whose location nobody was told about is a transcript
+	// nobody will find.
+	LastPath string
+}
+
+// PanelView is the whole panel, as the play page's sidebar mounts it.
+type PanelView struct {
+	// Messages are the retained messages, oldest first, already filtered for this
+	// reader.
+	Messages []Message
+	// Truncated reports that the ring has evicted messages this reader's session did
+	// not see. Rendered as a note above the list, because the alternative is a
+	// transcript that reads as complete and is not.
+	Truncated bool
+	// Compose is the send form. Its zero value renders the signed-out paragraph.
+	Compose ComposeView
+	// Export is the export control. Its zero value renders nothing.
+	Export ExportView
+}
+
+// PageView is the centre slot: the `<h1>` plus the panel.
+//
+// Separate from `PanelView` for the reason `components.WikiPageView` and
+// `components.WikiArticle` are two: the heading belongs to the route and the states
+// below it carry none of their own, so a reader who lands on a panel with no
+// messages is still told where they are.
+type PageView struct {
+	// Shell is the chrome. Its `Instance` field also fills the right rail.
+	Shell components.ShellView
+	// Heading is what the page calls itself.
+	Heading string
+	// Panel is the panel itself.
+	Panel PanelView
+}
+
+// Page is the document around the chat panel.
+//
+// `components.Shell` rather than `components.CampaignShell`, and the reason is the
+// one `internal/httpapi/edit` gives: the campaign shell wants a `chrome.NavView`,
+// and the left navigation's skip link must be present exactly where the navigation
+// is (§7.2). A hand-built `NavView` would render a navigation landmark with
+// nothing in it, which §4.6 forbids and which would also mean the skip link and the
+// landmark were two independent decisions.
+templ Page(view PageView) {
+	@components.Shell(view.Shell, PanelPage(view), components.InstanceRail(view.Shell.Instance))
+}
+
+// PanelPage is the centre slot's content: the heading, then the panel.
+templ PanelPage(view PageView) {
+	<h1 id="chat-page-heading" data-testid="chat-page-title">{ view.Heading }</h1>
+	@Panel(view.Panel)
+}
+
+// Panel is the chat surface: a section named by its own heading, holding the log,
+// the compose form, and the export control.
+//
+// A `<section>` with `aria-labelledby` rather than a `<div>`, and the label is the
+// heading **inside** the section rather than a hidden span. §7.2's rule is that a
+// landmark's name resolves to something a screen reader can announce, and a visible
+// heading is the only version of that which is also visible to everyone else.
+templ Panel(view PanelView) {
+	<section
+		class="panel chat"
+		aria-labelledby={ PanelHeadingID }
+		data-state={ panelState(view.Messages) }
+		data-testid={ PanelTestID }
+	>
+		<h2 id={ PanelHeadingID }>Chat</h2>
+		<p class="panel-note" data-testid={ MessageCountTestID }>{ countLabel(view.Messages) }</p>
+		@ChatHistory(view)
+		@Compose(view.Compose)
+		@Export(view.Export)
+		// The live region. **Empty at load**, which is the whole of §7.5's replay
+		// rule: the messages above are already on the screen and must not be
+		// announced, and only what arrives after this document is live.
+		<ol
+			class="card-list chat-log"
+			role="log"
+			aria-live="polite"
+			aria-atomic="false"
+			aria-relevant="additions"
+			aria-labelledby={ HistoryHeadingID }
+			data-chrome={ LogChromeHook }
+			data-testid={ LogTestID }
+		></ol>
+	</section>
+}
+
+// ChatHistory is the messages that arrived with the document.
+//
+// **`aria-live="off"` and not no attribute at all**, and the distinction is worth a
+// sentence: an element with no `aria-live` inherits the politeness of its nearest
+// live-region ancestor, and this component is mounted inside a page that has other
+// regions in it. Stating `off` is what makes "these are not announced" a property
+// of this element rather than a property of wherever it was placed — which is the
+// whole difference between a contract and an environment.
+//
+// The heading is a `<h3>`: this is a region inside the panel's `<h2>`, and §7.2's
+// rule that a heading level may not skip is about the reader's outline rather than
+// about the HTML, so the levels are contiguous.
+templ ChatHistory(view PanelView) {
+	<h3 id={ HistoryHeadingID } class="visually-hidden">What has been said</h3>
+	if view.Truncated {
+		// Omission is the property this note exists for: it says the list starts
+		// partway through and does not pretend the earlier lines are coming back.
+		// The ring has evicted them and nothing will restore them.
+		<p class="empty-note" data-testid="chat-history-truncated">
+			Earlier messages are no longer in the log. Export to keep a record.
+		</p>
+	}
+	if len(view.Messages) == 0 {
+		<p class="empty" data-testid={ EmptyTestID }>No messages yet.</p>
+	} else {
+		<ol class="card-list" aria-live="off" data-testid={ HistoryTestID }>
+			for _, message := range view.Messages {
+				@MessageRow(message)
+			}
+		</ol>
+	}
+}
+
+// MessageRow is one message in the history list.
+//
+// The `<li>` carries `data-seq` and nothing else identifying. A `data-testid` here
+// would be the same string on every row, and §10.2's rule is that a hook appearing
+// more than once in a document selects nothing; the rows are located by
+// `data-seq`, which `Chat.Seq` makes unique within a campaign.
+//
+// The author's name is in a `<strong>` inside the row's own metadata line rather
+// than in an attribute, because a name is text a reader reads and an attribute is
+// text a machine reads.
+templ MessageRow(message Message) {
+	<li class="card chat-message" data-seq={ strconv.FormatUint(message.Seq, 10) }>
+		<p class="card-meta chat-message-meta">
+			<strong class="chat-message-author">{ message.Author }</strong>
+			<time datetime={ message.At.Format(time.RFC3339) }>{ clockLabel(message.At) }</time>
+		</p>
+		<p class="chat-message-body">{ message.Body }</p>
+	</li>
+}
+
+// Compose is the send form.
+//
+// **Inert until phase 9**, and written against the contract it has to satisfy rather
+// than left out: `internal/httpapi/edit` makes the same argument for its save
+// control. The form posts to `Action` with a method the route can read, and the
+// live send is phase 9's job. A form that cannot send anything yet is still the
+// right markup to ship against a contract, and the alternative — omitting it — makes
+// the layout of the final surface a guess.
+//
+// The textarea carries `.target` and so does the button: §10.6's audit walks every
+// focus stop and the gate reads the **served** document, so the class has to be in
+// the bytes rather than applied by the script that arrives with the behaviour.
+//
+// `maxlength` is in characters while the server counts bytes, so the two are not the
+// same number — a four-byte rune fits four times over. The server's limit is the one
+// that refuses; this one stops the common case before a round trip.
+//
+// The form names the panel's heading with `aria-labelledby` rather than the field's
+// own label, which the `<label for>` already provides. Two names on one region is
+// §7.2's rule about landmarks, and a form is not a landmark — so this one is here to
+// give the landmark-like form an announcement that is not the field's bare label.
+templ Compose(view ComposeView) {
+	if !view.SignedIn {
+		// A paragraph and not a disabled textarea. §4.7's rule that a section with
+		// nothing in it is absent, and a form a reader cannot use is a focus stop
+		// that does nothing — which is worse than no form, because the reader has now
+		// used one.
+		<p class="panel-note" data-testid="chat-compose-signed-out">
+			Sign in to join the conversation.
+		</p>
+	} else {
+		<form
+			class="form chat-compose"
+			method="post"
+			action={ view.Action }
+			aria-labelledby={ PanelHeadingID }
+			data-testid={ ComposeTestID }
+		>
+			<div class="field">
+				<label for={ ComposeFieldID }>Message</label>
+				<textarea
+					id={ ComposeFieldID }
+					class="target"
+					name="body"
+					rows="2"
+					maxlength={ view.Max }
+					placeholder={ view.Placeholder }
+					aria-describedby={ describedBy(view.Error) }
+					data-testid={ ComposeFieldTestID }
+				>{ view.Value }</textarea>
+				<p id={ ComposeHintID } class="field-hint">Enter sends. Shift and enter starts a new line.</p>
+				if view.Error != "" {
+					// A paragraph and not a `role="alert"`. The response is a whole
+					// document rather than an insertion, so the reader meets the refusal
+					// as the page loads — and a live region that fires on load is the
+					// search route's mistake one level down. The field's
+					// `aria-describedby` names it, so a reader who is focused on the
+					// textarea when the document arrives is told.
+					//
+					// Not `ui.LoadError` either: that state says "semiplane could not
+					// load this page", which would be false — the page loaded and the
+					// *message* was what would not be sent.
+					<p id={ ComposeErrorID } class="notice notice--error" data-testid={ ComposeErrorTestID }>
+						{ view.Error }
+					</p>
+				}
+			</div>
+			<button type="submit" class="target button" data-testid={ ComposeSubmitTestID }>Send</button>
+		</form>
+	}
+}
+
+// describedBy is the field's `aria-describedby` value.
+//
+// **The error's id is appended rather than substituted**, so a field always has the
+// hint it carries on a successful render and a reader never loses the "Enter sends"
+// line because a previous attempt failed. Two ids in one attribute is the ordinary
+// form of it: the value is a space-separated list and both elements are in the
+// document whenever the attribute is present.
+func describedBy(refusal string) string {
+	if refusal == "" {
+		return ComposeHintID
+	}
+
+	return ComposeHintID + " " + ComposeErrorID
+}
+
+// Export is the "export to journal" control.
+//
+// A `<button>` inside the panel rather than a link, because the action writes — it
+// creates a page and a revision row — and a link that writes is the pattern S-6.3
+// exists to forbid. It is inert until the route and phase 9 wire it, for the reason
+// the save control is.
+//
+// **Not rendered at all for a reader who may not export**, which is the S-8 line and
+// not a styling decision: the control's presence would tell a player that an action
+// exists, and a disabled button is worse than an absent one for the same reason the
+// signed-out compose form is a paragraph.
+templ Export(view ExportView) {
+	if view.Allowed {
+		<button
+			type="button"
+			class="target button chat-export"
+			data-testid={ ExportTestID }
+			data-chrome={ LogChromeHook + "-export" }
+		>Export to journal</button>
+		if view.Withheld > 0 {
+			<p class="panel-note" data-testid="chat-export-withheld">
+				{ withheldLabel(view.Withheld) }
+			</p>
+		}
+		if view.LastPath != "" {
+			<p class="panel-note" data-testid="chat-export-path">{ view.LastPath }</p>
+		}
+	}
+}
+
+// withheldLabel is the sentence under the export control.
+//
+// A count and never the messages: the count says how many lines are missing from
+// the page, and the lines themselves are the secret. A GM is entitled to know a
+// line was withheld; nobody is entitled to learn what it said from this sentence.
+func withheldLabel(withheld int) string {
+	if withheld == 1 {
+		return "One secret message was left out of that page."
+	}
+
+	return "Secret messages were left out of that page."
+}
+
+// countLabel is the panel's own count line.
+//
+// The count of what is **on screen**, not of what the buffer holds: a reader who
+// sees six lines is told six, and a count taken from the buffer's length would say
+// twelve and be wrong in a way that looks like a bug in the data rather than in the
+// wording.
+func countLabel(messages []Message) string {
+	if len(messages) == 0 {
+		return "Nothing said yet."
+	}
+
+	if len(messages) == 1 {
+		return "1 message."
+	}
+
+	return strconv.Itoa(len(messages)) + " messages."
+}
+
+// panelState is the panel's `data-state`, so a test asserts the state rather than
+// inferring it from a count.
+//
+// One of `empty` or `populated`, and it is written out rather than left to the
+// absence of an attribute: §10.2's hook rule has already shown that a state
+// rendered half-way is invisible to an audit that only counts what is present.
+func panelState(messages []Message) string {
+	if len(messages) == 0 {
+		return "empty"
+	}
+
+	return "populated"
+}
+
+// clockLabel is the time as a reader sees it: the wall clock, UTC.
+//
+// UTC rather than the reader's local time, and the reason is that this value comes
+// out of a buffer that stores UTC. Converting here would make a transcript's
+// timestamps read in whatever zone the reader happens to be in, and two readers of
+// the same table would see two different times for one message — which is the
+// failure `Message.At`'s doc comment names.
+//
+// `<time datetime>` carries the full instant in the markup either way, so a
+// client that wants to localise has the value and does not have to reparse.
+func clockLabel(at time.Time) string {
+	return at.UTC().Format("15:04")
+}
+
+// The component list, asserted by the a11y test so that a component added and not
+// mounted cannot be quietly forgotten.
+//
+// Not a `var` — the point is the constant, and a slice would be a second thing to
+// keep true.
+const (
+	// PanelRendered is `Panel`, which is what the play page's rail mounts.
+	PanelRendered = "Panel"
+	// LogRendered is the live region, named so a failure can say which element was
+	// missing rather than "no live region".
+	LogRendered = "Log"
+)
