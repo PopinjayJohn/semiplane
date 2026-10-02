@@ -322,6 +322,18 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   — CommonMark behaviour, and the test that says so is
   `TestRawHTMLBlockTextIsDropped`. Do not "fix" it by enabling unsafe HTML.
   [0028](docs/content/en/decisions/0028-render-output-is-permission-neutral.md)
+- **The one thing the pipeline *adds* to sanitised output is `.target`, and it is added after the
+  sanitiser.** `content/target.go` writes `class="target"` onto every focusable element in the page
+  body, which is safe because the value is a fixed constant semiplane owns, the element set is
+  written out rather than derived from anything a vault can reach, the value resolves to two minimum
+  sizes and no behaviour, and the pass mutates a **parsed tree** rather than matching markup as a
+  string — so it cannot resurrect what the sanitiser removed, structurally rather than by promise.
+  `target` is deliberately **absent** from `policy.go`'s class allowlist: adding it there would let an
+  author mint a class that is semiplane's, and would be a second source of truth for one value. The
+  pass is unexported and confined to the page body, which is why a plugin rendering through the
+  pipeline inherits the class — the mechanism UI §4.11.1 asks for. Do not move it before the
+  sanitiser: the class is not on the allowlist, so the sanitiser would strip it straight back off.
+  [0038](docs/content/en/decisions/0038-target-class-is-applied-by-the-render-pipeline.md)
 - **Redaction runs on the source, before the render.** A redactor that ran after would leave the
   unredacted text in the renderer's buffers, the sanitiser's input and the cache. The seam is
   `content.Redactor`, and `content.NoSecrets()` is a pass-through that **removes nothing** until
