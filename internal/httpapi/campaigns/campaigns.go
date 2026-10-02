@@ -408,8 +408,28 @@ func (r *Registrar) Register(ctx context.Context, req RegisterRequest) (domain.C
 // shared because the two live in different packages. A handler that rendered a
 // different error shape for an authorisation failure would be a small way for a
 // client to tell a 403 from a 404 by parsing the body instead of the status.
+//
+// `no-store` is load-bearing and was missing for this package's whole life.
+//
+// Every response this writes is **reader-dependent**: the same URL answers 404
+// for an anonymous requestor and 200 for a member, because S-8 answers "no
+// access" with a status that does not say why. Nothing in the body distinguishes
+// them — deliberately, so the status cannot become an existence oracle — which is
+// exactly what makes the response unsafe to store. A shared cache in front of a
+// self-hosted instance is the ordinary deployment (a reverse proxy, a CDN, a
+// corporate proxy), and one that stored an anonymous 404 for
+// `/c/greyhaven/wiki/index` would serve it to the GM who is entitled to that
+// page, for as long as the entry lived.
+//
+// `private, no-store` rather than either alone: `no-store` is the directive that
+// stops the write, and `private` states the reason to a cache that honours only
+// one of the two. This is the same pair ADR 0016 requires for a GM's unredacted
+// wiki response, for the same reason — a body whose content depends on who is
+// asking must never be stored by something that does not know who is asking.
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, no-store")
+
 	w.WriteHeader(status)
 
 	if _, err := fmt.Fprintf(w, "{\"error\":%q}\n", message); err != nil {
