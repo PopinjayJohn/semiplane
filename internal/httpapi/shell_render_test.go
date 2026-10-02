@@ -785,9 +785,9 @@ func assertLandmarks(t failer, audit *audit) {
 	// A set rather than one name, because a document may carry either or both and
 	// §7.2's requirement is that they are *distinct* — a rule about the pair, not
 	// about either one. Asserting a single literal tests the pair by naming a member.
-	var searchLandmarkNames = []string{"Search pages", "Search this campaign"}
+	searchLandmarkNames := []string{"Search pages", "Search this campaign"}
 
-	var allowedSearch = func() map[string]bool {
+	allowedSearch := func() map[string]bool {
 		allowed := make(map[string]bool, len(searchLandmarkNames))
 		for _, name := range searchLandmarkNames {
 			allowed[name] = true
