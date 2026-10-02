@@ -189,13 +189,23 @@ func (tw *timeoutWriter) Write(body []byte) (int, error) {
 // The first flush is the commit point, so this is the only place the buffered
 // path and the streaming path meet. A handler that flushes after its budget
 // expired gets the 504, which is correct: the deadline came first.
+//
+// The parent is flushed, and that is not a detail. `commit` writes the status
+// line and the buffered body into the writer underneath, and `net/http` holds a
+// response's bytes in its own buffer until that buffer fills or something asks it
+// not to. So a `Flush` that committed without flushing produces a response that
+// is correct, complete, and sitting in a buffer — which for a streaming response
+// means a handler that will not return, and therefore bytes that never leave.
+//
+// The cost of getting this wrong is invisible in a test that reads a recorder's
+// body after the handler returns, and total in production. It was found by the
+// server-sent-events route, which worked around it by walking the `Unwrap` chain
+// and flushing every layer itself rather than through here.
 func (tw *timeoutWriter) Flush() {
 	// Already committed: either the budget ran out, or this is a later flush
 	// on a live stream. Flushing through is harmless in both cases.
 	if tw.committed {
-		if flusher, ok := tw.ResponseWriter.(http.Flusher); ok {
-			flusher.Flush()
-		}
+		tw.flushParent()
 
 		return
 	}
@@ -210,6 +220,11 @@ func (tw *timeoutWriter) Flush() {
 	// goes transparent from here.
 	tw.streaming = true
 	tw.commit(false)
+
+	// The status line and the body are in the parent now, and the parent is what
+	// talks to the socket. Without this the first frame of every stream — and
+	// every frame after it — is written correctly and delivered never.
+	tw.flushParent()
 }
 
 // Unwrap exposes the wrapped writer to net/http and to middleware that needs
@@ -220,6 +235,24 @@ func (tw *timeoutWriter) Flush() {
 // route cannot upgrade for a reason that has nothing to do with the network.
 func (tw *timeoutWriter) Unwrap() http.ResponseWriter {
 	return tw.ResponseWriter
+}
+
+// flushParent flushes the writer underneath this one, if it can flush.
+//
+// A type assertion rather than `http.ResponseController`, and the reason is the
+// same one the SSE route's own workaround gives: the controller stops at the
+// *first* `http.Flusher` it finds, which is this writer, so it would call back
+// into `Flush` and never reach the parent. Walking down by `Unwrap` is the only
+// way to flush the layer that actually owns the socket.
+//
+// Tolerates a parent with no flusher — an HTTP/2 response writer that has already
+// sent its headers has nothing left to flush, and a `httptest` recorder behaves
+// similarly. There is nothing to report: the bytes are written either way, and a
+// writer that cannot flush is not a response that failed.
+func (tw *timeoutWriter) flushParent() {
+	if flusher, canFlush := tw.ResponseWriter.(http.Flusher); canFlush {
+		flusher.Flush()
+	}
 }
 
 // budgetSpent reports whether the deadline has passed. A non-blocking select,

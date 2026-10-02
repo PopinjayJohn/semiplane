@@ -10,18 +10,21 @@ import (
 
 	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/httpapi"
+	"github.com/semiplane/semiplane/internal/httpapi/middleware"
 	"github.com/semiplane/semiplane/internal/observability"
 )
 
 // newTestRouter returns a router over a fresh registry, with a logger that
 // discards output so a test run is not full of request lines.
 //
-// The account and campaign subsystems are left nil. These tests are about the
-// middleware chain and the liveness routes, and wiring a store in would make
-// every one of them a database test. The nil-tolerance is itself a property worth
-// relying on here: the independently-runnable invariant from architecture §15 is
-// that the server answers /healthz, and that must hold for a router with nothing
-// else attached.
+// The account and campaign subsystems are all left nil. These tests are about the
+// middleware chain and the liveness routes, and wiring a store in would make every
+// one of them a database test. The nil-tolerance is itself a property worth relying
+// on here: the independently-runnable invariant from architecture §15 is that the
+// server answers /healthz, and that must hold for a router with nothing else
+// attached — which is also why the five campaign-scoped handlers are passed as
+// explicit nils rather than left off, so a reader can see that "none of them" is
+// the claim and not an oversight.
 func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler {
 	t.Helper()
 
@@ -32,7 +35,11 @@ func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler 
 		TrustedProxies: nil,
 	}
 
-	return httpapi.NewRouter(logger, cfg, registry, nil, nil, nil)
+	return httpapi.NewRouter(
+		logger, cfg, registry,
+		nil, nil, // no account routes, no store
+		nil, nil, nil, nil, nil, // no campaign-scoped routes
+	)
 }
 
 // TestReadyzReportsCounters is the §13.2 promise: the counters are exposed on
@@ -225,5 +232,118 @@ func TestAssetsServesTheEmbeddedStylesheet(t *testing.T) {
 
 	if recorder.Body.Len() == 0 {
 		t.Error("the embedded stylesheet is empty; `make css` produced nothing")
+	}
+}
+
+// --- The timeout middleware's flush ----------------------------------------
+
+// A countingFlusher is a parent that records how many times it was flushed.
+//
+// A value rather than a `httptest.ResponseRecorder` because a recorder's `Flush`
+// is a no-op on its own buffer and reports nothing — the counting is the whole
+// point, and a test that cannot see whether the parent was flushed is a test that
+// cannot fail.
+type countingFlusher struct {
+	http.ResponseWriter
+	flushes int
+}
+
+// Flush records the call and flushes whatever is underneath.
+func (c *countingFlusher) Flush() {
+	c.flushes++
+
+	if flusher, canFlush := c.ResponseWriter.(http.Flusher); canFlush {
+		flusher.Flush()
+	}
+}
+
+// TestTheTimeoutWriterFlushesTheWriterUnderneathIt is the regression test for the
+// defect that made every streaming response in this product deliver nothing.
+//
+// `middleware.Timeout` buffers a response so it can still substitute a 504, and
+// its `Flush` is the escape hatch: the first flush commits the response to being a
+// stream and every later write goes straight through. It used to commit *into its
+// parent and stop there*. `net/http` then held the bytes in its own buffer, and
+// since a streaming handler does not return, they were never sent. The response
+// was correct, complete, and stuck.
+//
+// The assertion is on the **parent's** flush count rather than on the body,
+// because the body is not where the bug was visible: a `httptest` recorder's
+// `Flush` is a no-op, so a body-based test passes with or without the fix. The
+// socket is the only place the difference exists, which is why this counts.
+//
+// **This test lives here rather than in `middleware/timeout_test.go`** because the
+// middleware package is not this work item's to edit, and a bug this shape goes
+// unfixed for as long as its test cannot be written next to it. It is a candidate
+// to move.
+func TestTheTimeoutWriterFlushesTheWriterUnderneathIt(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name       string
+		flushFirst bool
+		flushTwice bool
+	}{
+		// The first flush is the commit point and the one that was missing. The
+		// second is here because "the first one works" and "every one works" are
+		// different claims, and a keep-alive comment fifteen seconds into a stream
+		// is as invisible as the greeting is.
+		{name: "the first flush", flushFirst: true},
+		{name: "a later flush", flushFirst: true, flushTwice: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			parent := &countingFlusher{ResponseWriter: httptest.NewRecorder()}
+
+			// A handler that flushes and then keeps running, which is what a
+			// streaming handler is. It returns so the test can finish; the bug is
+			// about the bytes leaving *before* that, which the parent's counter
+			// shows.
+			handler := middleware.Timeout(time.Minute)(http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.WriteHeader(http.StatusOK)
+
+					flusher, canFlush := w.(http.Flusher)
+					if !canFlush {
+						t.Error("the timeout writer is not an http.Flusher; the escape " +
+							"hatch streaming responses depend on is gone")
+
+						return
+					}
+
+					if testCase.flushFirst {
+						flusher.Flush()
+					}
+
+					if testCase.flushTwice {
+						_, _ = w.Write([]byte(": keep-alive\n\n"))
+						flusher.Flush()
+					}
+				},
+			))
+
+			handler.ServeHTTP(parent, httptest.NewRequestWithContext(
+				t.Context(), http.MethodGet, "/stream", http.NoBody,
+			))
+
+			want := 0
+			if testCase.flushFirst {
+				want++
+			}
+
+			if testCase.flushTwice {
+				want++
+			}
+
+			if parent.flushes != want {
+				t.Errorf("the writer underneath was flushed %d times, want %d. "+
+					"`timeoutWriter.Flush` commits into its parent and must then "+
+					"flush it: net/http holds the bytes until something asks it not "+
+					"to, and a streaming handler never returns to end the response "+
+					"for it", parent.flushes, want)
+			}
+		})
 	}
 }

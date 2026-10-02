@@ -34,9 +34,14 @@ package httpapi_test
 // and there is no way to state it over a string.
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,9 +50,41 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
+	"github.com/semiplane/semiplane/internal/config"
+	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/httpapi"
+	"github.com/semiplane/semiplane/internal/httpapi/accounts"
+	"github.com/semiplane/semiplane/internal/httpapi/assets"
 	"github.com/semiplane/semiplane/internal/httpapi/auth"
+	"github.com/semiplane/semiplane/internal/httpapi/edit"
+	"github.com/semiplane/semiplane/internal/httpapi/events"
+	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	"github.com/semiplane/semiplane/internal/httpapi/search"
+	"github.com/semiplane/semiplane/internal/httpapi/wiki"
+	"github.com/semiplane/semiplane/internal/observability"
 )
+
+// headerSearchLabel is the accessible name §7.2 gives the **header's** search
+// form, and the one name in the shell's `search` role that is reserved.
+//
+// The other `search` landmark is the search route's own form, which names itself
+// ("Search this campaign"). The reservation matters because two landmarks of the
+// same role with the same name make landmark navigation useless — and the header's
+// is the one pinned, so that a rename of the route's form is a collision the audit
+// sees rather than a reader discovering.
+const headerSearchLabel = "Search pages"
+
+// headerSearchHook is the `data-testid` the header component puts on the form that
+// owns `headerSearchLabel`.
+//
+// How the audit tells the header's search form from any other one, which matters
+// only because the reserved name could in principle be claimed twice. It is read
+// from a `data-testid` rather than matched on position or on an ancestor, because
+// AGENTS.md's rule is to assert on test hooks and never on DOM shape: a hook is
+// something the component promises, and a position is something a reordering
+// silently takes away.
+const headerSearchHook = "header-search"
 
 // forbiddenVocabulary is UI §1.2's closed vocabulary. Neither entity exists, a
 // leftover is a bug, and a grep for them is a test — which is this.
@@ -71,6 +108,21 @@ type renderedRoute struct {
 	body []byte
 	// vary is the `Vary` response header, carried because a DOM cannot hold it.
 	vary string
+	// themeVariants is the *same* document re-rendered with each of
+	// `themeCookieValues`, in that order.
+	//
+	// Present because the substantive form of S-13.5 cannot be stated over one
+	// response. "The document does not vary by the theme cookie" is a claim about
+	// five requests, and a single response can only ever be one of them — so
+	// asserting it from one is asserting that one particular value produced the
+	// bytes, which is a much weaker claim and is satisfied by a route that reads
+	// the cookie and ignores it *for that value*.
+	//
+	// The empty string is first and is not an empty cookie: it is the *absent*
+	// cookie, which is what a reader who has expressed no preference has, and it
+	// is the one value a reader-independent document is most likely to be wrong
+	// about, because a fallback path is a second answer to "what theme".
+	themeVariants [][]byte
 }
 
 // auditedRoutes drives every route this phase registers and returns its document.
@@ -81,7 +133,10 @@ type renderedRoute struct {
 // and not audited" rather than nothing at all, which is the only way a coverage
 // gate keeps its value as the router grows.
 //
-// Four documents, covering the three states the shell distinguishes:
+// Ten documents, over two routers.
+//
+// The first four are the pre-campaign surfaces, covering the states the shell
+// distinguishes before a campaign exists:
 //
 //   - `/` for a signed-in member of one campaign — the list, with cards.
 //   - `/` for a signed-in member of none — §4.7's first-run state, which is a
@@ -91,9 +146,21 @@ type renderedRoute struct {
 //   - `/login` with a failed credential — §4.7's `403` row over the form, so the
 //     error copy is audited rather than assumed.
 //
+// The other six are the campaign-scoped routes, over a second router that mounts
+// all five of them: the wiki page, an asset failure, a search result list, the
+// search idle state, the editor, and the editor's 412.
+//
 // The pre-campaign/campaign split matters because §4.6 is a *structural*
-// difference: the navigation landmark and its skip link exist on one and not the
+// difference: the navigation landmark and its skip link exist on one and not on the
 // other. A shell that rendered both, or neither, would pass a single-state audit.
+//
+// Two shapes per route are audited on purpose, and they are not redundant. The
+// asset's **failure** document and the editor's **412** are built by a different
+// path than their success documents — a different writer, a different view model,
+// and for the 412 a completely different body — so auditing only the 200 audits
+// one of two implementations of the same route. §10.2 says *every route*, and a
+// failure state is the one a reader meets when something is wrong, which is
+// exactly when its copy needs auditing most.
 func auditedRoutes(t *testing.T) []renderedRoute {
 	t.Helper()
 
@@ -154,15 +221,440 @@ func auditedRoutes(t *testing.T) []renderedRoute {
 	// two calls meant two requests to read one document.
 	anonymous := anonymousGet(t, handler, "/login")
 
+	// The anonymous form and the rejected credential are the two documents that
+	// come from a recorder rather than from `renderRoute`, so their theme variants
+	// are re-rendered here — with the same request shape each time, which is the
+	// whole reason `themeVariants` takes a closure instead of a path.
+	anonymousVariants := themeVariants(t, func(theme *http.Cookie) *httptest.ResponseRecorder {
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, pinned(withCookies(getRequest(t, "/login", nil), nil, theme)))
+
+		return out
+	})
+
+	rejectedVariants := themeVariants(t, func(theme *http.Cookie) *httptest.ResponseRecorder {
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(
+			out,
+			pinned(withCookies(
+				formPost(t, "/login", signInForm("ada", "wrong"), nil), nil, theme,
+			)),
+		)
+
+		return out
+	})
+
+	campaign := newCampaignFixture(t)
+
 	return []renderedRoute{
 		renderRoute(t, handler, "/ (a member of one campaign)", cookie, "/"),
 		renderRoute(t, emptyHandler, "/ (first run: no campaigns)", emptyCookie, "/"),
-		routeFromRecorder("/login (anonymous)", anonymous),
-		routeFromRecorder("/login (a rejected credential)", rejected),
+		routeFromRecorder("/login (anonymous)", anonymous, anonymousVariants),
+		routeFromRecorder("/login (a rejected credential)", rejected, rejectedVariants),
+
+		// --- The campaign-scoped routes --------------------------------------
+		//
+		// A page that exists, rendered by a real renderer out of a real confined
+		// root over a real maintained index. The `[[wikilink]]` on it resolves,
+		// which is what makes this document exercise the link markup rather than a
+		// paragraph of prose.
+		campaign.get("/c/greyhaven/wiki/Goblin (a page)"),
+		// The asset *failure* state, not the bytes. A found asset is a PNG, and a
+		// DOM audit over a PNG is the audit of nothing; the failure state is the
+		// one document this route composes.
+		campaign.get("/c/greyhaven/assets/no-such-map.png (a missing asset)"),
+		campaign.getVariants("/c/greyhaven/search?q=goblin (results)"),
+		campaign.getVariants("/c/greyhaven/search (the idle state)"),
+		campaign.get("/c/greyhaven/edit/Goblin (the editor)"),
+
+		// The 412, reached by the only route to it: a `PUT` carrying a validator
+		// that is not the page's. It is issued here rather than pasted in as a
+		// fixture document, so the audit cannot drift from the route's real
+		// precondition handling — a hand-written 412 body would be a document
+		// the product never serves.
+		campaign.staleSave(),
 	}
 }
 
-// renderRoute GETs a path through a handler with a cookie.
+// campaignFixture is the router the §10.2 audit drives the campaign-scoped routes
+// through, over a **real** confined content root and a **real** renderer.
+//
+// A separate fixture from `fullRouter` rather than a flag on it, because the two
+// need genuinely different worlds. `fullRouter`'s store is a map of structs and
+// has no filesystem behind it, which is exactly right for the account surface and
+// exactly wrong for a page route: a wiki document rendered from a fixture string
+// is a document no reader will ever be shown, and the markup a template produces
+// from a hard-coded body is not the markup it produces from a `[[wikilink]]` that
+// resolved. §10.2 audits the route, and the route reads the vault.
+//
+// The five handlers are built here over one set of dependencies, in the same
+// arrangement `cmd/server` uses: one registry, one renderer map, one instance
+// view, one store. A fixture that built the renderers twice would be auditing a
+// composition the product does not run.
+type campaignFixture struct {
+	t       *testing.T
+	handler http.Handler
+	cookie  *http.Cookie
+	store   *wiringStore
+}
+
+// The fixture's campaign and its two pages.
+//
+// The two pages exist so the wiki document carries a **resolved** `[[wikilink]]`
+// and not a broken one. Both states are link markup and the audit walks every
+// anchor, so a fixture that only produced broken links would audit the broken
+// branch twice and the resolved branch never.
+const (
+	fixtureCampaign = "greyhaven"
+	fixtureIndex    = "Index"
+	fixtureGoblin   = "Goblin"
+)
+
+// newCampaignFixture builds the router the campaign routes are audited through.
+func newCampaignFixture(t *testing.T) *campaignFixture {
+	t.Helper()
+
+	store := newWiringStore()
+
+	hash, err := auth.HashPassword("correct horse")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	store.users["ada"] = domain.User{ID: 1, Username: "ada", PasswordHash: hash}
+	store.campaigns[fixtureCampaign] = domain.Campaign{
+		ID: 1, Slug: fixtureCampaign, Name: "Greyhaven", Visibility: domain.VisibilityPrivate,
+	}
+	store.members[1] = domain.RoleGM
+
+	// One row per page, answered by the `pages` lister below. The campaign id is
+	// the store's, so a route that scoped its index query to a campaign that is
+	// not this one would resolve no reference and the link would render broken —
+	// which the audit cannot distinguish from correct markup, and which is why the
+	// lister filters rather than returning everything.
+	rows := []domain.Page{
+		{ID: 1, CampaignID: 1, Path: fixtureIndex + ".md", Title: "Index"},
+		{ID: 2, CampaignID: 1, Path: fixtureGoblin + ".md", Title: "Goblin"},
+	}
+
+	store.hits["goblin"] = []domain.SearchHit{{
+		ID: 2, CampaignID: 1, Path: fixtureGoblin + ".md", Title: "Goblin",
+		CampaignSlug: fixtureCampaign,
+		// FTS5's excerpt of `body_plain`, which excludes `[!secret]` content in
+		// every reveal state (S-5.11). A result list is therefore safe to cache
+		// even for a GM, and this is the row that says so.
+		Snippet: "A goblin watches the wyvern sea.",
+	}}
+
+	// A real directory with real files, opened through the real registry. `Open`
+	// is the test-facing constructor: it takes the directory, proves it is
+	// confinable, and the registry owns the handle from there — so the routes
+	// under audit are reading through `os.Root` and not through a `map[string]string`.
+	registry := content.NewRegistry(content.RefuseSymlinks)
+	if _, err := registry.Open(fixtureCampaign, writeFixtureVault(t)); err != nil {
+		t.Fatalf("open the fixture content root: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := registry.Close(); err != nil {
+			t.Errorf("close the fixture content roots: %v", err)
+		}
+	})
+
+	// `nil` kinds, which the wiki route and the editor both document as "every page
+	// is prose". The plugin registry is phase 8, and a fixture that hand-wrote a
+	// kind table would be auditing a registry the product does not have.
+	renderers := wiki.CampaignRenderers{
+		fixtureCampaign: content.NewRenderer(fixtureCampaign, nil),
+	}
+
+	instance := degradedInstanceView()
+	logger := slog.New(slog.DiscardHandler)
+
+	// The hub exists so the event route is mounted, which is what puts
+	// `GET /c/{slug}/events` on the router and therefore in `auditedRoutes`'s
+	// remit. The audit does not open a stream: an event stream is a response with
+	// no end, and §10.2's rules are all about a document a reader can finish.
+	// Mounting it is the claim being made — that the route exists and is behind
+	// the gate — and the assertions on it live in `events`'s own tests.
+	hub := events.NewHub()
+	t.Cleanup(func() {
+		if err := hub.Close(); err != nil {
+			t.Errorf("close the fixture event hub: %v", err)
+		}
+	})
+
+	handler := httpapi.NewRouter(
+		logger,
+		config.Config{HandlerTimeout: wiringHandlerTimeout},
+		observability.NewRegistry(),
+		&accounts.Router{Store: store, Instance: instance},
+		store,
+		&wiki.Handler{
+			Roots:       registry,
+			Renderers:   renderers,
+			Pages:       auditPages{rows: rows},
+			Redactor:    content.NoSecrets(),
+			Cache:       content.NewCache(renderCacheEntriesForAudit),
+			Logger:      logger,
+			Instance:    instance,
+			SignOutHref: signOutHrefForAudit,
+		},
+		&assets.Handler{
+			Roots:       registry,
+			Logger:      logger,
+			Instance:    instance,
+			SignOutHref: signOutHrefForAudit,
+		},
+		&search.Handler{
+			Pages:       store,
+			Instance:    instance,
+			SignOutHref: signOutHrefForAudit,
+			Logger:      logger,
+		},
+		&edit.Handler{
+			Roots: registry,
+			// A log that refuses every append. Nothing here saves successfully, and
+			// the one branch that would append is the 204 — which this fixture never
+			// asks for, because §10.2 audits documents and a 204 has none. A real
+			// store handle here would claim the process's single-instance slot for
+			// the privilege of writing a row nothing reads.
+			Revisions: edit.NewRevisionLog(nil),
+			Renderers: edit.CampaignRenderers(renderers),
+			Redactor:  content.NoSecrets(),
+			Logger:    logger,
+			Instance:  instance,
+			// The sign-out href and the instance view again: the editor composes
+			// the same shell as the other four, and a route that rendered a
+			// different chrome would be audited as if it were the same document.
+			SignOutHref: signOutHrefForAudit,
+		},
+		&events.Handler{Hub: hub, Logger: logger},
+	)
+
+	// Signed in as the campaign's GM. The editor and the stream are GM-only, so an
+	// audit run as a `player` would be auditing a 403 rather than a document — and
+	// §10.2's rules are about documents.
+	signedIn := httptest.NewRecorder()
+	handler.ServeHTTP(signedIn, signIn(t, "ada", "correct horse"))
+	if signedIn.Code != http.StatusFound && signedIn.Code != http.StatusSeeOther {
+		t.Fatalf("sign in for the campaign fixture = %d, want a redirect", signedIn.Code)
+	}
+
+	return &campaignFixture{
+		t:       t,
+		handler: handler,
+		cookie:  sessionCookieOf(t, signedIn),
+		store:   store,
+	}
+}
+
+// The two values the fixture's handlers share with the composition root, restated
+// rather than imported: `cmd/server` is package `main` and cannot be imported, and
+// a value that has to be copied is a value that can disagree.
+//
+// `renderCacheEntriesForAudit` is a *small* bound rather than the product's 512,
+// because the cache is irrelevant to §10.2 and a small one makes the fixture's
+// memory use obvious. The one property the audit does depend on is that the wiki
+// handler holds a **real** cache, so a page is rendered once and then served from
+// it — a handler with `NewCache(0)` renders every time, and a template that
+// misbehaves only on a second render would be invisible here.
+const (
+	renderCacheEntriesForAudit = 8
+	signOutHrefForAudit        = "/logout"
+)
+
+// auditPages is the maintained `pages` table as the wiki route sees it.
+//
+// A slice rather than a real `*store.Store`, for the same reason the rest of this
+// fixture is a fake store: `store.Open` claims the process's single-instance slot,
+// and the audit runs in the same process as every other test in this package. The
+// *query* is the part that matters and it is real — a campaign filter, so a route
+// that asked for a campaign nobody registered would resolve no reference and the
+// audit would see a broken link and read it as correct markup.
+type auditPages struct{ rows []domain.Page }
+
+// PagesForCampaign returns the rows belonging to one campaign.
+func (p auditPages) PagesForCampaign(
+	_ context.Context,
+	campaignID int64,
+) ([]domain.Page, error) {
+	mine := make([]domain.Page, 0, len(p.rows))
+
+	// Indexed rather than ranged: `domain.Page` carries a `time.Time` twice and is
+	// well over a word, so ranging copies one per iteration to read two integers.
+	for index := range p.rows {
+		if p.rows[index].CampaignID == campaignID {
+			mine = append(mine, p.rows[index])
+		}
+	}
+
+	return mine, nil
+}
+
+// writeFixtureVault creates the fixture's content root and returns its path.
+//
+// Real files on a real filesystem, because the routes under audit go through
+// `os.Root` and the whole of S-3.5 is a claim about what that refuses. A fixture
+// backed by a map would audit the templates and skip the boundary.
+//
+// Two pages and one asset. The asset is never fetched — the audited document is
+// the *failure* state, since a PNG is not a document §10.2 can read — but it has
+// to exist, because a 404 and a 403 are different documents and a fixture that
+// omitted the file would audit the wrong one.
+func writeFixtureVault(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	files := map[string]string{
+		fixtureIndex + ".md": "---\ntitle: Index\n---\n\nA link to [[" +
+			fixtureGoblin + "]].\n",
+		fixtureGoblin + ".md": "---\ntitle: Goblin\n---\n\nA goblin watches the wyvern sea.\n",
+	}
+
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write the fixture page %s: %v", name, err)
+		}
+	}
+
+	// A one-pixel PNG, written as bytes rather than decoded, so the fixture does
+	// not need an image library to exist. `assets`' own tests are where the media
+	// table is read; this only has to be a file the table recognises.
+	const onePixelPNG = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" +
+		"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00" +
+		"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05" +
+		"\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+
+	if err := os.WriteFile(
+		filepath.Join(dir, "greyhaven-map.png"),
+		[]byte(onePixelPNG),
+		0o600,
+	); err != nil {
+		t.Fatalf("write the fixture asset: %v", err)
+	}
+
+	return dir
+}
+
+// get drives one GET through the fixture's router and returns the document.
+func (f *campaignFixture) get(where string) renderedRoute {
+	f.t.Helper()
+
+	return renderRoute(f.t, f.handler, where, f.cookie, pathOf(where))
+}
+
+// getVariants is `get` for a document whose request is not a plain session GET.
+//
+// The search routes are the case: `?q=` is part of the request the theme cookie
+// must not be allowed to change, so the variants have to be re-fetched with the
+// query intact. Building them from `pathOf(where)` rather than passing a second
+// path keeps the label and the URL the same string, which is what stops the two
+// drifting apart.
+func (f *campaignFixture) getVariants(where string) renderedRoute {
+	f.t.Helper()
+
+	path := pathOf(where)
+
+	recorder := httptest.NewRecorder()
+	f.handler.ServeHTTP(
+		recorder,
+		pinned(withCookies(getRequest(f.t, path, nil), f.cookie, nil)),
+	)
+
+	return routeFromRecorder(where, recorder, themeVariants(
+		f.t,
+		func(theme *http.Cookie) *httptest.ResponseRecorder {
+			out := httptest.NewRecorder()
+			f.handler.ServeHTTP(
+				out,
+				pinned(withCookies(getRequest(f.t, path, nil), f.cookie, theme)),
+			)
+
+			return out
+		},
+	))
+}
+
+// staleSave issues the `PUT` that answers 412, and returns the document it carries.
+//
+// A validator that is not the page's, rather than a real one fetched and then
+// invalidated, because the second is two requests and a race against the file's
+// mtime: an `ETag` derived from a content hash does not change, so the pair would
+// be stable — but it would also be two ways to be wrong, and this one cannot be.
+//
+// The body is the GM's unsaved text, which is the whole point of the conflict
+// view: the response must render the *request's* buffer, not the disk's. A fixture
+// that sent the disk's own text would audit a 412 whose most important assertion
+// cannot fail.
+func (f *campaignFixture) staleSave() renderedRoute {
+	f.t.Helper()
+
+	const buffer = "---\ntitle: Goblin\n---\n\nA goblin watches the wyvern sea, and " +
+		"the wyvern watches back.\n"
+
+	recorder := httptest.NewRecorder()
+	f.handler.ServeHTTP(recorder, staleSaveRequest(f.t, f.cookie, nil, buffer))
+
+	if recorder.Code != http.StatusPreconditionFailed {
+		f.t.Fatalf("the stale save = %d, want 412; a fixture that cannot reach the "+
+			"conflict view is auditing a document the product never serves: %s",
+			recorder.Code, firstBytes(recorder.Body.String()))
+	}
+
+	const where = "/c/greyhaven/edit/" + fixtureGoblin + " (a stale save: 412)"
+
+	// Re-issued per theme value rather than the first response being reused, so
+	// the conflict view is audited the way a reader meets it: five times, with the
+	// only difference being a cookie that must make no difference. Reusing the
+	// bytes would have asserted nothing at all, because the assertion is a
+	// comparison.
+	variants := themeVariants(f.t, func(theme *http.Cookie) *httptest.ResponseRecorder {
+		out := httptest.NewRecorder()
+		f.handler.ServeHTTP(out, staleSaveRequest(f.t, f.cookie, theme, buffer))
+
+		return out
+	})
+
+	return routeFromRecorder(where, recorder, variants)
+}
+
+// staleSaveRequest builds the `PUT` a conflict view is rendered from.
+//
+// A function because the conflict has to be produced five times — once for the
+// document under audit and once per theme cookie — and a hand-inlined second copy
+// is how the two start disagreeing about which validator is stale.
+func staleSaveRequest(
+	t *testing.T,
+	session, theme *http.Cookie,
+	body string,
+) *http.Request {
+	t.Helper()
+
+	request := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPut, "/c/greyhaven/edit/"+fixtureGoblin,
+		strings.NewReader(body),
+	)
+	request.Header.Set("Content-Type", "text/markdown; charset=utf-8")
+	request.Header.Set("If-Match", `W/"0000000000000000000000000000000000000000"`)
+	return pinned(withCookies(request, session, theme))
+}
+
+// pathOf is the request path inside an audit label.
+//
+// The label is a sentence a failure message can print — "`/c/greyhaven/wiki/Goblin
+// (a page)`" — and the request needs only the path. Splitting here rather than
+// passing two strings keeps the label and the URL from drifting apart, which is
+// the failure a coverage list is most vulnerable to: a route renamed, the label
+// still naming the old one, and the gate reporting it covered.
+func pathOf(where string) string {
+	path, _, _ := strings.Cut(where, " (")
+	return path
+}
+
+// renderRoute GETs a path through a handler with a cookie, and re-renders it once
+// per theme-cookie value.
 func renderRoute(
 	t *testing.T,
 	handler http.Handler,
@@ -173,22 +665,161 @@ func renderRoute(
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, getRequest(t, path, cookie))
+	handler.ServeHTTP(recorder, pinned(withCookies(getRequest(t, path, nil), cookie, nil)))
 
-	return routeFromRecorder(where, recorder)
+	return routeFromRecorder(
+		where,
+		recorder,
+		themeVariants(t, func(theme *http.Cookie) *httptest.ResponseRecorder {
+			out := httptest.NewRecorder()
+			handler.ServeHTTP(out, pinned(withCookies(getRequest(t, path, nil), cookie, theme)))
+
+			return out
+		}),
+	)
 }
 
-// routeFromRecorder captures a response as an audited document.
-func routeFromRecorder(where string, recorder *httptest.ResponseRecorder) renderedRoute {
+// auditRequestID is the correlation id every audited request carries.
+//
+// Present because a failure state's document **names its request id** — that is
+// the whole content of the state, and it is how a reader's screenshot and the log
+// line become the same request. Which means two requests for the same failing
+// document produce two different documents for a reason that has nothing to do
+// with S-13.5, and a byte-identity assertion that did not control for it would
+// fail on every failure state and pass for the wrong reason on every other.
+//
+// `middleware.RequestID` honours a short printable-ASCII inbound id precisely so
+// that a request is traceable across a reverse proxy, so pinning it here is the
+// supported path rather than a trick. With it pinned, the **only** difference
+// between the six requests behind one audited document is the theme cookie — which
+// is what turns the comparison into a statement about S-13.5.
+const auditRequestID = "audit-fixture-request"
+
+// pinned stamps the fixed correlation id onto a request.
+func pinned(request *http.Request) *http.Request {
+	request.Header.Set(middleware.RequestIDHeader, auditRequestID)
+
+	return request
+}
+
+// routeFromRecorder captures a response as an audited document, along with the same
+// document rendered under each theme-cookie value.
+//
+// The variants are a parameter rather than something derived from the recorder,
+// because a recorder holds one response and a theme cookie is a property of a
+// *request*. The callers that already have the recorder therefore also have to
+// supply the re-render, which is the point: a fixture cannot accidentally audit
+// S-13.5 against a single value and call it a day.
+func routeFromRecorder(
+	where string,
+	recorder *httptest.ResponseRecorder,
+	themeVariants [][]byte,
+) renderedRoute {
 	return renderedRoute{
 		where:  where,
 		status: recorder.Code,
 		body:   recorder.Body.Bytes(),
 		// `Header.Values` rather than `Get`, because `Get` cannot tell "unset"
-		// from "set to the empty string", and "no Vary header at all" is the
-		// requirement — an empty `Vary` is still a header, and a cache reads it.
-		vary: strings.Join(recorder.Header().Values("Vary"), ", "),
+		// from "set to the empty string", and "no `Vary` header names the theme
+		// cookie" is the requirement — an empty `Vary` is still a header, and a
+		// cache reads it.
+		vary:          strings.Join(recorder.Header().Values("Vary"), ", "),
+		themeVariants: themeVariants,
 	}
+}
+
+// themeCookieValues are the `sp_ui` values every audited document is re-rendered
+// with.
+//
+// Five, and each one is a value the client can actually produce rather than a
+// string invented to make the loop look thorough:
+//
+//   - the **absent** cookie, which is a reader who has expressed no preference and
+//     is therefore the most common request this server will ever see;
+//   - the default theme, named explicitly — a reader whose stored preference
+//     happens to equal the default still sends the cookie, so "absent" and
+//     "default" are two different requests that must produce the same bytes;
+//   - a non-default theme, which is the one that would move `data-theme` if
+//     anything read it;
+//   - both fields at once, because the cookie carries two and a document that
+//     reads one and not the other is a document that varies for half its readers;
+//   - the television layout, because `[data-ui="tv"]` is the tier that changes the
+//     grid most and is the one a server-side branch would most plausibly reach for.
+var themeCookieValues = []string{
+	"",
+	"theme=system",
+	"theme=dark",
+	"theme=dark&ui=compact",
+	"theme=light&ui=tv",
+}
+
+// themeVariants re-renders one document once per theme-cookie value.
+//
+// `send` is handed each theme cookie and returns the response it produced, so the
+// caller keeps its own request shape — a `GET` with a session, an anonymous `GET`,
+// a `POST` with a rejected credential — and this function stays a loop. Sharing
+// the loop matters: the five values have to be the same five for every route, or
+// "the document does not vary by the theme cookie" is five different claims
+// depending on which document is being asked about.
+func themeVariants(
+	t *testing.T,
+	send func(theme *http.Cookie) *httptest.ResponseRecorder,
+) [][]byte {
+	t.Helper()
+
+	variants := make([][]byte, 0, len(themeCookieValues))
+
+	for _, value := range themeCookieValues {
+		recorder := send(themeCookie(value))
+		variants = append(variants, recorder.Body.Bytes())
+	}
+
+	return variants
+}
+
+// themeCookie is the `sp_ui` cookie carrying a value, or no cookie at all for the
+// empty value.
+//
+// A `*http.Cookie` with an empty `Value` is **not** the same thing, and the
+// difference is the point of having the empty string in the list: `AddCookie` with
+// an empty value writes `sp_ui=`, which is a present cookie with nothing in it, and
+// a route that branches on the cookie's *presence* would take a different path from
+// one that received no cookie at all. The absent case has to be genuinely absent.
+func themeCookie(value string) *http.Cookie {
+	if value == "" {
+		return nil
+	}
+
+	return &http.Cookie{Name: auth.UICookieName, Value: value}
+}
+
+// withCookies attaches a session cookie and a theme cookie to a request, in that
+// order, and **keeps both**.
+//
+// Written as a function over the request rather than as a "combine these two
+// cookies into one" helper because that is where this went wrong first. A request
+// carries any number of cookies, so there is nothing to combine — and the earlier
+// version returned a single cookie built from the session's name and value, which
+// silently dropped the theme cookie on every signed-in request. The audit then
+// compared five copies of the *same* request, found them all equal, and reported
+// that no document varies by the theme cookie. It was green because it was not
+// looking.
+//
+// That is the whole reason a gate is mutation-checked: a rule that cannot fire is
+// indistinguishable from a rule that holds, and the only way to tell them apart is
+// to make the route read the cookie and require the gate to notice.
+//
+// A `nil` session with a non-nil theme is a real reader and is the more
+// interesting case of the two — somebody who set a theme before signing in — so it
+// is representable rather than papered over.
+func withCookies(request *http.Request, session, theme *http.Cookie) *http.Request {
+	for _, cookie := range []*http.Cookie{session, theme} {
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+	}
+
+	return request
 }
 
 // anonymousGet GETs a path through a handler with no credential.
@@ -228,13 +859,24 @@ type audit struct {
 	t      failer
 	where  string
 	status int
-	// varyHeader is the response's `Vary`, captured as a string because its
-	// *value* is irrelevant and its presence is the finding. See
-	// `assertNoVaryOnCookie`.
+	// varyHeader is the response's `Vary`, captured as a string because the
+	// *field names* in it are the finding and a DOM cannot hold a header. A
+	// `Vary: Cookie` here is correct — the shell carries the reader's name and
+	// a sign-out form — and a `Vary` naming the theme cookie is not. See
+	// `assertNoVaryOnTheThemeCookie`.
 	varyHeader string
-	root       *html.Node
-	body       *html.Node
-	head       *html.Node
+	// themeVariants is the same document rendered once per `sp_ui` value, and
+	// is what makes S-13.5 checkable: the claim is about five requests, so a
+	// single response cannot establish it.
+	themeVariants [][]byte
+	// document is the bytes the variants are compared against. Separate from
+	// `body`, which is the *parsed* `<body>` element: a re-parse is a
+	// normalisation, and this comparison is about bytes on the wire, so
+	// normalising first would hide exactly the difference it is looking for.
+	document []byte
+	root     *html.Node
+	body     *html.Node
+	head     *html.Node
 }
 
 // newAudit parses a rendered document.
@@ -252,13 +894,15 @@ func newAudit(t *testing.T, route renderedRoute) *audit {
 	}
 
 	return &audit{
-		t:          t,
-		where:      route.where,
-		status:     route.status,
-		varyHeader: route.vary,
-		root:       root,
-		head:       findElement(root, "head"),
-		body:       findElement(root, "body"),
+		t:             t,
+		where:         route.where,
+		status:        route.status,
+		varyHeader:    route.vary,
+		themeVariants: route.themeVariants,
+		document:      route.body,
+		root:          root,
+		head:          findElement(root, "head"),
+		body:          findElement(root, "body"),
 	}
 }
 
@@ -562,7 +1206,7 @@ func TestEveryRouteSatisfiesTheStructuralContract(t *testing.T) {
 				assertEveryReferenceResolves(t, audit)
 			})
 			t.Run("TheDocumentDoesNotVaryByTheThemeCookie", func(t *testing.T) {
-				assertNoVaryOnCookie(t, audit)
+				assertNoVaryOnTheThemeCookie(t, audit)
 			})
 		})
 	}
@@ -709,6 +1353,11 @@ func assertLandmarks(t failer, audit *audit) {
 		present[region.role]++
 	}
 
+	// headerSearch counts the `search` landmarks carrying the header's reserved
+	// name, and exists so that "more than one" is a finding. §7.2 permits one.
+	// Zero is **not** a finding today, and `headerSearchLabel`'s comment says why.
+	headerSearch := 0
+
 	// `main` is the only landmark required unconditionally. §4.6 removes the
 	// navigation before a campaign exists, and §3.1's tiers move the rail out of
 	// the flow rather than out of the document — the rail stays in the
@@ -758,19 +1407,44 @@ func assertLandmarks(t failer, audit *audit) {
 					audit.where, region.label, "Utilities")
 			}
 		case "search":
-			// The header's search form and the search route's own form are both
-			// `search` landmarks, and §7.2's rule for them is the rule for two
-			// navigations: they must not share a name. The header's is "Search
-			// pages" by name, and the distinctness assertion below is what
-			// catches a collision with the centre's.
-			if region.label != "Search pages" {
-				t.Errorf("%s: a search landmark is labelled %q, want %q; §7.2 names the "+
-					"header's so it cannot collide with the search route's own form",
-					audit.where, region.label, "Search pages")
+			// §7.2 reserves "Search pages" for the **header's** search form, and
+			// the reservation is what stops the search route's own form colliding
+			// with it. So a `search` landmark carrying that name must *be* the
+			// header's: `data-testid="header-search"` is the hook the header
+			// component puts on it, and there is exactly one header per document.
+			//
+			// **The converse is not asserted, and cannot be.** The header's search
+			// zone renders only when `chrome.SearchForm.Action` is non-empty
+			// (`header.templ`), and nothing in production populates it — the search
+			// box in the banner is not in any document this server serves today, and
+			// only the chrome's own tests set the field. So a rule demanding that
+			// name be present would fail on every route for a reason that has
+			// nothing to do with what §10.2 is checking, and would be switched off
+			// rather than fixed. Asserting the name is reserved is the half that
+			// holds today and that keeps holding once the zone is wired; the
+			// presence of the zone belongs to whichever work item populates
+			// `ShellView.Search`, and this file will start asserting it then.
+			if region.label != headerSearchLabel {
+				continue
+			}
+
+			headerSearch++
+
+			if testID := attribute(region.node, "data-testid"); testID != headerSearchHook {
+				t.Errorf("%s: a search landmark is labelled %q but is %s; §7.2 reserves "+
+					"that name for the header's own search form, and a route's form "+
+					"wearing it collides with the banner's in landmark navigation",
+					audit.where, region.label, elementPath(region.node))
 			}
 		case "banner", "contentinfo", "main":
 		default:
 		}
+	}
+
+	if headerSearch > 1 {
+		t.Errorf("%s: %d search landmarks are labelled %q; §7.2 gives that name to the "+
+			"header's search form, and a document has one header",
+			audit.where, headerSearch, headerSearchLabel)
 	}
 
 	// Distinctness across the whole document.
@@ -1305,31 +1979,116 @@ func assertEveryReferenceResolves(t failer, audit *audit) {
 	})
 }
 
-// assertNoVaryOnCookie is S-13.5 and UI §6.6: the document never varies by the
-// theme cookie, so **no `Vary: Cookie` is emitted**.
+// assertNoVaryOnTheThemeCookie is S-13.5 and UI §6.6, in the two halves the
+// property actually has.
 //
-// Per-document rather than per-header: §3.7's resolver writes `data-theme` and
-// `data-ui` client-side before the first paint, so the *bytes* are identical for
-// every reader and the server has nothing to vary on. A `Vary: Cookie` here would
-// be a cache-fragmentation tax for no correctness gain, and it would be a false
-// promise — `Vary: Cookie` says the representation depends on the cookie, which is
-// the opposite of the design.
+// # What it used to assert, and why that was wrong
 //
-// The header is checked on the recorder, so this needs the response rather than
-// the parsed tree; it is in the per-route list because a route that set the header
-// would be a route whose *other* properties are already suspect.
-func assertNoVaryOnCookie(t failer, audit *audit) {
+// This rule used to read: *no `Vary` header may be emitted at all*. That was a
+// claim ADR 0035 recorded and a later correction to that record withdrew — the
+// wiki route, the search route, the editor and the asset route all carry
+// `Vary: Cookie`, **deliberately**, because the shell around their content carries
+// the reader's name and a sign-out form, so two 200 responses to one URL really do
+// differ. Measured: 4460 bytes for a GM, 4227 for an anonymous reader. ADR 0035's
+// "no `Vary` anywhere" was false and the record now says so.
+//
+// So the absence was the wrong rule twice over. It forbade a header that is
+// required, and — this is the part that matters — **a test asserting a header's
+// absence cannot see the variation that header was protecting.** It would have
+// passed on a document that emitted `Vary: Cookie` and then branched on the theme
+// cookie, because a branch that comes with a `Vary` still has a `Vary`.
+//
+// # What it asserts now
+//
+// Two things, and the second is the substantive one:
+//
+//  1. **No `Vary` names the theme cookie.** Not "no `Vary`" — "no `Vary: sp_ui`".
+//     A `Vary` on `Cookie` is correct here and is what every campaign route emits;
+//     a `Vary` naming `sp_ui` would be a promise the document does not keep,
+//     because §3.7's resolver writes `data-theme` and `data-ui` client-side before
+//     the first paint and the server never sees the preference.
+//
+//  2. **The bytes are identical across five `sp_ui` values.** This is the check
+//     that can fail, and it is the one that catches a route reading the cookie.
+//     `themeCookieValues` names the values and `renderedRoute.themeVariants`
+//     carries the re-renders: the absent cookie, the default theme named
+//     explicitly, a non-default theme, both fields at once, and the television
+//     layout. A document that varies for one of those is a document whose theme is
+//     decided twice — once client-side before the first paint and once server-side
+//     after it — and the reader sees the second one win.
+func assertNoVaryOnTheThemeCookie(t failer, audit *audit) {
 	t.Helper()
 
-	// The value of the header is irrelevant; its presence is the finding.
-	if audit.varyHeader == "" {
+	// Half one: the header, on the recorder, because a DOM cannot hold it.
+	//
+	// Matched against the cookie's *name* rather than against the word "Cookie", so
+	// a `Vary: sp_ui` is caught even though it is not what anybody would write. A
+	// `Vary` is a comma-separated list of field names and this is the one field
+	// name in it that must never appear.
+	if field := varyFieldNaming(audit.varyHeader, auth.UICookieName); field != "" {
+		t.Errorf("%s: the response carries Vary naming %q (%s); the document does not "+
+			"vary by that cookie — §3.7 resolves both root attributes client-side "+
+			"before the first paint, so promising a variation here is a promise the "+
+			"response cannot keep (UI §6.6, S-13.5)",
+			audit.where, field, audit.varyHeader)
+	}
+
+	// Half two: the bytes, which is where a reader would actually see it.
+	if len(audit.themeVariants) != len(themeCookieValues) {
+		t.Errorf("%s: %d theme variants were rendered, want %d; a document audited "+
+			"against fewer cookie values than the list names is not audited against "+
+			"the claim it is standing in for",
+			audit.where, len(audit.themeVariants), len(themeCookieValues))
+
 		return
 	}
 
-	t.Errorf("%s: the response carries Vary: %s; §6.6 requires that no Vary header "+
-		"is emitted, because sp_ui never varies the document — §3.7 resolves both "+
-		"root attributes client-side before the first paint (S-13.5)",
-		audit.where, audit.varyHeader)
+	for index, variant := range audit.themeVariants {
+		if bytes.Equal(variant, audit.document) {
+			continue
+		}
+
+		t.Errorf("%s: the document rendered with sp_ui=%q differs from the one "+
+			"rendered with sp_ui=%q (%d bytes against %d); the theme cookie must not "+
+			"reach the server's answer, because §3.7 has already decided the theme "+
+			"client-side and a server that decides it again shows the reader one "+
+			"theme before the first paint and another after (UI §6.6, S-13.5)",
+			audit.where,
+			describeThemeValue(themeCookieValues[index]),
+			describeThemeValue(themeCookieValues[0]),
+			len(variant), len(audit.document))
+	}
+}
+
+// varyFieldNaming returns the field name in a `Vary` value that matches want, or
+// the empty string when there is none.
+//
+// A `Vary` is a comma-separated list of field names, and `net/http` lets one
+// response carry several `Vary` headers — which is why `renderedRoute.vary` joins
+// `Header.Values` rather than reading one. Matching is case-insensitive because
+// field names are, and because `sp_ui` and `SP_UI` are the same field to a cache:
+// a bug in either case is the same bug.
+func varyFieldNaming(vary, want string) string {
+	for field := range strings.SplitSeq(vary, ",") {
+		if strings.EqualFold(strings.TrimSpace(field), want) {
+			return field
+		}
+	}
+
+	return ""
+}
+
+// describeThemeValue names a cookie value for a failure message.
+//
+// The empty value is the **absent** cookie and is called that, because
+// "rendered with sp_ui=\"\"" reads as a bug in the message when it is the
+// fixture's first case.
+func describeThemeValue(value string) string {
+	if value == "" {
+		return "(absent)"
+	}
+
+	return value
 }
 
 // --- The audit's own tests -------------------------------------------------

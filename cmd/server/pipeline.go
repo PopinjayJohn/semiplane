@@ -157,6 +157,69 @@ type changeRouter struct {
 	debouncer *content.Debouncer
 }
 
+// settledFanOut is the tail of the sink chain: the indexer and the event hub, in
+// that order, once a change has settled.
+//
+// A type rather than a closure for the reason `changeRouter` is one, and the
+// reason is sharper here. A closure that forwarded straight to
+// `indexer.HandleChange` would be *textually identical* to one that also notified
+// the editor, because the second call is a whole line in the middle of a
+// function whose every other line is a comment. And the difference is the entire
+// feature: without it the event stream is a connection that opens, says `hello`,
+// and is correct forever while telling nobody anything.
+//
+// # Both, and neither dropped
+//
+// The failure mode of a fan-out is a sink that quietly replaces another rather
+// than adding to it. `Indexer.HandleChange` is the project's only writer of the
+// `pages` table on the event path, and a hub notification that *replaced* it
+// would produce an instance where search results lag the vault by however long the
+// index takes to catch up, with every surface reporting success. So the two are
+// named as two fields, both are called, and the type says what it fans out to
+// rather than hiding it behind a `[]content.ChangeSink` whose length a reader has
+// to count.
+//
+// # The order is load-bearing
+//
+// **The indexer first, then the hub.** A notice says "this page changed on disk,
+// reload it", and the client that acts on it immediately issues a request. If the
+// notice went out first, that request could arrive before the row landed and the
+// GM would be told the page they were editing does not exist — a 404 produced by
+// our own notification. Indexing first makes the notice a promise the index has
+// already kept.
+//
+// The other order is not symmetric: publishing after the indexer can cost a notice
+// nothing, because the hub coalesces (a full buffer is *replaced* by the newer
+// notice, never dropped) and `Publish` cannot block — a browser tab cannot be
+// allowed between an Obsidian edit and a campaign's index.
+type settledFanOut struct {
+	// index writes the settled change to the maintained `pages` table. Required:
+	// this is the pipeline's job and nothing else performs it.
+	index content.ChangeSink
+
+	// notices tells the browsers watching a campaign's editor. Nil is tolerated and
+	// means no stream is served this process — a store-less or watcher-less
+	// instance still indexes.
+	notices content.ChangeSink
+}
+
+// settle runs both sinks, in the order `settledFanOut` documents.
+//
+// Not parallel and not short-circuiting: neither sink returns an error
+// (`content.ChangeSink` is `func(context.Context, Change)`), and `Indexer.HandleChange`
+// already reports its own failure through `index.change_failed` rather than to its
+// caller. So the second call cannot be skipped by a first that "failed", and
+// running them concurrently would make the order the hub depends on a race.
+func (f settledFanOut) settle(ctx context.Context, change content.Change) {
+	f.index(ctx, change)
+
+	if f.notices == nil {
+		return
+	}
+
+	f.notices(ctx, change)
+}
+
 // settle hands one change the watcher has delivered to the settle filter.
 //
 // `Touch` for **every** change, and `Moved` additionally for the one the watcher
@@ -234,6 +297,12 @@ type contentPipeline struct {
 // to start over a vault that is merely unmounted — which is the one thing S-4.5 says
 // it must not do.
 //
+// notices is the second consumer of a *settled* change, and it is a parameter
+// rather than something read from a global so that the composition root is the only
+// place that knows both exist. Nil is tolerated: an instance with no event hub
+// still watches, settles and indexes, which is what a test of the pipeline's own
+// behaviour wants and what a server with no editor still is.
+//
 // A failure here is fatal, and the failure is fatal because it is a wiring fault
 // rather than a content one: an inotify instance that cannot be opened, or a watch
 // table that does not match the registry, is this function being wrong about the
@@ -245,6 +314,7 @@ func newContentPipeline(
 	pages content.PageStore,
 	kinds domain.PageKindRegistry,
 	signals contentSignals,
+	notices content.ChangeSink,
 ) (*contentPipeline, error) {
 	watched := watchableCampaigns(campaigns, roots)
 
@@ -259,9 +329,16 @@ func newContentPipeline(
 	// written and each of them carries the reasoning for its value. Restating them
 	// here would be a second place to change them, and the composition root is the
 	// place a change would be *forgotten*.
+	//
+	// The debouncer's sink is the **fan-out**, not the indexer, and that placement is
+	// the whole reason the event stream can be correct: `settledFanOut` runs after
+	// the size-stable confirmation, so a notice is never published for a half-written
+	// file. Publishing at the watcher's own sink instead — beside
+	// `changeRouter.settle` — is a whole stage earlier in the chain, and it would
+	// tell a GM their page changed while the bytes were still moving.
 	pipeline.debouncer = content.NewDebouncer(
 		ctx,
-		pipeline.indexer.HandleChange,
+		settledFanOut{index: pipeline.indexer.HandleChange, notices: notices}.settle,
 		roots,
 		signals.watch,
 		content.SettleTimings{},
