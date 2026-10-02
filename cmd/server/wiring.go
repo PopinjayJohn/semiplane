@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/semiplane/semiplane/internal/campaignroots"
 	"github.com/semiplane/semiplane/internal/config"
@@ -117,6 +118,23 @@ func (l pageLister) PagesForCampaign(
 
 	return pages, nil
 }
+
+// realtimeFlushBudget bounds the realtime plane's shutdown flush.
+//
+// Ten seconds, and the number is a reasoning rather than a measurement: the flush
+// is one small row per live campaign on a writer queue that is otherwise idle,
+// because by this point the HTTP server has stopped accepting and the content
+// pipeline has stopped publishing. Phase 6 measured the whole drain at 110ms with
+// a live stream, so this is roughly ninety times the observed cost — which leaves
+// room for a slow disk and bounds the case where there is no slow disk but a
+// wedged writer.
+//
+// **Not** the configured shutdown budget, and that is deliberate: `cfg.ShutdownTimeout`
+// is the *HTTP* drain's budget and this is a different resource with a different
+// cost. Sharing one would mean a slow flush eats the time the in-flight requests
+// needed, and a slow request eats the time the flush needed. Separate budgets, and
+// a shutdown that overruns the sum of them is a shutdown with a wedged disk.
+const realtimeFlushBudget = 10 * time.Second
 
 // productVersion is the build's version as the rail shows it.
 //

@@ -452,6 +452,21 @@ func newCampaignFixture(t *testing.T) *campaignFixture {
 			SignOutHref: signOutHrefForAudit,
 		},
 		&events.Handler{Hub: hub, Logger: logger},
+		// The tabletop socket is mounted as a `nil` handler on purpose, and the
+		// reason is the one `make a11y`'s package list states: `/play` renders no
+		// document. Every answer it gives is either a `101` with a socket on it or
+		// a sentence of plain text, and neither has landmarks, headings, a title
+		// or a vocabulary to audit — so a §10.2 audit over this route would be an
+		// audit of nothing, and naming this package in `A11Y_ROUTE_PKGS` would be a
+		// claim about audits that do not exist.
+		//
+		// `play.Handler` is still a real value in the product: `playRoute` is built
+		// by the composition root and threaded through `NewRouter` exactly like
+		// the other five. It is nil *here* because this fixture audits documents,
+		// and a socket is not one. The mount itself is asserted where a socket can
+		// actually be opened — `play.TestThePlayRouteAnswersTheS8Matrix` opens
+		// one, and `cmd/server`'s wiring test asks the router it builds for a 101.
+		nil,
 	)
 
 	// Signed in as the campaign's GM. The editor and the stream are GM-only, so an
