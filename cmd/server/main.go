@@ -218,6 +218,48 @@ func runServer(_ []string) error {
 
 	registered := mustListCampaigns(ctx, db)
 
+	// # The realtime plane, built here and before any route that needs it
+	//
+	// Four values with a strict dependency flow — registry, then gate, then hub,
+	// then route — and `realtime.go` states each step's reason. Two things about
+	// *where* it is built are worth saying here rather than there:
+	//
+	//  - **Before the campaign routes**, because `playRoute` is one of them and
+	//    because the boot pass over the fingerprints needs the campaign list,
+	//    which `registered` is.
+	//  - **After the store and the counter registry**, because its three closures
+	//    close over the store handle and its `WriteRecorder` is an
+	//    `observability.Writes` registered into the same registry as the
+	//    pipeline's surfaces. Both of those already exist at this point and
+	//    neither exists later.
+	plane := newRealtimePlane(ctx, db, registry, logger)
+
+	// Every campaign's fingerprint is checked against what this build resolves
+	// under, and nothing is opened. The boot pass is read-only by construction
+	// (`Gate.Inspect`), and it is here for the reason `realtime.go` states at
+	// length: an incompatible game is an operator's log line at startup rather
+	// than a GM's failed join in the middle of a session. It runs before the
+	// server listens, alongside `pipeline.buildIndex`, and for the same
+	// underlying reason — a subsystem that is not asked a question at boot
+	// answers it on a user's first request.
+	resumeCampaignStates(ctx, plane, registered, logger)
+
+	// The shutdown step for the realtime plane. **Not** a `defer`: it has to run
+	// in the same `beforeDrain` step as the event hub and before the HTTP drain,
+	// and a `defer` in this function runs *after* `serve` returns — which is after
+	// the drain. A live WebSocket never returns on its own, so closing the realtime
+	// hub after the drain is a drain that blocks for the whole shutdown budget and
+	// then returns `context deadline exceeded`, on every shutdown, for a reason that
+	// reads as a server fault rather than as a long-lived response. Phase 6 measured
+	// a clean exit in 110ms with a live stream; that measurement is this ordering.
+	//
+	// The closure rather than a bare reference because the step has no error
+	// channel: `Hub.Close` and `Registry.Close` both return one, and the process is
+	// on its way out with nobody to return to, so `closeRealtimePlane` logs them.
+	closeRealtime := func() {
+		closeRealtimePlane(ctx, plane, logger, realtimeFlushBudget)
+	}
+
 	// The §13.2 surfaces of the content pipeline: the watcher subsystem's counters
 	// and the indexer's four, registered into the process's registry so `/readyz`
 	// renders them as zeros before anything fails. Constructed once and shared by
@@ -375,6 +417,7 @@ func runServer(_ []string) error {
 		logger,
 	)
 	eventRoute := newEventRoute(hub, logger)
+	playRoute := newPlayRoute(plane.hub, logger)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -389,6 +432,7 @@ func runServer(_ []string) error {
 			searchRoute,
 			editRoute,
 			eventRoute,
+			playRoute,
 		),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
@@ -437,7 +481,7 @@ func runServer(_ []string) error {
 		server,
 		logger,
 		cfg.ShutdownTimeout,
-		closeEventHub(hub, logger),
+		beforeDrain(closeEventHub(hub, logger), closeRealtime),
 	); err != nil {
 		return err
 	}
@@ -474,6 +518,37 @@ func closeEventHub(hub *events.Hub, logger *slog.Logger) func() {
 			slog.Int64("dropped", stats.Dropped),
 			slog.Int("open_subscriptions", stats.Subscribers),
 		)
+	}
+}
+
+// beforeDrain composes the steps that must run before `http.Server.Shutdown`.
+//
+// Left to right, and the order is the dependency rather than the tidiness:
+//
+//  1. **The event hub.** `events.stream` ends on the hub's close or on a failed
+//     write and deliberately not on the request context being cancelled, so the
+//     streams have to be ended by closing the broker that owns them.
+//  2. **The realtime plane.** `Hub.Close` ends every peer, which ends every
+//     `/play` read loop, and then flushes the state registry. A table is the
+//     second long-lived response this process has, and it has the same property:
+//     the loop does not return on its own, so closing after the drain burns the
+//     whole budget.
+//
+// Both before the drain because the drain is what waits for in-flight requests and
+// neither request type ends by itself. Both idempotent, because `serve` calls the
+// step on the error path too — a `ListenAndServe` that failed outright has no
+// in-flight requests to end and closing both is harmless.
+//
+// A variadic rather than a slice of `func()` because the composition root names
+// the steps as arguments and this function is the only place their order is
+// decided. `sync.Once` is not needed and not used: each step's contract already
+// says it is safe to call twice, and a wrapper that hid a second call would be a
+// second thing to reason about at the one place a shutdown goes wrong.
+func beforeDrain(steps ...func()) func() {
+	return func() {
+		for _, step := range steps {
+			step()
+		}
 	}
 }
 

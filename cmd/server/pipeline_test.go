@@ -67,6 +67,12 @@ type instance struct {
 	// constructed itself. A test that built its own `pageLister` would pass with a
 	// store-backed one installed while the product ran on a different one.
 	lister pageLister
+
+	// plane is the realtime plane the router was built with, held for the same
+	// reason as `lister`: a test asserting that a refusal opened no campaign state
+	// asks the registry the product was handed, and a test that built its own
+	// registry would be asserting about a different process.
+	plane *realtimePlane
 }
 
 // newInstance opens a store, creates one account, and registers one campaign with
@@ -255,6 +261,27 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 		}
 	})
 
+	// The realtime plane, through the product's own constructor over the fixture's
+	// real store. `instance.serve` is the composition root's second half, and a
+	// router that mounted `/play` over a hub this file built itself would assert
+	// the route's table rather than the product's.
+	//
+	// `assemble` ran before this, so the pipeline's cleanup is already registered
+	// and therefore runs *after* this one — the same order `runServer` produces for
+	// the same two resources, and the order that matters: the plane stops, then the
+	// pipeline, then the roots, then the store. A flush issued after the pipeline
+	// had stopped writing is a flush contending with a writer that is going away.
+	i.plane = newRealtimePlane(ctx, i.store, i.registry, discardLogger())
+	i.t.Cleanup(func() {
+		closeRealtimePlane(i.t.Context(), i.plane, discardLogger(), closeTimeout)
+	})
+
+	// The boot pass, over the fixture's campaigns. Its only effect on these tests
+	// is a log line into a discarded logger, and running it is the point: a wiring
+	// test that skipped the step the composition root runs would leave the step
+	// unexercised everywhere.
+	resumeCampaignStates(ctx, i.plane, registered, discardLogger())
+
 	return httpapi.NewRouter(
 		discardLogger(),
 		testConfig(),
@@ -280,6 +307,7 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 			discardLogger(),
 		),
 		newEventRoute(hub, discardLogger()),
+		newPlayRoute(i.plane.hub, discardLogger()),
 	)
 }
 
@@ -530,13 +558,13 @@ func TestReadyzRendersThePipelineCountersAsZeros(t *testing.T) {
 	// registry, with no campaign registered and nothing failed.
 	newContentSignals(registry, discardLogger())
 
-	// No account routes and none of the five campaign-scoped handlers. The
+	// No account routes and none of the six campaign-scoped handlers. The
 	// independently-runnable invariant from architecture §15 is that the server
 	// starts and answers `/healthz` from phase 1 onward, and that has to hold for a
 	// process with no content, no store and no account surface at all — so the
 	// router is built with every one of them nil rather than with a fixture.
 	handler := httpapi.NewRouter(
-		discardLogger(), testConfig(), registry, nil, nil, nil, nil, nil, nil, nil,
+		discardLogger(), testConfig(), registry, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 
 	recorder := httptest.NewRecorder()
