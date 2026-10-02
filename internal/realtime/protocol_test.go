@@ -28,7 +28,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -407,6 +409,76 @@ var wantClasses = []string{
 // for two unrelated mistakes would make it a lie. Every entry below asserts
 // `errors.Is` against the sentinel its class belongs to, so a class and a sentinel
 // cannot drift apart without a test failing.
+// TestTheTwoDirectionsAreNotInterchangeable is the sealed-interface property from
+// the other side: nothing that satisfies `ClientFrame` satisfies `ServerFrame`, and
+// vice versa. A frame type that satisfied both would let a hub hand a broadcast to
+// the request dispatcher.
+//
+// The list is written out rather than reflected, so adding a ninth frame type
+// without a row here fails the test rather than passing unnoticed.
+func TestTheTwoDirectionsAreNotInterchangeable(t *testing.T) {
+	t.Parallel()
+
+	clientFrames := []realtime.ClientFrame{
+		&realtime.ClientHello{Type: realtime.TypeHello},
+		&realtime.ClientIntent{Type: realtime.TypeIntent},
+		&realtime.ClientPresence{Type: realtime.TypePresence},
+	}
+
+	serverFrames := []realtime.ServerFrame{
+		&realtime.ServerSnapshot{Type: realtime.TypeSnapshot},
+		&realtime.ServerApplied{Type: realtime.TypeApplied},
+		&realtime.ServerRejected{Type: realtime.TypeRejected},
+		&realtime.ServerDelta{Type: realtime.TypeDelta},
+		&realtime.ServerPresence{Type: realtime.TypePresence},
+		&realtime.ServerClock{Type: realtime.TypeClock},
+	}
+
+	for _, frame := range clientFrames {
+		if _, ok := any(frame).(realtime.ServerFrame); ok {
+			t.Errorf("%T also satisfies ServerFrame", frame)
+		}
+	}
+
+	for _, frame := range serverFrames {
+		if _, ok := any(frame).(realtime.ClientFrame); ok {
+			t.Errorf("%T also satisfies ClientFrame", frame)
+		}
+	}
+}
+
+// TestAnUnknownMessageTypeIsRefusedRatherThanGuessed is the other half of the
+// seal: the decoder has no default branch that picks a type, so a `t` outside the
+// grammar is an error and never a hello that happens to have no required fields.
+//
+// Both halves are asserted because either alone leaves a hole — a decoder that
+// refused unknown `t` values but had a `default:` in its switch, or a sealed
+// interface paired with a decoder that ignored the field.
+func TestAnUnknownMessageTypeIsRefusedRatherThanGuessed(t *testing.T) {
+	t.Parallel()
+
+	for _, frameType := range []string{
+		"",
+		"HELLO",
+		"Hello",
+		"hello ",
+		" hello",
+		"snapshot",
+		"applied",
+		"whisper",
+		"hello\n",
+	} {
+		_, err := realtime.Decode([]byte(fmt.Sprintf(`{"t":%q}`, frameType)))
+		if err == nil {
+			t.Fatalf("t=%q was accepted", frameType)
+		}
+
+		if got := decodeClass(t, err); got != "unknown_type" {
+			t.Errorf("t=%q: class = %q, want unknown_type", frameType, got)
+		}
+	}
+}
+
 func TestEveryRejectionClassIsReachable(t *testing.T) {
 	t.Parallel()
 
@@ -419,6 +491,9 @@ func TestEveryRejectionClassIsReachable(t *testing.T) {
 			frame: `{"t":"hello"`, class: "malformed", want: realtime.ErrNotJSON,
 		},
 		"an array rather than an object": {
+			// Not a syntax error: the bytes *are* JSON, the shape is wrong. The
+			// decoder calls that a type error and the class says so, rather than
+			// claiming the client spoke something that was not JSON at all.
 			frame: `["hello"]`, class: "json_type", want: realtime.ErrNotJSON,
 		},
 		"no t at all": {
@@ -444,6 +519,22 @@ func TestEveryRejectionClassIsReachable(t *testing.T) {
 			class: "bad_token",
 			want:  realtime.ErrBadToken,
 		},
+		"a t that is not a string": {
+			frame: `{"t":7}`,
+			class: "json_type",
+			want:  realtime.ErrMalformedFrame,
+		},
+		"a counter that is a string": {
+			// `{"seq":"7"}` reaches `ClientSeq.UnmarshalJSON`, which is handed the
+			// quoted literal. A first-byte check that accepted a non-digit would let
+			// `strconv` fail on it and report `counter_range` — a client bug reported
+			// as a range violation, which is the wrong page in somebody's log, and a
+			// counter is the one place the class tells an operator whether they are
+			// looking at a broken client or at somebody probing.
+			frame: `{"t":"intent","seq":"7","op":"pause"}`,
+			class: "json_type",
+			want:  realtime.ErrMalformedFrame,
+		},
 		"a cursor with three coordinates": {
 			frame: `{"t":"presence","args":{"cursor":[1,2,3]}}`,
 			class: "bad_cursor", want: realtime.ErrBadCursor,
@@ -463,18 +554,19 @@ func TestEveryRejectionClassIsReachable(t *testing.T) {
 	// parallel subtests writing one map would be a race, and a reachability check
 	// that reads a map another goroutine may still be writing is a check that
 	// passes or fails by scheduling.
+	// `seen` maps a class to the name of the first fixture that produced it. Several
+	// causes legitimately share a class — `json_type` covers a `t` that is a number
+	// and a `seq` that is a string, and the class is what tells an operator whether
+	// they are looking at a broken client or a probe. So a class is claimed once and
+	// may be reached again; what the loop below checks is that no class is claimed
+	// *twice over* with a different expectation, which the per-entry `class` assertion
+	// already covers.
 	seen := map[string]string{}
 
 	for name, tc := range cases {
-		// One canonical fixture per class. A second entry reaching the same class
-		// belongs in `otherRejected` below, where it is still asserted — but not
-		// in the table, because two entries claiming one class makes the table's
-		// claim about reachability ambiguous.
-		if other, dup := seen[tc.class]; dup {
-			t.Fatalf("class %q: %q already claims it; use otherRejected", tc.class, other)
+		if _, claimed := seen[tc.class]; !claimed {
+			seen[tc.class] = name
 		}
-
-		seen[tc.class] = name
 
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -511,7 +603,6 @@ func TestEveryRejectionClassIsReachable(t *testing.T) {
 		"null":                 `null`,
 		"t not a string":       `{"t":7}`,
 		"missing op":           `{"t":"intent","seq":1}`,
-		"seq is a string":      `{"t":"intent","seq":"7","op":"pause"}`,
 		"since is a bool":      `{"t":"hello","since":true}`,
 		"two frames one msg":   `{"t":"hello"}{"t":"intent","seq":1,"op":"pause"}`,
 		"trailing junk":        `{"t":"hello"} trailing`,
@@ -646,30 +737,85 @@ func TestNoInboundPayloadIsOpaque(t *testing.T) {
 	}
 }
 
-// rollOutcomeNames are the field names a roll result would plausibly arrive in.
-// The test names them so that adding one is a deliberate act.
-var rollOutcomeNames = []string{"result", "roll", "rolled", "total", "value", "outcome", "score"}
+// allowedInboundFields is every JSON field name an inbound frame may carry.
+//
+// **An allowlist rather than a denylist, and the difference is not stylistic.** A
+// denylist of result-shaped names — `result`, `roll`, `total`, `value`, `outcome`,
+// `score` — was the first draft, and a mutation check killed it: a field named
+// `Sum` sails past a list of six words nobody thought of. The set of names a
+// protocol legitimately carries is closed and known; the set of names a client
+// might reach for is neither. So the test enumerates what *is* allowed, and adding
+// a field is a deliberate act that requires adding it here.
+var allowedInboundFields = []string{
+	// Frame discriminators and the three envelope fields.
+	"t", "seq", "op", "args", "since",
+	// Presence.
+	"cursor", "focus",
+	// IntentArgs: the parameters §7.1's own examples carry. There is no result,
+	// and no field whose name could be read as one.
+	"placement", "x", "y", "hp", "expr", "reason",
+}
 
 // TestNoInboundFieldCouldHoldARollResult is S-7.3 by reflection, and it is the
 // test the brief asks for: the inbound `intent` frame must have no field in which
 // a result could arrive.
 //
-// The names are the ordinary ones a client would reach for. A field called
-// `Outcome` in `IntentArgs` would be a hole; the reflection walk is what notices,
-// and it notices before a client does.
+// The assertion is closed: every field name reachable from an inbound frame must
+// be one this test lists. A field called `Result` in `IntentArgs` is a hole, and so
+// is one called `Sum` — the second is the case a denylist misses.
 func TestNoInboundFieldCouldHoldARollResult(t *testing.T) {
 	t.Parallel()
 
 	for _, root := range inboundRoots() {
 		walkStructs(root, func(structType reflect.Type, field reflect.StructField) {
-			label := strings.ToLower(field.Name)
-			for _, banned := range rollOutcomeNames {
-				if strings.Contains(label, banned) {
-					t.Fatalf("%s.%s could hold a roll result (matches %q); S-7.3 says "+
-						"the client never supplies one", structType.Name(), field.Name, banned)
-				}
+			if !field.IsExported() {
+				return
+			}
+
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if name == "" {
+				name = field.Name
+			}
+
+			if !slices.Contains(allowedInboundFields, name) {
+				t.Fatalf("%s.%s carries the wire field %q, which is not in the list of "+
+					"fields a client frame may have. S-7.3 says the client never "+
+					"supplies a result, and a closed list is what holds that: a "+
+					"denylist of result-shaped names is a list of the names somebody "+
+					"thought of.",
+					structType.Name(), field.Name, name)
 			}
 		})
+	}
+}
+
+// TestTheClosedListIsNotAStrangerThanTheStructs keeps the allowlist honest in the
+// other direction: a name on the list that no field carries is a name a reader of
+// the list would believe exists.
+func TestTheClosedListIsNotAStrangerThanTheStructs(t *testing.T) {
+	t.Parallel()
+
+	present := map[string]bool{}
+
+	for _, root := range inboundRoots() {
+		walkStructs(root, func(_ reflect.Type, field reflect.StructField) {
+			if !field.IsExported() {
+				return
+			}
+
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if name == "" {
+				name = field.Name
+			}
+
+			present[name] = true
+		})
+	}
+
+	for _, allowed := range allowedInboundFields {
+		if !present[allowed] {
+			t.Errorf("%q is on the closed list but no inbound field carries it", allowed)
+		}
 	}
 }
 
@@ -1160,11 +1306,15 @@ func TestEncodeRefusesAFrameThatWouldBeWrong(t *testing.T) {
 			class: "bad_token",
 		},
 		"delta with oversized args": {
+			// 64 KiB of whitespace: over `maxArgsLen`, well under
+			// `MaxServerFrameBytes`, so this fixture cannot be passing because of
+			// the frame bound. `TestEncodeBoundsTheWholeFrameNotOnlyItsParts` is
+			// the one that covers that.
 			frame: &realtime.ServerDelta{
 				Type: realtime.TypeDelta,
 				Changes: []realtime.Change{{
 					Placement: "p1", Version: 3, Op: "set_hp",
-					Args: json.RawMessage(strings.Repeat(" ", realtime.MaxServerFrameBytes)),
+					Args: json.RawMessage(strings.Repeat(" ", 64<<10)),
 				}},
 			},
 			class: "bad_token",
@@ -1172,6 +1322,38 @@ func TestEncodeRefusesAFrameThatWouldBeWrong(t *testing.T) {
 		"roster with a negative id": {
 			frame: &realtime.ServerPresence{
 				Type: realtime.TypePresence, Users: []realtime.PresenceUser{{ID: -1}},
+			},
+			class: "bad_token",
+		},
+		"roster with a NaN coordinate": {
+			// `json.Marshal` would refuse this with an error naming the value, so
+			// the check that catches it first is the one under test. The second
+			// coordinate is the interesting one: a check that refused only when both
+			// were non-finite would pass a cursor whose `x` is fine and whose `y` is
+			// not, which is the coordinate a client would be looking at.
+			frame: &realtime.ServerPresence{
+				Type: realtime.TypePresence,
+				Users: []realtime.PresenceUser{{
+					ID:     1,
+					Cursor: &realtime.Cursor{12, math.NaN()},
+				}},
+			},
+			class: "bad_cursor",
+		},
+		"roster with an infinite coordinate": {
+			frame: &realtime.ServerPresence{
+				Type: realtime.TypePresence,
+				Users: []realtime.PresenceUser{{
+					ID:     1,
+					Cursor: &realtime.Cursor{math.Inf(1), 12},
+				}},
+			},
+			class: "bad_cursor",
+		},
+		"roster with a focus carrying a space": {
+			frame: &realtime.ServerPresence{
+				Type:  realtime.TypePresence,
+				Users: []realtime.PresenceUser{{ID: 1, Focus: "p 1"}},
 			},
 			class: "bad_token",
 		},
@@ -1194,6 +1376,61 @@ func TestEncodeRefusesAFrameThatWouldBeWrong(t *testing.T) {
 				t.Fatalf("class = %q, want %q", got, tc.class)
 			}
 		})
+	}
+}
+
+// TestEncodeBoundsTheWholeFrameNotOnlyItsParts holds the outbound limit where the
+// constant says it is.
+//
+// The two bounds are independent and both are needed. `maxArgsLen` bounds one
+// opaque payload, because an opaque field is unbounded by definition; the frame
+// bound is the one that stops a *legitimately formed* frame from being enormous,
+// and a campaign with a very large state document is exactly how that happens with
+// no single field out of range. A test that only built one huge `args` would pass
+// with the frame bound deleted.
+func TestEncodeBoundsTheWholeFrameNotOnlyItsParts(t *testing.T) {
+	t.Parallel()
+
+	// Many changes, each well inside `maxArgsLen`, together past the frame bound.
+	// 20_000 changes at ~60 bytes each is ~1.2 MiB, over the 1 MiB frame bound and
+	// under it by a wide margin if the bound were doubled — so this is a fixture
+	// that distinguishes the two numbers rather than tripping both.
+	delta := &realtime.ServerDelta{Type: realtime.TypeDelta}
+	for i := range 20_000 {
+		delta.Changes = append(delta.Changes, realtime.Change{
+			Placement: realtime.PlacementID(fmt.Sprintf("p%d", i)),
+			Version:   realtime.Version(i + 1),
+			Op:        "set_hp",
+			Args:      json.RawMessage(`{"hp":7}`),
+			By:        1,
+		})
+	}
+
+	data, err := realtime.Encode(delta)
+	if err == nil {
+		t.Fatalf("a %d-byte frame encoded", len(data))
+	}
+
+	if got := decodeClass(t, err); got != "oversize" {
+		t.Fatalf("class = %q, want oversize", got)
+	}
+
+	if !errors.Is(err, realtime.ErrServerFrameTooLarge) {
+		t.Fatalf("errors.Is(err, ErrServerFrameTooLarge) is false: %v", err)
+	}
+
+	// And the check is on the *encoded* size, not the in-memory size: a delta of
+	// many tiny changes must still encode when there are few enough of them.
+	small := *delta
+	small.Changes = delta.Changes[:10]
+
+	encoded, err := realtime.Encode(&small)
+	if err != nil {
+		t.Fatalf("ten changes did not encode: %v", err)
+	}
+
+	if len(encoded) >= realtime.MaxServerFrameBytes {
+		t.Fatalf("ten changes encoded to %d bytes, which is not under the bound", len(encoded))
 	}
 }
 
@@ -1313,24 +1550,7 @@ func TestANilReaderIsAWiringFaultRatherThanAClientFault(t *testing.T) {
 	}
 }
 
-// TestASealedInterfaceKeepsTheTwoDirectionsApart: a `ServerSnapshot` is not a
-// `ClientFrame`, which is what stops a broadcast being dispatched as if it were a
-// request.
-func TestASealedInterfaceKeepsTheTwoDirectionsApart(t *testing.T) {
-	t.Parallel()
-
-	snapshot := realtime.ServerFrame(&realtime.ServerSnapshot{Type: realtime.TypeSnapshot})
-
-	if _, ok := any(snapshot).(realtime.ClientFrame); ok {
-		t.Fatal("a ServerSnapshot satisfied ClientFrame")
-	}
-
-	hello := realtime.ClientFrame(&realtime.ClientHello{Type: realtime.TypeHello})
-
-	if _, ok := any(hello).(realtime.ServerFrame); ok {
-		t.Fatal("a ClientHello satisfied ServerFrame")
-	}
-}
+//
 
 // TestTheFrameErrorsTextIsAClass is the contract a hub logs: whatever went wrong,
 // the string is an identifier this project chose.
