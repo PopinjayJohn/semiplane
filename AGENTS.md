@@ -446,6 +446,13 @@ resolves two conflicts inside the UI record.
   of smuggling the word in and requires it to object to each. An audit that
   cannot fail is worse than no audit, because it is a green light wired to
   nothing.
+- **`errorClass` falls back to `%T`, so a wrapped error with no `Class()` is classified as
+  `*fmt.wrapError`.** `observability.Classed` is consulted first and a package's errors
+  teach it a class by implementing one method, but the fallback is still the last resort and
+  it is not useful: a boot that refuses to resume reported
+  `realtime.ruleset_unreadable … class:"*fmt.wrapError"`, which is the one thing an alert
+  cannot match. **Measured, not hypothesised** — registering a campaign with a `--ruleset`
+  that is not an `sp1:` fingerprint produces it on every start.
 - **Zero is a fixed point, so a zero-length sample is not a settled size.** The
   settle filter (S-4.3) confirms a path by two `stat` samples agreeing. A writer
   that truncates in place with `open(O_TRUNC)` and is descheduled before its
