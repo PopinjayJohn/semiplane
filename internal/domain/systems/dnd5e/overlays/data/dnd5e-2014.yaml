@@ -1,0 +1,122 @@
+# D&D 5e — one edition, as an overlay over `dnd5e`'s shared base pack.
+#
+# ## How to read the difference between the two editions
+#
+#     diff data/dnd5e-2014.yaml data/dnd5e-2024.yaml
+#
+# **Every line of this register is identical in both files**, so it appears in that diff as
+# context and a reviewer reads data rather than prose. §10.4 claims that the difference
+# between two editions of 5e "shows up as reviewable data diffs", and this register is the
+# part of that claim which is about presentation rather than about rules. Where a reader
+# wants the rules explained, this is the file to read — either one will do, and both are the
+# same text.
+#
+# ## What an overlay is
+#
+# §10.4 says the two editions are ~90% identical, so an overlay is a **patch**: a mapping is
+# merged by key, a collection by slug, and a scalar is replaced when it is declared and
+# inherited when it is not. Everything this file does not declare comes from the base pack —
+# the dice, the six abilities, the formulas, the proficiency bands, the named difficulty
+# classes, the twelve weapon masteries — and the only things declared below are the ones
+# where this edition has an opinion.
+#
+# ## Why this file states switches the base pack already declares
+#
+# `crit_attack_die_max: true` appears in **both** overlays, and the base pack says the same
+# thing. That is deliberate, and it is the one convention here a reviewer should not "tidy".
+#
+# The base pack's value for `crit_damage_die_max` and for `crit_ignored_by_incapacitated`
+# happens to be **2014's** answer. An overlay that relied on it would make the base pack's
+# *default* into an edition's *rule*: change either line in `dnd5e/data/base.yaml` for an
+# unrelated reason and 2014 silently becomes 2024's critical rule — with the diff between
+# these two files showing nothing at all, because neither of them changed. And a reviewer
+# reading these two files side by side could not see the difference without reading a third
+# file, which is the whole thing §10.4's sentence is about.
+#
+# So **each overlay states its own answer for every switch its edition has an opinion about**,
+# including the one both editions agree on.
+#
+# ## The whole of what the two editions disagree about
+#
+# Six paths differ. Four of them are rules; the other two are this file's own `title` and
+# `version`, which is what §10.8's fingerprint needs in order to gate a resume on *this* file
+# rather than on the base pack.
+#
+#   1. `toggles.crit_damage_die_max` — false in 2014, true in 2024. 2014 crits on a natural 20
+#      from the attack die and on nothing else; 2024 also crits when a damage die shows its
+#      **own** maximum. A switch and not two Go rules, because the *procedure* is shared:
+#      `dnd5e`'s one critical rule already reads both halves, so only the policy moved.
+#   2. `toggles.crit_ignored_by_incapacitated` — false in 2014, true in 2024. 2024 exempts an
+#      attack against an incapable, paralysed or unconscious creature from the critical
+#      rule. 2014 has no such exemption because it has no automatic critical hits to exempt:
+#      every crit in 2014 comes from the attack die, and that one keeps working against a
+#      helpless target. 2024 needs the switch *and* `critical_exempt` on the three rows
+#      below, because the switch says the exemption exists in this edition and the column
+#      says which conditions it covers. That split is `dnd5e`'s `CriticalExempt` design — a
+#      hardcoded list in Go would have to be forked for an overlay wanting a different set,
+#      and no column at all would silently crit a helpless creature under a pack that had
+#      asked it not to.
+#   3. `attack.mastery.enabled` — false in 2014, true in 2024. 2014 has no weapon mastery
+#      properties at all. **A boolean rather than an absent `masteries:` block**, and the
+#      reason is worth reading before anyone tidies it: `resolveDamage` reads
+#      `MasteryEnabled` before it consults the rows, so the twelve rows stay declared and are
+#      simply never walked. Deleting them would be a second spelling of the same absence and
+#      the one that loses — a weapon authored against a 2024 pack offering `finesse` would be
+#      refused by name under 2014 rather than quietly resolving without it.
+#   4. `kinds[0].label` — "Race" in 2014, "Species" in 2024. A **label and not a slug**:
+#      the slug is the identity a campaign's page front matter and its `campaigns` row hold,
+#      and two slugs for one concept would be two entries in a kind registry and two answers
+#      to "which kind is this page". The word an edition uses is display copy; the word a page
+#      stores is identity; only the first is an edition difference.
+#
+# ## Both editions name the same two hooks
+#
+# `hooks:` is `default` for both, and restated in both. `dnd5e` refuses a pack that leaves a
+# hook unnamed, so an overlay that relied on inheritance would be a file whose validity
+# depended on a file somebody else wrote. They are the same two because the two editions
+# share the same *procedure* — the critical rule reads three switches and a mastery rule
+# folds two lists — and a third hook, or a second rule per hook, would be the fork ADR 0045
+# exists to prevent. Both files are the evidence that none is needed.
+
+# ## This file's edition
+#
+# 2014 crits on a natural 20 and on nothing else, exempts nothing from the critical rule, has
+# no weapon mastery properties, and calls an ancestry a Race. All four are a boolean or a
+# label below; nothing else about this edition is stated here.
+#
+# There is **no `conditions:` block**, and that is a real absence rather than an oversight:
+# this edition exempts nothing, so the base pack's rows — none of which carries
+# `critical_exempt` — are already this edition's answer.
+
+system: "dnd5e"
+version: "dnd5e-2014-overlay@1"
+title: "D&D 5e 2014"
+
+# The critical rule, in full. See the register above for why both editions state all three.
+toggles:
+  # A natural 20 from the attack die is a critical hit. True in both editions.
+  crit_attack_die_max: true
+  # A damage die showing its maximum is **not** a critical hit. This is 2014's answer, and
+  # difference 1.
+  crit_damage_die_max: false
+  # No condition exempts attacks against it from the critical rule. 2014's answer, and
+  # difference 2's switch half.
+  crit_ignored_by_incapacitated: false
+
+# The one kind whose display name this edition changes. `mergeBySlug` replaces a row whole, so
+# the slug is restated with the label; `kindFile` has exactly these two fields, which is why
+# this is a two-field row rather than a one-field patch.
+kinds:
+  - { slug: ancestry, label: "Race" }
+
+# Weapon mastery properties do not exist in 2014. See difference 3 in the register above for
+# why this is a boolean rather than an absent table.
+attack:
+  mastery:
+    enabled: false
+
+# The procedural rules this edition resolves with. See the register above: both editions name
+# the same two, and both are `default`.
+hooks:
+  critical: "default"
+  mastery: "default"
