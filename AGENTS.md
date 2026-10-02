@@ -333,7 +333,7 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   pass is unexported and confined to the page body, which is why a plugin rendering through the
   pipeline inherits the class — the mechanism UI §4.11.1 asks for. Do not move it before the
   sanitiser: the class is not on the allowlist, so the sanitiser would strip it straight back off.
-  [0037](docs/content/en/decisions/0037-target-class-is-applied-by-the-render-pipeline.md)
+  [0038](docs/content/en/decisions/0038-target-class-is-applied-by-the-render-pipeline.md)
 - **Redaction runs on the source, before the render.** A redactor that ran after would leave the
   unredacted text in the renderer's buffers, the sanitiser's input and the cache. The seam is
   `content.Redactor`, and `content.NoSecrets()` is a pass-through that **removes nothing** until

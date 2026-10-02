@@ -1,5 +1,5 @@
 ---
-title: "0037 — The `.target` class is applied by the render pipeline, after the sanitiser"
+title: "0038 — The `.target` class is applied by the render pipeline, after the sanitiser"
 description: "semiplane adds one attribute to sanitised output rather than removing one, and it is safe because the value is a constant it owns, the element set is fixed, and the pass runs on a tree parsed from bytes the sanitiser already approved."
 lede: "Every other decision on the render pipeline removes something. This one adds, which is the part worth arguing, and the argument is four properties rather than a promise: `target` is a literal in `internal/content`, the element set is derived from the sanitiser's own list, the value resolves to two minimum sizes and no behaviour, and the pass parses a tree the sanitiser emptied rather than matching the markup with a regexp."
 weight: 228
@@ -10,6 +10,17 @@ superseded_by: ""
 ---
 
 ## Context
+
+**Renumbered.** This record was drafted as 0037 and is published as 0038. Two
+independent work items were briefed to write a record without knowing of each
+other, and both took 0037; the settle filter's
+[0037]({{ "decisions/0037-zero-bytes-is-not-a-stable-size/" | relURL }}) holds the
+number. `AGENTS.md` says a number is never reused and never renumbered, which
+means a collision is resolved *before* either merges rather than by whoever
+happened to merge first — and the surviving number is not re-derived from the
+order work happened to land in. This record moved; 0037 did not.
+
+
 
 UI §7.3 makes target size "enforced by construction", and says what the construction is: a shared
 `.target` utility setting `min-inline-size` and `min-block-size` from `--target-min`, used by every
@@ -153,7 +164,7 @@ The same check is what makes the *author-written* class a non-event: a fragment 
 `applyTargetClass` is **unexported**, `Renderer.Render` is its only caller, and `Rendered.HTML` is
 its only argument. The shell's chrome is templ, carries the class by construction, and never passes
 through here. That is structural: there is no exported API that runs this over a document, so
-ADR 0037's confinement claim is enforced by the compiler rather than by discipline.
+ADR 0038's confinement claim is enforced by the compiler rather than by discipline.
 
 ### One byte difference, stated rather than hidden
 
