@@ -847,7 +847,22 @@ func (g *Gate) Resume(
 	return registry.Open(ctx, campaignID)
 }
 
-// Actor identifies who performed an audited act.
+// AuditActor identifies who performed an audited act.
+//
+// **Renamed from `Actor` in phase 8**, and the rename is the record's point rather
+// than a preference: this package was using one word for two different identities.
+// `Intent.Actor` is the user a resolution is performed *as* — a live identity, carrying
+// a campaign and a role and never a name — and this type is who an `audit_log` row is
+// attributed *to*, carrying a display name and nothing else. A dispatch had to name
+// its identity, found the word taken, and the two available answers were both bad:
+// // borrowing this name for the live identity would have made a `Dispatch` argument and
+// an audit row's author the same type, and inventing a third word would have left
+// three words for one idea and no name saying which was which.
+//
+// So the audit attribution took the qualifier it always wanted — it is the *audit*
+// actor, it is written by `ruleset.go`, and every call site said so already — and the
+// unqualified `Actor` is now the identity a resolution is performed as, which is what
+// `Intent.Actor` has always meant. Two names, each saying which question it answers.
 //
 // Two fields rather than one because `audit_log` records an id (migration 0009) and
 // a human reading the row later needs the name, and a row that can only be
@@ -857,7 +872,7 @@ func (g *Gate) Resume(
 //
 // A username is not a secret. It is rendered in the shell's own chrome and is not
 // `body_plain`, so neither S-5.11 nor S-12.3 is engaged.
-type Actor struct {
+type AuditActor struct {
 	// UserID is the account's id, and must be positive: it is `audit_log.actor_id`,
 	// which is NOT NULL because an unattributed act is not an audit record.
 	UserID int64
@@ -1079,7 +1094,7 @@ func (d *Discarder) Discard(
 	ctx context.Context,
 	campaignID int64,
 	tier domain.Tier,
-	actor Actor,
+	actor AuditActor,
 	confirmation DiscardConfirmation,
 ) error {
 	if d.write == nil {
