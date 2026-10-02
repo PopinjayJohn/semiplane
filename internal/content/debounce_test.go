@@ -160,6 +160,12 @@ type arrival struct {
 	change content.Change
 	raw    []byte
 	err    error
+
+	// at is when the sink ran, which is when the filter finished believing the
+	// path. The entitlement checks below are questions about this instant's
+	// distance from the last event for the same path, so it cannot be inferred
+	// from the arrival itself.
+	at time.Time
 }
 
 // settleFixture is one Debouncer over real content roots, one campaign per slug,
@@ -176,6 +182,13 @@ type settleFixture struct {
 	debouncer *content.Debouncer
 	arrivals  chan arrival
 	logs      *syncBuffer
+
+	// events is when this fixture last delivered an event, per path. It exists so
+	// that an arrival can be asked whether the filter was entitled to make it,
+	// which is the question the tests below were really asking and could not
+	// previously express. See `entitled`.
+	eventsMu sync.Mutex
+	events   map[string]time.Time
 }
 
 // newSettleFixture opens one content root per slug and a Debouncer over them.
@@ -193,6 +206,7 @@ func newSettleFixture(t *testing.T, timing content.SettleTimings, slugs ...strin
 		roots:    content.NewRegistry(content.RefuseSymlinks),
 		arrivals: make(chan arrival, 4096),
 		logs:     &syncBuffer{},
+		events:   make(map[string]time.Time),
 	}
 
 	for index, slug := range slugs {
@@ -227,7 +241,7 @@ func newSettleFixture(t *testing.T, timing content.SettleTimings, slugs ...strin
 
 // sink is the ChangeSink: it records the change and reads the file.
 func (fx *settleFixture) sink(_ context.Context, change content.Change) {
-	recorded := arrival{change: change}
+	recorded := arrival{change: change, at: time.Now()}
 
 	root, err := fx.roots.Get(change.Slug)
 	if err == nil {
@@ -240,6 +254,79 @@ func (fx *settleFixture) sink(_ context.Context, change content.Change) {
 
 	recorded.err = err
 	fx.arrivals <- recorded
+}
+
+// deliver reports an event for a path and records when it was reported.
+//
+// Every fixture method that reaches the debouncer goes through here, which is
+// what makes `entitled` sound: an event the fixture did not record is an event
+// the entitlement arithmetic cannot account for, and a test that quietly missed
+// one would pass for the wrong reason.
+func (fx *settleFixture) deliver(slug, rel string) {
+	fx.eventsMu.Lock()
+	fx.events[eventKey(slug, rel)] = time.Now()
+	fx.eventsMu.Unlock()
+
+	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+}
+
+// deliverMove reports a watcher-identified move and records both of its ends.
+//
+// Both, because `Moved` arms the destination and drops the source: the
+// destination's deadline is what an arrival about it would be measured against,
+// and the source's last event is what makes a removal of it legible.
+func (fx *settleFixture) deliverMove(slug, oldRel, newRel string) {
+	now := time.Now()
+
+	fx.eventsMu.Lock()
+	fx.events[eventKey(slug, oldRel)] = now
+	fx.events[eventKey(slug, newRel)] = now
+	fx.eventsMu.Unlock()
+
+	fx.debouncer.Moved(fx.ids[slug], slug, oldRel, newRel)
+}
+
+// eventKey is one path in one campaign, as the fixture addresses it.
+func eventKey(slug, rel string) string {
+	return slug + "\x00" + rel
+}
+
+// entitled reports whether the filter was entitled to emit this arrival, and how
+// long the path had been event-free when it did.
+//
+// **This is the property the timing-sensitive tests were asserting by assumption
+// and are now able to assert directly.** S-4.3 is a conditional: *if* a path has
+// gone without an event for the quiet period *and* two samples agree, *then* it
+// settles. A page being written continuously therefore never satisfies the
+// antecedent, and a settle during such a burst is a defect. But "continuously" is
+// a claim about a **test-owned goroutine**, and a goroutine can be descheduled for
+// longer than any quiet period — under `-race`, on a throttled CI runner, for a
+// GC cycle or a slice of steal time. When that happens the antecedent *is*
+// satisfied, the settle is the specified behaviour, and a test that treats the
+// arrival as a failure is reporting the scheduler rather than the filter.
+//
+// The window measured runs from the last event for **this path** to the instant
+// the sink ran. It is a lower bound on what the filter waited, because the filter
+// also spends a sample interval confirming between its first sample and the
+// emission, and may have re-armed more than once. So `false` is sound — the filter
+// emitted without its quiet period, which is the defect — while `true` means only
+// that it was entitled, never that it was prompt.
+func (fx *settleFixture) entitled(seen arrival) (bool, time.Duration) {
+	fx.eventsMu.Lock()
+	last, known := fx.events[eventKey(seen.change.Slug, seen.change.Path)]
+	fx.eventsMu.Unlock()
+
+	if !known {
+		// An arrival for a path this fixture never reported an event for. It
+		// cannot be `Moved` (that names a destination the fixture does deliver
+		// events for) and cannot be explained by a stalled writer, so it is
+		// reported as unentitled rather than guessed about.
+		return false, 0
+	}
+
+	since := seen.at.Sub(last)
+
+	return since >= quietPeriod, since
 }
 
 // write puts a page in a campaign's tree and reports the event the watcher would
@@ -256,7 +343,7 @@ func (fx *settleFixture) write(slug, rel, body string) {
 		fx.t.Fatalf("write %s: %v", rel, err)
 	}
 
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 }
 
 // writeQuietly puts a page in the tree and reports **no** event for it.
@@ -307,7 +394,7 @@ func (fx *settleFixture) tornWrite(slug, rel, body string) {
 	// the arrival channel afterwards.
 	time.Sleep(time.Millisecond)
 
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 
 	if _, err := handle.WriteString(body[half:]); err != nil {
 		fx.t.Fatalf("write the second half of %s: %v", rel, err)
@@ -317,7 +404,7 @@ func (fx *settleFixture) tornWrite(slug, rel, body string) {
 		fx.t.Fatalf("close %s: %v", rel, err)
 	}
 
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 }
 
 // stalledWrite truncates a page in place, produces **no** event for the
@@ -360,12 +447,12 @@ func (fx *settleFixture) stalledWrite(slug, rel, body string, stall time.Duratio
 		fx.t.Fatalf("close %s: %v", rel, err)
 	}
 
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 }
 
 // touch reports an event for a path that already exists.
 func (fx *settleFixture) touch(slug, rel string) {
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 }
 
 // remove deletes a file and reports the event the watcher would deliver.
@@ -377,7 +464,7 @@ func (fx *settleFixture) remove(slug, rel string) {
 		fx.t.Fatalf("remove %s: %v", rel, err)
 	}
 
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 }
 
 // mkdir creates a directory in a campaign's tree and reports its event.
@@ -391,7 +478,7 @@ func (fx *settleFixture) mkdir(slug, rel string) {
 		fx.t.Fatalf("create the directory %s: %v", rel, err)
 	}
 
-	fx.debouncer.Touch(fx.ids[slug], slug, rel)
+	fx.deliver(slug, rel)
 }
 
 // next waits for one settled change.
@@ -409,6 +496,10 @@ func (fx *settleFixture) next() arrival {
 }
 
 // silent asserts that nothing settles within the window.
+//
+// Only sound where no background writer is running: it is a wall-clock claim, and
+// a wall-clock claim about a page that something else is writing is a claim about
+// that writer's scheduling. Use `silentWhileWriting` where one is.
 func (fx *settleFixture) silent(window time.Duration) {
 	fx.t.Helper()
 
@@ -420,13 +511,72 @@ func (fx *settleFixture) silent(window time.Duration) {
 	}
 }
 
+// silentWhileWriting asserts that nothing settles in the window **that the filter
+// was not entitled to settle**, which is the property S-4.3's first mechanism
+// provides and the property a burst test exists to check.
+//
+// It replaces a plain silence window in the tests that run a writer on their own
+// goroutine, and the difference is the whole fix. A plain window assumes the
+// writer never paused for a quiet period; that assumption is about the *test*, it
+// is not enforceable — any goroutine can be descheduled for longer than 40 ms —
+// and when it fails the filter has settled correctly and the test has reported
+// the scheduler. See `entitled`.
+//
+// An entitled arrival neither fails the test nor ends the window: the rest of the
+// window is still worth watching, so the loop continues and a later *unentitled*
+// arrival is still a failure. What a stalled run gives up is coverage, and it says
+// so on the log; what it never does is report a defect that is not there.
+func (fx *settleFixture) silentWhileWriting(window time.Duration) {
+	fx.t.Helper()
+
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+
+	tolerated := 0
+
+	for {
+		select {
+		case seen := <-fx.arrivals:
+			entitled, since := fx.entitled(seen)
+
+			if !entitled {
+				fx.t.Fatalf(
+					"a change settled %s after its last event, which is shorter than the %s "+
+						"quiet period: %s, %d bytes read. A page being written must not settle "+
+						"at all while it is being written",
+					since, quietPeriod, seen.change, len(seen.raw),
+				)
+			}
+
+			tolerated++
+		case <-timer.C:
+			if tolerated > 0 {
+				fx.t.Logf(
+					"%d arrival(s) tolerated: each followed an event-free window of at least "+
+						"the %s quiet period, so this machine paused the writer and S-4.3 "+
+						"required the settle. The rest of the window was still asserted",
+					tolerated, quietPeriod,
+				)
+			}
+
+			return
+		}
+	}
+}
+
 // awaitEvent waits for one logged event with the given name and returns its line.
 //
 // A poll with a deadline, not a sleep: the event is produced by the scheduler
 // goroutine, and the only question is whether it arrives inside the budget. The
 // log line rather than the counter because the line carries the event name and
 // its attributes, which is what S-12.3 is about.
-func (fx *settleFixture) awaitEvent(name string) string {
+//
+// `premise` is the writer whose continuity the awaited event depends on, and it
+// may be nil. When it is not, a pause long enough to satisfy S-4.3's quiet period
+// ends the wait **immediately and by name**: without it, a writer this machine
+// descheduled produces a full `wantArrived` wait and then a message about a
+// missing event, which points at the filter when the cause was the fixture.
+func (fx *settleFixture) awaitEvent(name string, premise *gapRecorder) string {
 	fx.t.Helper()
 
 	deadline := time.Now().Add(wantArrived)
@@ -436,6 +586,21 @@ func (fx *settleFixture) awaitEvent(name string) string {
 		for line := range strings.SplitSeq(fx.logs.String(), "\n") {
 			if strings.Contains(line, needle) {
 				return line
+			}
+		}
+
+		if premise != nil {
+			if longest := premise.longest(); longest >= quietPeriod {
+				fx.t.Fatalf(
+					"the writer went %s between its steps, which is at least the %s quiet period, "+
+						"so the premise this test rests on was void: the page stopped moving, S-4.3 "+
+						"settled it, and no %s event was owed. That is a property of the machine, "+
+						"not of the filter; the log held:\n%s",
+					longest,
+					quietPeriod,
+					name,
+					fx.logs.String(),
+				)
 			}
 		}
 
@@ -452,6 +617,41 @@ func (fx *settleFixture) awaitEvent(name string) string {
 
 		time.Sleep(2 * time.Millisecond)
 	}
+}
+
+// gapRecorder measures the longest interval a background writer left between two
+// of its own steps.
+//
+// It exists for writers that produce **no** events, where `entitled` cannot help:
+// the stuck-writer test appends a byte every few milliseconds without ever calling
+// `Touch`, so the only way to know its premise still holds is to have watched it.
+type gapRecorder struct {
+	mu           sync.Mutex
+	previous     time.Time
+	longestSoFar time.Duration
+}
+
+// mark records a step and folds the interval since the previous one into the
+// longest. The first call establishes the baseline and counts for nothing.
+func (g *gapRecorder) mark() {
+	now := time.Now()
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if !g.previous.IsZero() {
+		g.longestSoFar = max(g.longestSoFar, now.Sub(g.previous))
+	}
+
+	g.previous = now
+}
+
+// longest reports the biggest interval between two consecutive steps.
+func (g *gapRecorder) longest() time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.longestSoFar
 }
 
 // hasEvent reports whether an event with the given name has been logged.
@@ -484,6 +684,12 @@ func (fx *settleFixture) mustBeWhole(seen arrival) {
 // write, and hand the index a page that is half of one write and half of another.
 // With the restart, the burst settles once, at the end, on the last complete
 // version.
+//
+// **The cadence is asserted, not assumed.** "Shorter than the quiet period" is a
+// claim about the interval between two events, and the interval is produced by
+// this test's own goroutine on a machine that may deschedule it — so the property
+// is checked against the event log rather than inferred from a sleep. See
+// `entitled` for why an inferred version of this assertion cannot be sound.
 func TestBurstOfEventsSettlesOnceAndWhole(t *testing.T) {
 	t.Parallel()
 
@@ -493,19 +699,57 @@ func TestBurstOfEventsSettlesOnceAndWhole(t *testing.T) {
 	for version := 1; version <= 12; version++ {
 		fx.tornWrite("burst", rel, pageVersion(version))
 
-		// Half the quiet period: longer than a settle cycle in aggregate and
-		// shorter than the window a settle needs, so every event arrives before
-		// the timer the previous one armed could fire.
-		time.Sleep(quietPeriod / 2)
+		// Half a sample interval, so the gap between two events is around 10ms
+		// against a 40ms quiet period: four times the margin, and still a burst
+		// of roughly 120ms in aggregate, which is longer than the one settle
+		// cycle (quiet period plus two samples, 70ms) that a filter which armed
+		// its timer once would have completed inside.
+		time.Sleep(sampleGap / 2)
 	}
 
-	seen := fx.next()
-	fx.mustBeWhole(seen)
+	// The first arrival carries the property under test, and it is checked as
+	// entitlement rather than as a version: a filter that armed once would settle
+	// *here*, in the middle of the burst, with the path only a few milliseconds
+	// past its last event.
+	first := fx.next()
+	fx.mustBeWhole(first)
 
-	if version := seenVersion(t, seen.raw); version != 12 {
-		t.Fatalf("settled version = %d, want the last one written (12)", version)
+	if entitled, since := fx.entitled(first); !entitled {
+		t.Fatalf(
+			"the burst settled %s after its last event, which is shorter than the %s quiet "+
+				"period: %s, %d bytes read. A filter that armed its timer once and let it run "+
+				"settles mid-burst, and this is that",
+			since, quietPeriod, first.change, len(first.raw),
+		)
 	}
 
+	// Which version the first arrival carries depends on the machine: if the
+	// writer was paused for a whole quiet period part-way through the burst, the
+	// filter was entitled to believe the version on disk at that point, and a
+	// second settle follows the last event. What cannot vary is that some arrival
+	// carries version 12, because the burst's final event is version 12's.
+	if version := seenVersion(t, first.raw); version != 12 {
+		final := fx.next()
+		fx.mustBeWhole(final)
+
+		if entitled, since := fx.entitled(final); !entitled {
+			t.Fatalf(
+				"the burst settled %s after its last event, which is shorter than the %s quiet "+
+					"period: %s, %d bytes read",
+				since, quietPeriod, final.change, len(final.raw),
+			)
+		}
+
+		if settled := seenVersion(t, final.raw); settled != 12 {
+			t.Fatalf(
+				"the burst settled version %d and then %d, want the last one written (12)",
+				version, settled,
+			)
+		}
+	}
+
+	// Past the last event there is nothing left to write, so a plain silence
+	// window is sound here and asserts what it says: the burst settled once.
 	fx.silent(wantSilence)
 }
 
@@ -605,6 +849,16 @@ func TestSingleWriteSettlesExactlyOnce(t *testing.T) {
 //
 // The load is a burst whose events are closer together than the quiet period, so
 // campaign A's page is never settled for as long as the burst runs.
+//
+// **"Closer together than the quiet period" is checked, not assumed.** The interval
+// between two of the noise generator's events is produced by a goroutine on a
+// machine that may deschedule it, and this test has now failed here twice for that
+// reason alone — once at `0 bytes read`, which is ADR 0037's zero-length settle,
+// and once at `4196 bytes read`, which is `pageVersion(100)`, the very first
+// version this generator writes. Both are the same event: the writer stopped for
+// longer than the quiet period, the size held, and S-4.3 settled it correctly. So
+// the assertion below is about entitlement rather than about the clock. See
+// `entitled`.
 func TestTwoCampaignsDoNotInterfere(t *testing.T) {
 	t.Parallel()
 
@@ -653,8 +907,11 @@ func TestTwoCampaignsDoNotInterfere(t *testing.T) {
 		t.Fatalf("settled version = %d, want the quiet campaign's (1)", version)
 	}
 
-	// A's page never settled during all of that, so nothing of A's is waiting.
-	fx.silent(wantSilence)
+	// A's page settled nothing the filter was not entitled to settle. On a machine
+	// that keeps the generator running this is the silence the comment above
+	// describes; on one that does not, it is the arrivals the generator's pause
+	// explains, and those are S-4.3 doing its job rather than a defect.
+	fx.silentWhileWriting(wantSilence)
 }
 
 // The size-stable confirmation gates: a path whose size changes between the two
@@ -809,7 +1066,7 @@ func TestAnEmptyPageSettlesAndIsReported(t *testing.T) {
 	// the only place a writer stalled between its `open` and its `write` leaves a
 	// trace, and the settle is what says the trace was a slow writer rather than a
 	// blank note.
-	line := fx.awaitEvent(string(observability.EventContentStableReadTimeout))
+	line := fx.awaitEvent(string(observability.EventContentStableReadTimeout), nil)
 	if !strings.Contains(line, `"path":"`+rel+`"`) {
 		t.Errorf("the settled empty page reported a timeout for another path: %s", line)
 	}
@@ -824,6 +1081,14 @@ func TestAnEmptyPageSettlesAndIsReported(t *testing.T) {
 // must **not** receive the path, because "the confirmation gave up" and "the
 // confirmation succeeded" are different findings and emitting on the first is how
 // a stuck writer becomes silent data loss.
+//
+// **The writer's continuity is watched, not assumed.** This is the one test whose
+// writer delivers no events at all, so `entitled` cannot speak for it: if this
+// machine pauses the appender for a whole quiet period, the size holds across both
+// samples, S-4.3 settles the page, and no timeout is owed. That is the third way
+// this file's timing assumptions have been mistaken for properties of the filter,
+// and `gapRecorder` turns it into a named failure at the moment it happens rather
+// than a `wantArrived` wait followed by a complaint about a missing event.
 func TestStableReadTimeoutWhenTheSizeNeverSettles(t *testing.T) {
 	t.Parallel()
 
@@ -834,6 +1099,8 @@ func TestStableReadTimeoutWhenTheSizeNeverSettles(t *testing.T) {
 
 	stop := make(chan struct{})
 	finished := make(chan struct{})
+
+	var gaps gapRecorder
 
 	// One byte every few milliseconds, and no event after the first: the quiet
 	// period expires, the confirmation starts, and every pair of samples
@@ -862,6 +1129,8 @@ func TestStableReadTimeoutWhenTheSizeNeverSettles(t *testing.T) {
 			}
 
 			handle.Close()
+
+			gaps.mark()
 		}
 	}()
 
@@ -870,7 +1139,7 @@ func TestStableReadTimeoutWhenTheSizeNeverSettles(t *testing.T) {
 		<-finished
 	})
 
-	line := fx.awaitEvent(string(observability.EventContentStableReadTimeout))
+	line := fx.awaitEvent(string(observability.EventContentStableReadTimeout), &gaps)
 	if !strings.Contains(line, `"campaign_id":"`+strconv.FormatInt(fx.ids["stuck"], 10)+`"`) {
 		t.Errorf("the timeout event carries no campaign_id: %s", line)
 	}
@@ -881,6 +1150,14 @@ func TestStableReadTimeoutWhenTheSizeNeverSettles(t *testing.T) {
 
 	// The confirmation gave up rather than succeeded: nothing was emitted, and
 	// nothing will be while the file keeps moving without an event.
+	//
+	// **A plain silence window, deliberately, and not `silentWhileWriting`.** This
+	// writer delivers no events after the first, so every arrival here is trivially
+	// entitled — `entitled` measures the distance from the last *event*, and there
+	// is none — and the entitlement form would tolerate every arrival and assert
+	// nothing. Any arrival at all is the defect. The machine's ability to pause
+	// this writer is caught above instead, by `awaitEvent`'s premise check, which
+	// names the cause rather than waiting out the deadline.
 	fx.silent(wantSilence)
 }
 
@@ -998,8 +1275,8 @@ func TestMovedSettlesOneRename(t *testing.T) {
 
 	// Both moves, one after the other: the first destination settles while the
 	// second is still pending, and neither source may be reported as a deletion.
-	fx.debouncer.Moved(fx.ids["moves"], "moves", "before.md", "after.md")
-	fx.debouncer.Moved(fx.ids["moves"], "moves", "folder", "folder-renamed")
+	fx.deliverMove("moves", "before.md", "after.md")
+	fx.deliverMove("moves", "folder", "folder-renamed")
 
 	moved := make(map[string]string)
 

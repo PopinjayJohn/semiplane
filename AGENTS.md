@@ -470,6 +470,21 @@ resolves two conflicts inside the UI record.
   expiry *does* settle, as `outcomeSettledEmpty`, because a blank note is a
   legitimate page.
   [0037](docs/content/en/decisions/0037-zero-bytes-is-not-a-stable-size.md)
+- **The converse holds too: a non-zero size that holds *is* stable, so a writer that
+  stops for a whole quiet period has its page settled whole — and the test suite must be
+  able to tell that from a premature settle.** Three tests used to assert that a
+  continuously written page *never* settles, which is a claim about the fixture's own
+  goroutine rather than about the filter. The same assertion failed CI twice, at `0
+  bytes` and then at `4196 bytes`, and the filter was right both times: `4196` is
+  `len(pageVersion(100))`, the first version the noise generator writes, so the arrival
+  could only have come from the generator pausing. **The fixture now records when it
+  delivered each event and judges every arrival by entitlement** — an event-free window at
+  least as long as the quiet period. Unentitled is a defect and fails on any machine;
+  entitled is S-4.3 doing its job, and is logged rather than hidden. `silent` is sound
+  only where no background writer is running; where one is, `silentWhileWriting`. Each
+  assertion was verified by mutation, and the mutation removing the quiet period *and*
+  the confirmation reproduces the reported CI failure verbatim with the cause attached.
+  [0040](docs/content/en/decisions/0040-a-settle-is-judged-by-entitlement.md)
 - **A gate test that cannot fail is not a gate.** Every rule added in phase 5 was
   checked by mutation: remove the import, lower `--target-min`, wrap a TV rule
   in a `min-width` band, drop a field from a conversion. Three of the first

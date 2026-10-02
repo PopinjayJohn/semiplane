@@ -30,7 +30,7 @@ func TestSessionRoundTrip(t *testing.T) {
 		TokenHash: hash,
 		UserID:    user.ID,
 		CreatedAt: pinnedTime(),
-		ExpiresAt: pinnedTime().Add(sessionLifetime),
+		ExpiresAt: time.Now().Add(sessionLifetime),
 	}
 
 	created, err := db.CreateSession(t.Context(), want)
