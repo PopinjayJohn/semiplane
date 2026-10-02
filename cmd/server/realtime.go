@@ -91,20 +91,41 @@ import (
 // resolver and this value with it.
 const coreSystemID = "core"
 
-// coreRulesetVersion is the fingerprint half `realtime.Core` version-checks
-// against.
+// coreRulesetVersion is the version string the inert `realtime.Core` reports and
+// the one half of the fingerprint that is about the resolver.
 //
-// Empty is honest and load-bearing in a specific way. `Core.Resolve` compares the
-// frame's `ruleset` against this string *before* answering, so a client that sends
-// no version is told to refresh rather than refused for an unknown op — which is
-// the one behaviour that makes an inert system usable at all, since it resolves
-// nothing and every other answer it could give is a refusal.
+// It is **not** the campaign's `ruleset_version` column value. That is the encoded
+// `sp1:` string the *gate* compares, produced by `FingerprintOf` from a registered
+// descriptor, and the two being different values is the point: a campaign written
+// under one ruleset and this process's resolver are two separate questions, and
+// collapsing them into one constant would make the gate compare a campaign against
+// a value that describes the server rather than the game.
 //
-// It is deliberately **not** a valid `realtime.Fingerprint` encoding. The gate's
-// expected fingerprint below is a separate value, computed from the *campaign's*
-// registered descriptor; see `expectedFingerprint` for why the two are different
-// values rather than one constant.
-const coreRulesetVersion = ""
+// `p7` for "phase 7". It changes when the resolver's semantics do, and it does not
+// change when the inert core gains an operation — because S-7.7's fingerprint is
+// about the **meaning** of a persisted mutation, and an operation the resolver
+// still refuses is not a change in meaning. Phase 8 replaces the constant with the
+// gameplay system's own `RulesetVersion`.
+const coreRulesetVersion = "p7"
+
+// coreBasePackVersion is the base data pack the inert core resolves against.
+//
+// Present because `Fingerprint.validate` refuses an empty base pack, and for a
+// good reason stated in `ruleset.go`: a fingerprint naming no ruleset is
+// indistinguishable from "written under no particular ruleset", which is a
+// *different* answer with different consequences — one is a campaign this build
+// knows, the other is a campaign with nothing to compare against.
+//
+// Also `p7`, and for the same reason. The inert core ships no packs, and the
+// honest way to say "no packs yet" in a schema where the component is mandatory is
+// a placeholder that changes with the resolver rather than an empty string, which
+// the validator reads as an absent fingerprint.
+//
+// The overlay is **empty** and that is a real value, not a gap: `validate` exempts
+// it because architecture §10.4 makes a standalone pack a first-class shape. An
+// empty overlay is how this build says "this system ships one pack", and a phase 8
+// build that ships two names both.
+const coreBasePackVersion = "p7"
 
 // realtimePlane is the assembled plane, held as one value so the composition root
 // and the shutdown path both name one thing rather than four.
@@ -145,8 +166,8 @@ func newRealtimePlane(
 
 	// 1. The state registry. Over the two closures below, and nothing else.
 	states := realtime.NewRegistry(ctx, realtime.Config{
-		Write: realtimeWriter(backing),
-		Read:  realtimeReader(backing),
+		Write:  realtimeWriter(backing),
+		Read:   realtimeReader(backing),
 		Record: writes.Record,
 	})
 
@@ -199,11 +220,12 @@ func newPlayRoute(hub *realtime.Hub, logger *slog.Logger) *play.Handler {
 // reserved separator is refused, which is the failure a hand-written string would
 // defer until a campaign tried to resume.
 //
-// The pack versions are empty because the inert core ships none, and
-// `Fingerprint.validate` accepts an empty **overlay** only — so this is the one
-// descriptor the package accepts for a standalone system. A phase 8 build names
-// both, and the boot pass in `resumeCampaignStates` is what reports the campaigns
-// the new fingerprint strands.
+// The pack versions are named even though the inert core ships none, because
+// `Fingerprint.validate` requires a base pack and accepts an empty **overlay**
+// only — so this is the one descriptor shape the package accepts for a standalone
+// system. A phase 8 build names its own, and the boot pass in
+// `resumeCampaignStates` is what reports the campaigns the new fingerprint
+// strands.
 //
 // An impossible error, therefore. `FingerprintOf` is called with constants this
 // file owns and whose validity is asserted by the round-trip test below, so there
@@ -214,7 +236,7 @@ func expectedFingerprint() realtime.Fingerprint {
 	fingerprint, err := realtime.FingerprintOf(realtime.Descriptor{
 		System:      coreSystemID,
 		Ruleset:     coreRulesetVersion,
-		BasePack:    coreRulesetVersion,
+		BasePack:    coreBasePackVersion,
 		OverlayPack: coreRulesetVersion,
 	})
 	if err != nil {
@@ -477,28 +499,28 @@ func errorClass(err error) string {
 //
 // # The order, and why each step is where it is
 //
-//	hub.Close  →  registry.Close  →  store.Close
+//		hub.Close  →  registry.Close  →  store.Close
 //
-//  1. **The hub first.** `Hub.Close` ends every peer, stops the sweeper, and then
-//     closes the state registry itself (`hub.go`'s header states that it does).
-//     So the hub is also the *outer* half of the registry's shutdown, and calling
-//     the registry's close first would flush live states underneath peers that are
-//     still connected — a peer could still broadcast into a state that had already
-//     been flushed and closed.
+//	 1. **The hub first.** `Hub.Close` ends every peer, stops the sweeper, and then
+//	    closes the state registry itself (`hub.go`'s header states that it does).
+//	    So the hub is also the *outer* half of the registry's shutdown, and calling
+//	    the registry's close first would flush live states underneath peers that are
+//	    still connected — a peer could still broadcast into a state that had already
+//	    been flushed and closed.
 //
-//  2. **The registry second, explicitly.** `Hub.Close` already closes it, and
-//     `Registry.Close` is idempotent-by-design in the sense that a second close
-//     flushes nothing and stops nothing, so this call is about the *order being
-//     stated* rather than about work being done. It is here because the ordering
-//     hazard this file's whole header is about is one a reader has to be able to
-//     check by reading one function, and "the hub closes the registry" is a fact
-//     about another package's implementation rather than a fact about this one.
+//	 2. **The registry second, explicitly.** `Hub.Close` already closes it, and
+//	    `Registry.Close` is idempotent-by-design in the sense that a second close
+//	    flushes nothing and stops nothing, so this call is about the *order being
+//	    stated* rather than about work being done. It is here because the ordering
+//	    hazard this file's whole header is about is one a reader has to be able to
+//	    check by reading one function, and "the hub closes the registry" is a fact
+//	    about another package's implementation rather than a fact about this one.
 //
-//  3. **The store last**, in `runServer`'s own deferred close, because every
-//     writer in the process is a queue over that handle and the flush in step 2
-//     runs on the queue. Closing the handle first would abandon an in-flight
-//     `campaign_state` write mid-statement, and SQLite would roll it back while the
-//     caller was told it succeeded.
+//	 3. **The store last**, in `runServer`'s own deferred close, because every
+//	    writer in the process is a queue over that handle and the flush in step 2
+//	    runs on the queue. Closing the handle first would abandon an in-flight
+//	    `campaign_state` write mid-statement, and SQLite would roll it back while the
+//	    caller was told it succeeded.
 //
 // # `context.WithoutCancel`, and why it is not optional
 //
