@@ -951,10 +951,20 @@ func TestReferencesResolveToAddressesInsideTheCampaign(t *testing.T) {
 
 	document := fixed.get("/c/greyhaven/wiki/Vault", gmRequestor()).Body.String()
 
+	// The three forms, spelled in full because the whole point of this test is
+	// that they differ: an `a` with an address, an `img` for an asset, and a
+	// `span` with a reason in `title` rather than a link out of the campaign.
+	//
+	// `class="wikilink target"` rather than `class="wikilink"` because
+	// `content`'s `.target` pass (ADR 0037) appends its token to every focusable
+	// element in the page body before this route attaches anything — so the
+	// anchor carries both, and the `span` refusal carries it too even though a
+	// `span` is not focusable and the class is inert on it.
 	for _, want := range []string{
-		`<a class="wikilink" data-ext="wikilink" data-ref-index="0" href="/c/greyhaven/wiki/Goblin">Goblin</a>`,
+		`<a class="wikilink target" data-ext="wikilink" data-ref-index="0" ` +
+			`href="/c/greyhaven/wiki/Goblin">Goblin</a>`,
 		`<img src="/c/greyhaven/assets/map.png" alt="map.png"`,
-		`<span class="wikilink" data-ext="wikilink" data-ref-index="2" ` +
+		`<span class="wikilink target" data-ext="wikilink" data-ref-index="2" ` +
 			`title="This link points outside the campaign.">Elsewhere</span>`,
 	} {
 		if !strings.Contains(document, want) {

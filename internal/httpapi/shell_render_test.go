@@ -159,8 +159,42 @@ func auditedRoutes(t *testing.T) []renderedRoute {
 		renderRoute(t, emptyHandler, "/ (first run: no campaigns)", emptyCookie, "/"),
 		routeFromRecorder("/login (anonymous)", anonymous),
 		routeFromRecorder("/login (a rejected credential)", rejected),
+		// A fixture carrying **two** `search` landmarks, so the rule the landmark
+		// case states — that the header's form and the search route's own form
+		// are named differently — is actually exercised.
+		//
+		// Without it the `case "search"` branch is unreachable: no audited route
+		// renders a second search landmark, so an assertion in it can be wrong in
+		// either direction and nothing notices. That is not a hypothetical: the
+		// first version of this fix asserted one literal name instead of a set,
+		// which would have failed the search route's own landmark the moment that
+		// route landed, and which no mutation could catch because the branch never
+		// ran. A rule with no reachable instance is not a rule.
+		{
+			where: "a document carrying both search landmarks",
+			body:  []byte(searchLandmarkFixture),
+		},
 	}
 }
+
+// searchLandmarkFixture is a minimal document carrying the header's search form
+// and a search route's own, each named as the design record fixes them.
+//
+// Hand-written rather than rendered from a route on purpose: it is the *pair* the
+// rule is about, and no single route renders both. Keeping it here means the
+// landmark audit has an instance of the case it asserts regardless of which
+// routes are wired.
+// It carries a skip link and `.target` on every focus stop, because the fixture
+// is audited by **every** §10.2 rule and not only the landmark one: a fixture that
+// violates three unrelated rules fails the audit three times and buries the
+// assertion it was written for. That is what happened the first time.
+const searchLandmarkFixture = `<!doctype html>
+<html lang="en"><head><title>Fixture</title></head><body>
+<a class="skip-link target" href="#main">Skip to content</a>
+<header role="banner"><form role="search" aria-label="Search pages"><input class="target" type="search" name="q"/></form></header>
+<main id="main" class="target" tabindex="-1"><h1>Fixture</h1>
+<form role="search" aria-label="Search this campaign"><input class="target" type="search" name="q"/></form>
+</main></body></html>`
 
 // renderRoute GETs a path through a handler with a cookie.
 func renderRoute(
@@ -744,6 +778,24 @@ func assertLandmarks(t failer, audit *audit) {
 	// tier decision the stylesheet makes and the markup does not.
 	allowedNavigation := map[string]bool{"Campaign": true, "Primary": true}
 
+	// searchLandmarkNames are the two `role="search"` landmark labels the design
+	// record's own zones fix: the header's persistent form, and the search route's
+	// form for the campaign being searched.
+	//
+	// A set rather than one name, because a document may carry either or both and
+	// §7.2's requirement is that they are *distinct* — a rule about the pair, not
+	// about either one. Asserting a single literal tests the pair by naming a member.
+	searchLandmarkNames := []string{"Search pages", "Search this campaign"}
+
+	allowedSearch := func() map[string]bool {
+		allowed := make(map[string]bool, len(searchLandmarkNames))
+		for _, name := range searchLandmarkNames {
+			allowed[name] = true
+		}
+
+		return allowed
+	}()
+
 	for _, region := range found {
 		switch region.role {
 		case "navigation":
@@ -760,13 +812,25 @@ func assertLandmarks(t failer, audit *audit) {
 		case "search":
 			// The header's search form and the search route's own form are both
 			// `search` landmarks, and §7.2's rule for them is the rule for two
-			// navigations: they must not share a name. The header's is "Search
-			// pages" by name, and the distinctness assertion below is what
-			// catches a collision with the centre's.
-			if region.label != "Search pages" {
-				t.Errorf("%s: a search landmark is labelled %q, want %q; §7.2 names the "+
-					"header's so it cannot collide with the search route's own form",
-					audit.where, region.label, "Search pages")
+			// navigations: they must not share a name.
+			//
+			// A **set** of the two names, not one of them. Asserting a single
+			// literal would have made the search route's own landmark a false
+			// failure the moment the route landed — which is exactly what a gate
+			// that encodes one caller's answer instead of the rule does: it fails
+			// on correct work, and the fix a tired author reaches for is to delete
+			// the assertion.
+			//
+			// What is actually required is that the name is one of the agreed ones
+			// **and** that it is distinct from the other `search` landmark on the
+			// same page. Distinctness is asserted below, over every landmark, so it
+			// holds here without this case restating it.
+			if !allowedSearch[region.label] {
+				t.Errorf("%s: a search landmark is labelled %q; UI §7.2 requires the "+
+					"header's form and the search route's own form to be named "+
+					"differently from each other, and those are the two names the "+
+					"design record fixes: %v",
+					audit.where, region.label, searchLandmarkNames)
 			}
 		case "banner", "contentinfo", "main":
 		default:
