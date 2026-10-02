@@ -81,7 +81,12 @@ appear nowhere in the interface.
   by path prefix. A file watch does not survive an atomic rename.
 - **S-4.3** Partial-write safety: per-path debounce with the timer reset on each event, **plus**
   size-stable confirmation across two `stat` samples. Time-debounce alone is documented as
-  unreliable.
+  unreliable. **Zero bytes is not a stable size**: it is the state every in-place write *starts*
+  in, so a page holding nothing is re-armed as though an event had arrived and is settled only
+  once it has stayed that way for the whole settle budget — and then reported as
+  `content.stable_read_timeout` as well as settled, because a blank note is legitimate and a
+  stalled writer is not.
+  See [0037]({{ "decisions/0037-zero-bytes-is-not-a-stable-size/" | relURL }}).
 - **S-4.4** Symlinks in a content tree are **rejected by default**.
 - **S-4.5** Watch-limit exhaustion logs an **error**, never a debug line, and falls back to
   periodic full rescan. A missing content root marks the campaign `degraded` and the server

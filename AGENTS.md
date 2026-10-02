@@ -350,6 +350,21 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
 - **Obsidian Sync is untrusted input.** Shared vaults, community plugins, compromised devices.
   Validate all YAML — front matter is attacker-reachable — and resolve all paths inside
   `os.Root`.
+- **A page's `title:` is not redacted, and must not hold a secret.** S-5.11 and migration 0007's
+  comment both scope redaction to `body_plain`, because a title is one line of front matter with no
+  callout structure and therefore **no boundary to redact to** — a rule that stripped titles would have
+  to guess at which words are secret, and a guess that fires breaks a real title while a guess that
+  misses leaks the secret. `pages.title` is indexed verbatim, and it is served in three places: the
+  **search index**, the **nav tree**, and the **`<h1>`**. A `[!secret]` body is protected by its page's
+  access gate; the title of that page appears in a result list a different reader can see. Verified
+  live: `title: The passphrase is hunter2` lands in `pages.title` in every reveal state.
+  [0036](docs/content/en/decisions/0036-page-titles-are-not-redacted.md)
+- **Every gate response is `private, no-store`.** `writeError` in `internal/httpapi/campaigns` answers
+  404/401/403, and every one of those is **reader-dependent**: the same URL is a 404 for an anonymous
+  requestor and a 200 for a member, because S-8 answers "no access" without saying why. Nothing in the
+  body distinguishes them — deliberately, so the status cannot become an existence oracle — which is
+  exactly what makes the response unsafe to store. A reverse proxy in front of a self-hosted instance is
+  the ordinary deployment, and one that cached an anonymous 404 would serve it to an entitled member.
 - **Secret redaction is omission, not hiding.** Not `display:none`, not a comment, not a class.
   The callout is removed entirely, before sanitisation and before any template sees it.
 - **The `ETag` is salted with `include_secrets`.** A GM response and a player response must
