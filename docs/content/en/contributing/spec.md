@@ -86,7 +86,11 @@ appear nowhere in the interface.
   once it has stayed that way for the whole settle budget — and then reported as
   `content.stable_read_timeout` as well as settled, because a blank note is legitimate and a
   stalled writer is not.
-  See [0037]({{ "decisions/0037-zero-bytes-is-not-a-stable-size/" | relURL }}).
+  **A non-zero size that holds is stable**, so a writer that stops for a whole quiet period has its
+  page settled whole: a writer which stopped is a writer which finished, and the test suite must
+  distinguish that from a premature settle rather than reporting both as failure.
+  See [0037]({{ "decisions/0037-zero-bytes-is-not-a-stable-size/" | relURL }}),
+  [0040]({{ "decisions/0040-a-settle-is-judged-by-entitlement/" | relURL }}).
 - **S-4.4** Symlinks in a content tree are **rejected by default**.
 - **S-4.5** Watch-limit exhaustion logs an **error**, never a debug line, and falls back to
   periodic full rescan. A missing content root marks the campaign `degraded` and the server

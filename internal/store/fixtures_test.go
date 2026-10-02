@@ -97,6 +97,15 @@ func tokenHash(label string) string {
 
 // pinnedTime is a fixed instant, used where a test needs a timestamp it can state
 // rather than one it has to discover.
+//
+// **Never add a lifetime to it.** It is an absolute instant, so `pinnedTime().Add(d)`
+// is absolute too, and it stops being in the future at a fixed wall-clock moment
+// rather than after `d`. `TestSessionRoundTrip` did exactly that and failed on
+// every run from 2026-10-02 12:00 UTC onward — not intermittently, and not on
+// anyone's machine but everyone's — because `SessionByTokenHash` filters on
+// `expires_at > ?` against the real clock. Anything whose value is compared to
+// the present derives from `time.Now()` instead, as the eleven other session
+// fixtures here already do.
 func pinnedTime() time.Time {
 	return time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
 }
