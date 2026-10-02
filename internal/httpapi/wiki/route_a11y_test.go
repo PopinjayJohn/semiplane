@@ -1,5 +1,17 @@
 package wiki_test
 
+// The five helpers below carry a `route` prefix because `audit_test.go`, merged in
+// #33, declares `parseDocument`, `hasAttribute`, `textOf`, `nodePath` and
+// `retiredEntities` for the same job. Both files need their own: this file's
+// assertions take a `*docAudit`, which carries the `*testing.T` and the failure
+// counter, while `audit_test.go`'s helpers take and return the bare parsed node.
+//
+// The collision is resolved in the file that had not merged, deliberately.
+// Renaming a helper in code that is already on `main` to accommodate a change that
+// is not yet is how a merge turns into a diff nobody reviewed, and the whole
+// point of the suffix is that the two sets can now coexist in one package rather
+// than one of them being deleted.
+
 // UI §10.2 and §10.6 for `GET /c/{slug}/wiki/{path...}`, gate-blocking.
 //
 // # Why this file exists and why it is here rather than in `internal/httpapi`
@@ -76,13 +88,13 @@ import (
 	"github.com/semiplane/semiplane/internal/web/components"
 )
 
-// retiredEntities is UI §1.2's closed vocabulary. Neither entity exists, a
+// retiredWords is UI §1.2's closed vocabulary. Neither entity exists, a
 // leftover is a bug, and a grep for them is a test — which is this.
 //
 // Case-insensitive and a substring, because the failure being guarded against is a
 // noun phrase inside a sentence ("your session has expired", "the world map"), and
 // neither is spelled with a capital letter in isolation.
-var retiredEntities = []string{"world", "session"}
+var retiredWords = []string{"world", "session"}
 
 // richPage is the page every 200 in the list below serves.
 //
@@ -297,8 +309,8 @@ type docAudit struct {
 	root   *html.Node
 }
 
-// parseDocument parses an audited response, aborting when it is not HTML.
-func parseDocument(t *testing.T, doc renderedDocument) *docAudit {
+// parseRouteDocument parses an audited response, aborting when it is not HTML.
+func parseRouteDocument(t *testing.T, doc renderedDocument) *docAudit {
 	t.Helper()
 
 	if !strings.Contains(strings.ToLower(string(doc.body)), "<html") {
@@ -317,7 +329,7 @@ func parseDocument(t *testing.T, doc renderedDocument) *docAudit {
 
 // parseFixture parses a minimal document written to trip one rule.
 //
-// Separate from `parseDocument` because a fixture is not a response: it has no
+// Separate from `parseRouteDocument` because a fixture is not a response: it has no
 // route, no status and no headers, and the rule under test should be the only
 // thing wrong with it.
 func parseFixture(t *testing.T, body string) *html.Node {
@@ -383,15 +395,15 @@ func isFocusStop(node *html.Node) bool {
 	case "button", "input", "select", "textarea", "summary":
 		return true
 	case "a":
-		return hasAttribute(node, "href")
+		return routeHasAttribute(node, "href")
 	default:
-		return hasAttribute(node, "tabindex")
+		return routeHasAttribute(node, "tabindex")
 	}
 }
 
 // attr returns an attribute's value, or "" when it is absent.
 //
-// The two are distinguished by `hasAttribute`, because `aria-label=""` names a
+// The two are distinguished by `routeHasAttribute`, because `aria-label=""` names a
 // landmark nothing and §10.2 counts that as unlabelled — a helper returning "" for
 // both would let both through one assertion.
 func attr(node *html.Node, name string) string {
@@ -408,8 +420,8 @@ func attr(node *html.Node, name string) string {
 	return ""
 }
 
-// hasAttribute reports whether an attribute is present, whatever its value.
-func hasAttribute(node *html.Node, name string) bool {
+// routeHasAttribute reports whether an attribute is present, whatever its value.
+func routeHasAttribute(node *html.Node, name string) bool {
 	if node == nil {
 		return false
 	}
@@ -481,12 +493,12 @@ func byID(root *html.Node, id string) *html.Node {
 	return found
 }
 
-// nodePath names an element for a failure message: its nearest four ancestors,
+// routeNodePath names an element for a failure message: its nearest four ancestors,
 // innermost first, each labelled by id, test hook or first class.
 //
 // Innermost first and truncated, because a document's full ancestry is a paragraph
 // long and a message nobody reads is a message nobody acts on.
-func nodePath(node *html.Node) string {
+func routeNodePath(node *html.Node) string {
 	parts := []string{}
 
 	for current := node; current != nil && current.Type == html.ElementNode; current = current.Parent {
@@ -545,13 +557,13 @@ func roleOf(node *html.Node) string {
 	}
 }
 
-// textOf returns an element's descendant **text nodes**.
+// routeTextOf returns an element's descendant **text nodes**.
 //
 // Text nodes only: an `alt` or a `title` is text a reader hears but it is not in
 // the text content, and the vocabulary rule below reaches attributes through its
 // own attribute scan — a helper that returned attributes too would make "no label
 // mentions X" and "no attribute mentions X" the same assertion.
-func textOf(node *html.Node) string {
+func routeTextOf(node *html.Node) string {
 	var out strings.Builder
 
 	var walk func(*html.Node)
@@ -613,7 +625,7 @@ func namingMechanism(node *html.Node) string {
 		return "aria-label"
 	}
 
-	if hasAttribute(node, "aria-labelledby") {
+	if routeHasAttribute(node, "aria-labelledby") {
 		return "aria-labelledby"
 	}
 
@@ -630,7 +642,7 @@ func accessibleName(a *docAudit, node *html.Node) string {
 
 	for id := range strings.FieldsSeq(attr(node, "aria-labelledby")) {
 		if target := byID(a.root, id); target != nil {
-			parts = append(parts, strings.TrimSpace(textOf(target)))
+			parts = append(parts, strings.TrimSpace(routeTextOf(target)))
 		}
 	}
 
@@ -661,7 +673,7 @@ func (a *docAudit) skipLinks() []skipLink {
 		}
 
 		found = append(found, skipLink{
-			text: strings.TrimSpace(textOf(node)),
+			text: strings.TrimSpace(routeTextOf(node)),
 			href: attr(node, "href"),
 			node: node,
 		})
@@ -716,7 +728,7 @@ func TestEveryRouteSatisfiesTheStructuralContract(t *testing.T) {
 		t.Run(doc.where, func(t *testing.T) {
 			t.Parallel()
 
-			audit := parseDocument(t, doc)
+			audit := parseRouteDocument(t, doc)
 
 			t.Run("ExactlyOneH1", func(t *testing.T) {
 				assertExactlyOneH1(t, audit)
@@ -773,7 +785,7 @@ func assertExactlyOneH1(t auditFailer, audit *docAudit) {
 
 	names := make([]string, 0, len(headings))
 	for _, heading := range headings {
-		names = append(names, nodePath(heading))
+		names = append(names, routeNodePath(heading))
 	}
 
 	t.Errorf("%s: the document has %d <h1> elements, want exactly 1 (UI §10.2, "+
@@ -805,7 +817,7 @@ func assertHeadingLevelsNeverSkip(t auditFailer, audit *docAudit) {
 		if previous != 0 && level > previous+1 {
 			t.Errorf("%s: a heading jumps from h%d to h%d at %s; a skipped level is "+
 				"announced as a missing section (UI §7.2)",
-				audit.where, previous, level, nodePath(node))
+				audit.where, previous, level, routeNodePath(node))
 		}
 
 		previous = level
@@ -874,7 +886,7 @@ func assertLandmarksArePresentAndDistinguishing(t auditFailer, audit *docAudit) 
 				t.Errorf("%s: the %s landmark at %s is labelled by %s; §10.2 requires "+
 					"distinguishing labels, and an unnamed landmark cannot be told from "+
 					"another of the same role (UI §7.2)",
-					audit.where, region.role, nodePath(region.node), region.namedBy)
+					audit.where, region.role, routeNodePath(region.node), region.namedBy)
 			}
 		case "banner", "contentinfo":
 		default:
@@ -940,17 +952,17 @@ func assertLandmarksArePresentAndDistinguishing(t auditFailer, audit *docAudit) 
 		if first, duplicate := seen[key]; duplicate {
 			t.Errorf("%s: two %s landmarks are both labelled %q (%s and %s); §10.2 "+
 				"requires distinguishing labels or landmark navigation is useless",
-				audit.where, region.role, region.name, first, nodePath(region.node))
+				audit.where, region.role, region.name, first, routeNodePath(region.node))
 		}
 
-		seen[key] = nodePath(region.node)
+		seen[key] = routeNodePath(region.node)
 	}
 
 	for _, region := range found {
 		if region.role == "contentinfo" && hasAncestor(region.node, "main") {
 			t.Errorf("%s: a contentinfo landmark is inside <main> at %s; it is the "+
 				"page's footer, not the article's (UI §7.2)",
-				audit.where, nodePath(region.node))
+				audit.where, routeNodePath(region.node))
 		}
 	}
 }
@@ -981,7 +993,7 @@ func assertNoPositiveTabindex(t auditFailer, audit *docAudit) {
 		if err != nil {
 			t.Errorf("%s: %s carries tabindex=%q, which is not an integer; three "+
 				"browsers would disagree about the tab order (UI §10.2, §7.2)",
-				audit.where, nodePath(node), raw)
+				audit.where, routeNodePath(node), raw)
 
 			return
 		}
@@ -990,7 +1002,7 @@ func assertNoPositiveTabindex(t auditFailer, audit *docAudit) {
 			t.Errorf("%s: %s carries tabindex=%d; only -1 is permitted. 0 moves the "+
 				"element to the front of the tab order while the markup still reads "+
 				"in document order (UI §10.2, §7.4)",
-				audit.where, nodePath(node), value)
+				audit.where, routeNodePath(node), value)
 		}
 	})
 }
@@ -1041,7 +1053,7 @@ func assertNoInlineOutlineSuppression(t auditFailer, audit *docAudit) {
 					"prohibit removing a focus indicator without a visible replacement, "+
 					"and this stylesheet's replacement is the two-tone ring rather than "+
 					"a suppression. Nothing on this element puts one back",
-					audit.where, nodePath(node), strings.TrimSpace(value))
+					audit.where, routeNodePath(node), strings.TrimSpace(value))
 			default:
 			}
 		}
@@ -1070,13 +1082,13 @@ func assertNoAriaHiddenOnAFocusStop(t auditFailer, audit *docAudit) {
 		if isFocusStop(node) {
 			t.Errorf("%s: %s is focusable and aria-hidden; a control a screen reader "+
 				"cannot see is one that reader cannot reach (UI §10.2, §7.10)",
-				audit.where, nodePath(node))
+				audit.where, routeNodePath(node))
 		}
 
 		if containsFocusStop(node) {
 			t.Errorf("%s: %s is aria-hidden and contains focusable elements, so "+
 				"everything inside it is unreachable to a screen reader (UI §7.10)",
-				audit.where, nodePath(node))
+				audit.where, routeNodePath(node))
 		}
 
 		for ancestor := node.Parent; ancestor != nil; ancestor = ancestor.Parent {
@@ -1085,7 +1097,7 @@ func assertNoAriaHiddenOnAFocusStop(t auditFailer, audit *docAudit) {
 				t.Errorf("%s: %s is inside the aria-hidden subtree at %s, which contains "+
 					"focusable elements; everything focusable inside it is unreachable to "+
 					"a screen reader (UI §7.10)",
-					audit.where, nodePath(node), nodePath(ancestor))
+					audit.where, routeNodePath(node), routeNodePath(ancestor))
 
 				return
 			}
@@ -1148,17 +1160,17 @@ func assertSkipLinksComeFirstAndResolve(t auditFailer, audit *docAudit) {
 			continue
 		}
 
-		if !hasAttribute(target, "tabindex") {
+		if !routeHasAttribute(target, "tabindex") {
 			t.Errorf("%s: skip link %q lands on %s, which has no tabindex; without one "+
 				"the target is not focusable and focus lands at the top of a scroll "+
 				"container instead of on an announced element (UI §7.2)",
-				audit.where, link.text, nodePath(target))
+				audit.where, link.text, routeNodePath(target))
 		}
 
 		if roleOf(target) == "" {
 			t.Errorf("%s: skip link %q lands on %s, which is not a landmark; a skip "+
 				"link's target is the region it names (UI §7.2)",
-				audit.where, link.text, nodePath(target))
+				audit.where, link.text, routeNodePath(target))
 		}
 	}
 
@@ -1231,7 +1243,7 @@ func assertEveryTestIDIsPresent(t auditFailer, audit *docAudit) {
 	counts := map[string]int{}
 
 	audit.elements(func(node *html.Node) {
-		if !hasAttribute(node, "data-testid") {
+		if !routeHasAttribute(node, "data-testid") {
 			return
 		}
 
@@ -1308,7 +1320,7 @@ func assertNoRetiredEntityIsNamed(t auditFailer, audit *docAudit) {
 	report := func(where, text string) {
 		lowered := strings.ToLower(text)
 
-		for _, retired := range retiredEntities {
+		for _, retired := range retiredWords {
 			if strings.Contains(lowered, retired) {
 				t.Errorf("%s: %s contains %q; neither entity exists, and §1.2 makes the "+
 					"words appear nowhere in the interface", audit.where, where, retired)
@@ -1394,7 +1406,7 @@ func assertEveryReferenceResolves(t auditFailer, audit *docAudit) {
 				if byID(audit.root, id) == nil {
 					t.Errorf("%s: %s carries %s=%q, which resolves to no element; a "+
 						"control that claims to control something invisible is a control "+
-						"that lies (UI §7.2)", audit.where, nodePath(node), name, id)
+						"that lies (UI §7.2)", audit.where, routeNodePath(node), name, id)
 				}
 			}
 		}
@@ -1404,7 +1416,7 @@ func assertEveryReferenceResolves(t auditFailer, audit *docAudit) {
 		if node.Data == "label" {
 			if target := attr(node, "for"); target != "" && byID(audit.root, target) == nil {
 				t.Errorf("%s: %s has for=%q, which resolves to no element; the field has "+
-					"no accessible name (UI §7.7)", audit.where, nodePath(node), target)
+					"no accessible name (UI §7.7)", audit.where, routeNodePath(node), target)
 			}
 		}
 
@@ -1412,7 +1424,7 @@ func assertEveryReferenceResolves(t auditFailer, audit *docAudit) {
 			if fragment, isFragment := strings.CutPrefix(attr(node, "href"), "#"); isFragment &&
 				fragment != "" && byID(audit.root, fragment) == nil {
 				t.Errorf("%s: %s has href=\"#%s\", which resolves to no element",
-					audit.where, nodePath(node), fragment)
+					audit.where, routeNodePath(node), fragment)
 			}
 		}
 	})
@@ -1448,7 +1460,7 @@ func TestEveryRouteCarriesTheTargetClassOnEveryFocusStop(t *testing.T) {
 		t.Run(doc.where, func(t *testing.T) {
 			t.Parallel()
 
-			audit := parseDocument(t, doc)
+			audit := parseRouteDocument(t, doc)
 
 			assertEveryFocusStopCarriesTarget(t, audit)
 		})
@@ -1485,7 +1497,7 @@ func assertEveryFocusStopCarriesTarget(t auditFailer, audit *docAudit) {
 		t.Errorf("%s: %s is focusable and does not carry the .target class; §7.3 "+
 			"enforces the --target-min minimum by construction and §10.6 audits for it "+
 			"including plugin output. %s",
-			audit.where, nodePath(node), owner)
+			audit.where, routeNodePath(node), owner)
 	}
 }
 
