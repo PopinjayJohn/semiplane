@@ -26,10 +26,13 @@ package play_test
 // `internal_test.go` against a pure function with an injected clock.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
+	"regexp"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"testing"
@@ -759,18 +762,26 @@ func TestAHubShutdownClosesALiveSocketAndLeaksNoGoroutine(t *testing.T) {
 // it, `serve` returns, `net/http` declares the connection finished, and a process
 // shutting down at that moment loses whatever the resolver was about to write.
 //
-// The assertion is the **count**, not the client: the client is told the table is gone
-// either way, because the pump's queues close independently of the reader. What differs
-// is whether the handler's own goroutine is still on the stack, and that is one
-// goroutine.
+// The assertion is **which two goroutines are on the stack**, not how many are above
+// a floor: the client is told the table is gone either way, because the pump's queues
+// close independently of the reader. What differs is whether the handler's own
+// goroutine is still there, and it is counted by name — see `routeGoroutines` for why
+// the arithmetic cannot carry it.
+//
+// Like `TestAConnectionCostsOneReaderAndNothingElse`, and for a narrower version of the
+// same reason, this is deliberately **not** `t.Parallel`. Naming the goroutines is
+// quieter than counting the whole process, but it is not immune: a sibling holding a
+// socket of its own contributes a second reader and a second handler, and the assertion
+// is an exact count. Measured, with the siblings left in: `2 in (*Handler).read,
+// 2 in (*Handler).serve`. A `>= 1` would have swallowed that, and it would also have
+// swallowed a route whose handler had already returned whenever a sibling happened to
+// be connected — so the band is not available here, only the quiet process.
 func TestAShutdownWaitsForAReaderThatIsInsideAResolver(t *testing.T) {
-	t.Parallel()
-
 	resolver := newBlockingResolver()
 	harness := newHarness(t, resolver)
 
-	// The floor is taken **before** the dial, and that ordering is the whole
-	// assertion.
+	// The floor is taken **before** the dial, and that ordering is what makes the
+	// wait below able to see anything at all.
 	//
 	// The test then waits for `NumGoroutine() > floor` to learn that this route's
 	// reader has started. Sampled after the dial, the floor already contains that
@@ -781,6 +792,10 @@ func TestAShutdownWaitsForAReaderThatIsInsideAResolver(t *testing.T) {
 	//
 	// `settleGoroutines` waits for the count to stop moving, so taking it first
 	// also means the baseline is a settled one rather than a snapshot mid-dial.
+	//
+	// It is **not** the baseline the join assertion uses, because it cannot be:
+	// the hub is closed between the floor and the assertion, and closing it retires
+	// a goroutine of its own. `routeGoroutines` says so at length.
 	floor := settleGoroutines(t)
 
 	conn := harness.dialAs(gmSlug, gmUserID)
@@ -814,17 +829,29 @@ func TestAShutdownWaitsForAReaderThatIsInsideAResolver(t *testing.T) {
 	}
 
 	// The resolver is still outstanding, so the reader is still inside it — and the
-	// handler's goroutine is still on the stack because `serve` joins the reader before
-	// it returns.
+	// handler's goroutine is still on the stack because `serve` joins the reader
+	// before it returns. That the pump has already returned is not an assumption
+	// here: the read above failed, which it can only do once `serve` has written the
+	// close frame, which it only does after `pump` has returned.
 	if !resolver.outstanding(t) {
 		t.Error("the resolver was released, so this test is not measuring a blocked reader")
 	}
 
-	// The **peak** over a window, against the floor: a point sample would race a
-	// sibling the same way the shutdown test's did.
-	if got := peakGoroutines(t) - floor; got < 2 {
-		t.Errorf("goroutines with a reader blocked in a resolver = %d above the floor, "+
-			"want at least 2: the reader, and the handler waiting on it", got)
+	// The claim is still the one the count was reaching for — two goroutines, the
+	// reader and the handler waiting on it — and it is made by name rather than by
+	// subtraction, because the subtraction could not make it. Measured, with
+	// `hub.Close` already done, on the branch as it stands:
+	//
+	//   readers 1, handlers 1
+	//
+	// which is two goroutines, and `peak − floor` reads **one** at the same instant
+	// because the floor also contains the hub's sweeper, which `hub.Close` — the
+	// call that reaches this state at all — has just retired.
+	if readers, handlers, stable := routeGoroutines(t); !stable || readers != 1 || handlers != 1 {
+		t.Errorf("goroutines with a reader blocked in a resolver: %d in (*Handler).read, "+
+			"%d in (*Handler).serve, held for the whole window: %t; want exactly one of "+
+			"each — the reader, and the handler parked on the join to it", readers, handlers,
+			stable)
 	}
 
 	// Release it, and both go away.
@@ -1222,6 +1249,123 @@ func peakGoroutines(t *testing.T) int {
 
 		time.Sleep(poll)
 	}
+}
+
+// Counting this route's goroutines by name, because a floor cannot carry the question.
+//
+// The two helpers above are sound and the shutdown test's arithmetic is not, and the
+// difference is the hub. Measured on this branch, in one run, with the stacks:
+//
+//	floor, before the dial      5   the hub's sweeper, the httptest accept loop,
+//	                               the fixture's sql opener, the test runner
+//	after the dial              8   + this route's reader, + this route's handler
+//	                               (the net/http connection goroutine, in pump),
+//	                               + the campaign state's own runner, started by the join
+//	reader blocked, hub up      8
+//	after hub.Close             6   − the hub's sweeper, which Close retired
+//
+// So at the only moment the join is observable, `peak − floor` is `6 − 5 = 1` for a
+// route with **two** goroutines on the stack. The floor is not narrow, it is stale: it
+// contains a goroutine the test itself stops between the two samples, and the missing
+// one is the handler the assertion is about. No band corrects that, and `>= 1` would
+// not either — that is the same single goroutine the mutation removes, so it would pass
+// with a margin of zero and fail on a sibling test finishing.
+//
+// Naming the two goroutines needs no baseline at all, needs none of the machine to be
+// quiet, and says *which* two they are: the reader is the one inside `(*Handler).read`,
+// and the handler is the `net/http` connection goroutine `serve` runs on, still inside
+// `(*Handler).serve`. The count is a description of the process; this is a description
+// of the route.
+//
+// The window is not decoration, and it is the one place a single sample would be a
+// race. With `<-readerDone` deleted from `loop.go`, `serve` does not vanish when the
+// client sees the close frame — measured, the client's read errors ~0.5ms after
+// `hub.Close` returns and the handler is still on a stack until ~5ms, because
+// `writer.Close` waits out the close handshake and *that* happens after `pump` has
+// returned. So a point sample taken where the assertion is taken can land inside the
+// gap, see the handler, and pass a route that has stopped waiting on its reader.
+// Requiring the pair to hold for **every** sample of a 150ms window removes the gap
+// rather than narrowing it: in a correct build both goroutines are parked until the
+// test releases the resolver, which is after this call, and in a mutated one the
+// handler is gone for the remaining ~145ms of the window.
+//
+// `stable` is therefore part of the answer and not a nicety: it is the difference
+// between "the handler is there" and "the handler was there a moment ago".
+func routeGoroutines(t *testing.T) (readers, handlers int, stable bool) {
+	t.Helper()
+
+	stable = true
+
+	deadline := time.Now().Add(goroutineWindow)
+
+	for {
+		read, handle := routeGoroutinesOnce(t)
+		readers, handlers = read, handle
+
+		if read != 1 || handle != 1 {
+			stable = false
+		}
+
+		if time.Now().After(deadline) {
+			return readers, handlers, stable
+		}
+
+		time.Sleep(poll)
+	}
+}
+
+// routeGoroutinesOnce takes one reading of the goroutine profile: how many goroutines
+// are inside `(*Handler).read`, and how many inside `(*Handler).serve`.
+func routeGoroutinesOnce(t *testing.T) (readers, handlers int) {
+	t.Helper()
+
+	profile := &bytes.Buffer{}
+	if err := pprof.Lookup("goroutine").WriteTo(profile, 2); err != nil {
+		t.Fatalf("write the goroutine profile: %v", err)
+	}
+
+	for stack := range strings.SplitSeq(profile.String(), "\n\n") {
+		for frame := range strings.SplitSeq(stack, "\n") {
+			switch frameFunction(frame) {
+			case `play.(*Handler).read`:
+				readers++
+			case `play.(*Handler).serve`:
+				handlers++
+			}
+		}
+	}
+
+	return readers, handlers
+}
+
+// frameFunctionPattern names the function a `pprof` stack frame is in, qualified by the
+// last element of its package path and nothing before it.
+//
+// The qualifier is kept because `(*Handler).read` is not a name that identifies this
+// route: any package can have a method of that name on a type called `Handler`, and
+// matching the bare method would let an unrelated handler's reader satisfy the
+// assertion.
+//
+// The `(func1)` in the reader's innermost frame and the `created by` line that names
+// `(*Handler).serve` are both excluded by anchoring on the whole name, which is the
+// other half of the reason it is a name and not a `strings.Contains`: the reader's
+// stack carries both, so a substring match would count every reader as a handler as
+// well and the count would be off by exactly one, in the direction that hides the bug.
+var frameFunctionPattern = regexp.MustCompile(`^(?:[^\s(]*/)?([\w.()*]+)\(`)
+
+// frameFunction returns the function a stack frame is in, or `""` for a line that is
+// not a frame.
+func frameFunction(frame string) string {
+	if strings.HasPrefix(frame, "created by ") {
+		return ""
+	}
+
+	match := frameFunctionPattern.FindStringSubmatch(frame)
+	if match == nil {
+		return ""
+	}
+
+	return match[1]
 }
 
 // A client that outruns the frame rate is closed deliberately, with the code that
