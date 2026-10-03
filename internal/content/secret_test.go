@@ -428,3 +428,408 @@ func TestTheBlockIDWinsOverTheDerivedAnchor(t *testing.T) {
 			"would make the drift path unreachable")
 	}
 }
+
+// TestASourceWhoseLastLineHasNoNewlineIsScanned is a crash this file was missing,
+// and it is here because the panic it describes was live on the request path.
+//
+// `scanSecrets` computed the end of the final line as `len(source)` rather than
+// `len(source) - offset`, so for every line after the first in a file with no
+// trailing newline it sliced past the end of the string. `"Before.\nHello"` panicked
+// with a slice-bounds error; a single-line file survived, which is why no fixture
+// in this file found it.
+//
+// Four callers reach it, and the first two are on a live path: `SetMarker` (S6's
+// reveal write), `Reassociate` (S7's reconciliation) and `cutSpans` (S5's
+// redactor, which every non-GM page render now goes through). Whether a vault's
+// pages end with a newline is the author's editor's decision, not semiplane's, so
+// "well-formed authors do" is not an answer for a wiki that reads whatever is on
+// disk — and neither is Obsidian Sync, which rewrites files.
+//
+// The assertion is that no input panics, over the shapes that take the
+// unterminated branch, and that the answers are still right rather than merely
+// non-crashing: a callout on the final line with no newline after it is still a
+// callout, with the right offsets.
+func TestASourceWhoseLastLineHasNoNewlineIsScanned(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct {
+		source string
+		want   int
+	}{
+		"a single unterminated line":     {source: "Hello", want: 0},
+		"an unterminated line after one": {source: "Before.\nHello", want: 0},
+		"the same, CRLF throughout":      {source: "Before.\r\nHello", want: 0},
+		"a callout on the final line":    {source: "Before.\n\n> [!secret]-\n> Hello.", want: 1},
+		"a callout, final body unterminated": {
+			source: "Before.\n\n> [!secret]-\n> One.\n> Two.",
+			want:   1,
+		},
+		"an unterminated fence":          {source: "Before.\n```\ncode", want: 0},
+		"unterminated, blank final line": {source: "Before.\n> [!secret]-\n> Hello.\n", want: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			found := content.ScanSecrets(fixture.source)
+			if len(found) != fixture.want {
+				t.Errorf("ScanSecrets() found %d callout(s), want %d, for:\n%q",
+					len(found), fixture.want, fixture.source)
+			}
+		})
+	}
+
+	// And the write path, because a scanner that survives is not the same claim as
+	// a one-byte splice that survives: `SetMarker` re-scans rather than reusing the
+	// caller's offsets, so it walks the same loop on the same kind of source.
+	const source = "Before.\n\n> [!secret]-\n> Hello.\n\nAfter"
+
+	got, err := content.SetMarker(source, 0, content.SecretRevealed)
+	if err != nil {
+		t.Fatalf("SetMarker() error = %v, want nil", err)
+	}
+
+	if want := "Before.\n\n> [!secret]+\n> Hello.\n\nAfter"; got != want {
+		t.Errorf("SetMarker() = %q, want %q", got, want)
+	}
+}
+
+// TestANestedCalloutIsReportedAndItsParentIsForcedCollapsed is §5.6's nesting
+// rule as the scanner now implements it, and it replaces a header comment that
+// claimed the opposite.
+//
+// The old comment said a nested callout "is found by its own header and reported
+// separately, because a secret nested in a secret has no state a viewer could act
+// on". Both halves were wrong: the body loop swallowed it, and the nesting does have
+// state a viewer can act on — whether the nested body is ever rendered is decided
+// entirely by the **outer** callout's marker.
+//
+// Three claims, separately asserted because each can hold while the others fail:
+//
+//  1. The nested callout is reported, with its own span and ordinal, so a ledger row
+//     can name it. (Reported twice: `Ordinal` 0 and 1, and the second's `HeaderStart`
+//     strictly after the first's.)
+//  2. The two spans **nest**: the child's is contained in the parent's. That is what
+//     `redact.go`'s containment filter relies on, and it is a property of the scan's
+//     range bounds rather than of this rule.
+//  3. The outer comes back `SecretCollapsed` **whatever its own marker byte says**,
+//     and `MarkerOffset` still points at that byte — the reported state is forced,
+//     the offsets still describe the file.
+func TestANestedCalloutIsReportedAndItsParentIsForcedCollapsed(t *testing.T) {
+	t.Parallel()
+
+	// The exact fixture from the report: a revealed outer over a collapsed inner.
+	const source = "> [!secret]+ Outer, revealed to the party.\n" +
+		"> > [!secret]- The traitor is Captain Aldric.\n" +
+		"\n" +
+		"After.\n"
+
+	found := content.ScanSecrets(source)
+	if len(found) != 2 {
+		t.Fatalf("ScanSecrets() found %d callout(s), want 2 — the nested one has to be "+
+			"reported for a redactor to have anything to cut:\n%q", len(found), source)
+	}
+
+	outer, inner := found[0], found[1]
+
+	if outer.Ordinal != 0 || inner.Ordinal != 1 {
+		t.Errorf("ordinals = %d, %d; want 0, 1 in document order", outer.Ordinal, inner.Ordinal)
+	}
+
+	if outer.HeaderStart >= inner.HeaderStart {
+		t.Errorf("the nested callout's HeaderStart (%d) is not after its parent's (%d), "+
+			"so the ordinals are not document order", inner.HeaderStart, outer.HeaderStart)
+	}
+
+	if inner.HeaderStart < outer.HeaderStart || inner.BodyEnd > outer.BodyEnd {
+		t.Errorf("the spans do not nest: parent [%d,%d), child [%d,%d)",
+			outer.HeaderStart, outer.BodyEnd, inner.HeaderStart, inner.BodyEnd)
+	}
+
+	if outer.State != content.SecretCollapsed {
+		t.Errorf("the outer callout is %q, want %q. There is no rendering of a public "+
+			"outer callout that withholds a nested body, so a GM who wrote `+` over a "+
+			"`-` made a mistake and every failure path in this subsystem resolves toward "+
+			"hiding (§5.6.2)", string(rune(outer.State)), string(rune(content.SecretCollapsed)))
+	}
+
+	// **Forced state, real byte.** The two must not be confused: the report says
+	// "collapsed" and the file still says `+`, and `SetMarker` needs the offset that
+	// says which byte that is.
+	if got := source[outer.MarkerOffset]; got != '+' {
+		t.Errorf("the outer callout's MarkerOffset points at %q, want the `+` the author "+
+			"wrote. Forcing the reported state must not move the offset", got)
+	}
+
+	if got := source[inner.MarkerOffset]; got != '-' {
+		t.Errorf("the nested callout's MarkerOffset points at %q, want `-`. The offset "+
+			"skips two levels of quoting, not one", got)
+	}
+
+	// **The text after a marker is the callout's *title*, not its body** — and
+	// that is the whole of why this fixture matters beyond its nesting. A reader
+	// skimming for `Body` would assume the secret text lived there; it does not, it
+	// lives on the header line, which is inside `HeaderStart..HeaderEnd` and so
+	// inside the cut. Asserted here so that "the redactor cut the title" is a
+	// checked fact about where secret text can be, rather than an assumption.
+	if inner.Title != "The traitor is Captain Aldric." {
+		t.Errorf("the nested callout's title = %q, want the text after its marker",
+			inner.Title)
+	}
+
+	if outer.Title != "Outer, revealed to the party." {
+		t.Errorf("the outer callout's title = %q", outer.Title)
+	}
+
+	if inner.Body != "" {
+		t.Errorf("the nested callout's body = %q, want empty: its text is on the header "+
+			"line, which is a title and not a body", inner.Body)
+	}
+}
+
+// TestANestedCalloutUnquotesEveryLevelOfItsBody is the other half of the depth
+// work, and it is separate because a callout whose text all sits on its header line
+// has an **empty body**, so the fixture above cannot see it at all.
+//
+// One level of `> ` short of correct leaves a `>` at the front of every body line,
+// which is cosmetic — the text is still the author's. That is exactly why it needs
+// its own test: `DerivedAnchor` hashes the **first line of the body** (§5.6.3), so a
+// stray `>` changes the anchor of a nested secret, and §5.6.3's whole promise is
+// that the derived form is stable. A wrong anchor is a ledger row that no longer
+// resolves, which S7 re-associates by ordinal and logs as `secret_anchor_drift` —
+// correct behaviour, paid for by a bug.
+func TestANestedCalloutUnquotesEveryLevelOfItsBody(t *testing.T) {
+	t.Parallel()
+
+	const source = "> [!secret]+ Outer, with a body.\n" +
+		"> > [!secret]- The traitor is Captain Aldric.\n" +
+		"> > He replaced the eastern signal fire.\n" +
+		"\n" +
+		"After.\n"
+
+	found := content.ScanSecrets(source)
+	if len(found) != 2 {
+		t.Fatalf("ScanSecrets() found %d callout(s), want 2, for:\n%q", len(found), source)
+	}
+
+	outer, inner := found[0], found[1]
+
+	// The outer's body keeps the nested quote marker, and that is right rather than
+	// a shortfall: one level of `> ` is the outer's own quoting, and the second `>` is
+	// the author's — it is a block quote inside a block quote, which is what they
+	// wrote. It is the *nested* callout's body where every level must come off.
+	if want := "> [!secret]- The traitor is Captain Aldric.\n" +
+		"> He replaced the eastern signal fire."; outer.Body != want {
+		t.Errorf("the outer callout's body =\n%q\nwant\n%q — one level of `> ` stripped",
+			outer.Body, want)
+	}
+
+	if want := "He replaced the eastern signal fire."; inner.Body != want {
+		t.Errorf("the nested callout's body =\n%q\nwant\n%q — two levels of `> ` "+
+			"stripped, and a stray `>` here would change §5.6.3's derived anchor",
+			inner.Body, want)
+	}
+}
+
+// TestTheNestingRuleDoesNotOverReach is the control, on the scanner's side.
+//
+// The forcing rule asks "does this callout's body contain another **callout**", and
+// the version that over-reaches asks "does it contain the string `[!secret]`". Every
+// campaign with a page documenting the syntax would lose that page's secrets from
+// players — a regression that looks like the feature working.
+//
+// Four placings of the keyword that are not callout headers, and one that is. The
+// fifth case is what makes the first four mean anything: if the rule cannot tell them
+// apart, asserting "stays revealed" four times proves nothing.
+func TestTheNestingRuleDoesNotOverReach(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct {
+		source string
+		want   []content.SecretState
+	}{
+		"the keyword mid-sentence": {
+			source: "> [!secret]+ Revealed.\n> The keeper wrote [!secret] and left.\n",
+			want:   []content.SecretState{content.SecretRevealed},
+		},
+		"the keyword at the start of a quoted line, not a header": {
+			source: "> [!secret]+ Revealed.\n> [!secret] is the marker.\n",
+			want:   []content.SecretState{content.SecretRevealed},
+		},
+		"the keyword inside an inline code span": {
+			source: "> [!secret]+ Revealed.\n> Write `[!secret]-` and it is a secret.\n",
+			want:   []content.SecretState{content.SecretRevealed},
+		},
+		"a malformed marker": {
+			source: "> [!secret]+ Revealed.\n> [!secret]? is not a marker.\n",
+			want:   []content.SecretState{content.SecretRevealed},
+		},
+		"a real nested header, for contrast": {
+			source: "> [!secret]+ Revealed.\n> > [!secret]- Inner.\n",
+			want: []content.SecretState{
+				content.SecretCollapsed,
+				content.SecretCollapsed,
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			found := content.ScanSecrets(fixture.source)
+			if len(found) != len(fixture.want) {
+				t.Fatalf("ScanSecrets() found %d callout(s), want %d, for:\n%q",
+					len(found), len(fixture.want), fixture.source)
+			}
+
+			for index, want := range fixture.want {
+				if found[index].State != want {
+					t.Errorf("callout %d is %q, want %q",
+						index, string(rune(found[index].State)), string(rune(want)))
+				}
+			}
+		})
+	}
+}
+
+// TestSetMarkerReachesBothOfTwoNestedSecrets is the confirmation, by test, that
+// `SetMarker` is unaffected by nesting — which is worth establishing rather than
+// reading, because the alternative (splicing every span and joining) would be an
+// entirely reasonable refactor of the same function and would be wrong.
+//
+// **Four claims, each of which the others do not imply.** The first is the
+// interesting one: `SetMarker` re-scans rather than reusing the caller's `Secret`,
+// so the ordinal is resolved against a *fresh* walk of the same bytes. If the two
+// nested secrets' ordinals were resolved from different walks they would disagree
+// here, and neither of them would notice.
+//
+//   - Revealing the outer changes exactly one byte, and that byte is the outer's own.
+//   - Revealing the inner changes exactly one byte, and that byte is the inner's.
+//   - Neither disturbs the other: the outer's reveal leaves the inner's marker, and
+//     the inner's leaves the outer's.
+//   - Both together still leave every other byte alone — the two splices are
+//     independent, so doing them one after the other is the same as doing them apart.
+func TestSetMarkerReachesBothOfTwoNestedSecrets(t *testing.T) {
+	t.Parallel()
+
+	const source = "> [!secret]- Outer.\n> > [!secret]- Inner.\n"
+
+	outerRevealed, err := content.SetMarker(source, 0, content.SecretRevealed)
+	if err != nil {
+		t.Fatalf("SetMarker(0, revealed) error = %v, want nil", err)
+	}
+
+	if want := "> [!secret]+ Outer.\n> > [!secret]- Inner.\n"; outerRevealed != want {
+		t.Errorf("revealing the outer = %q, want %q", outerRevealed, want)
+	}
+
+	innerRevealed, err := content.SetMarker(source, 1, content.SecretRevealed)
+	if err != nil {
+		t.Fatalf("SetMarker(1, revealed) error = %v, want nil", err)
+	}
+
+	if want := "> [!secret]- Outer.\n> > [!secret]+ Inner.\n"; innerRevealed != want {
+		t.Errorf("revealing the inner = %q, want %q", innerRevealed, want)
+	}
+
+	// And both, one after the other, against a fresh scan each time — which is what
+	// S6's reveal endpoint actually does when it writes a page twice.
+	both, err := content.SetMarker(outerRevealed, 1, content.SecretRevealed)
+	if err != nil {
+		t.Fatalf("SetMarker(1, revealed) after the outer error = %v, want nil", err)
+	}
+
+	if want := "> [!secret]+ Outer.\n> > [!secret]+ Inner.\n"; both != want {
+		t.Errorf("revealing both = %q, want %q", both, want)
+	}
+
+	// **One byte, measured.** Every version differs from its predecessor by exactly
+	// one byte, which is the property S5.6's one-byte-edit design exists for.
+	for _, pair := range []struct{ name, before, after string }{
+		{name: "the outer", before: source, after: outerRevealed},
+		{name: "the inner", before: source, after: innerRevealed},
+		{name: "both", before: outerRevealed, after: both},
+	} {
+		if differing := differingBytes(pair.before, pair.after); differing != 1 {
+			t.Errorf("revealing %s changed %d bytes, want exactly 1", pair.name, differing)
+		}
+	}
+}
+
+// TestSetMarkerFindsTheMarkerWithoutASpaceAfterTheQuote is the off-by-one the
+// depth-aware `MarkerOffset` fixed, and it is worth its own test because the
+// constant it replaced was wrong on a *legal* callout.
+//
+// `>[!secret]-` is a callout — CommonMark's rule is `>` followed by an **optional**
+// space, and `unquoteOne` has always accepted it. But `MarkerOffset` was
+// `lineStart + 1 + 1 + len(calloutPrefix)`, which assumes two bytes of quoting. On
+// `>[!secret]-` that lands on the `\n`, so `SetMarker` rewrote the line ending: the
+// reveal did not take, and the GM's page rendered collapsed while the file said the
+// secret was public. A reveal applied to the wrong byte is worse than a reveal that
+// did not happen, because the ledger would say it happened.
+func TestSetMarkerFindsTheMarkerWithoutASpaceAfterTheQuote(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct{ source, want string }{
+		"no space after the quote": {
+			source: ">[!secret]-\n> Body.\n",
+			want:   ">[!secret]+\n> Body.\n",
+		},
+		"one space after the quote": {
+			source: "> [!secret]-\n> Body.\n",
+			want:   "> [!secret]+\n> Body.\n",
+		},
+		"a tab after the quote": {
+			// CommonMark's optional space may be a tab, and Obsidian reads this as a
+			// callout — so semiplane has to as well, or a secret written this way
+			// renders as a plain block quote for everybody. The `unquoteOne` this
+			// replaces had a comment claiming it ate tabs and code that did not.
+			source: ">\t[!secret]-\n> Body.\n",
+			want:   ">\t[!secret]+\n> Body.\n",
+		},
+		"indented inside a list item": {
+			source: "- one\n\n  > [!secret]-\n  > Body.\n",
+			want:   "- one\n\n  > [!secret]+\n  > Body.\n",
+		},
+		"two levels of quoting": {
+			source: "> [!secret]-\n> > [!secret]-\n> > Body.\n",
+			want:   "> [!secret]+\n> > [!secret]-\n> > Body.\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := content.SetMarker(fixture.source, 0, content.SecretRevealed)
+			if err != nil {
+				t.Fatalf("SetMarker() error = %v, want nil", err)
+			}
+
+			if got != fixture.want {
+				t.Errorf("SetMarker() = %q, want %q", got, fixture.want)
+			}
+		})
+	}
+}
+
+// differingBytes counts the positions at which two strings differ. It is the
+// measurement behind "a reveal is one byte", asserted on nesting shapes where a
+// splice that touched two bytes would look correct in a string comparison only if
+// you already knew the answer.
+func differingBytes(before, after string) int {
+	differing := 0
+
+	for index := range max(len(before), len(after)) {
+		if character(before, index) != character(after, index) {
+			differing++
+		}
+	}
+
+	return differing
+}
+
+// character is `value`'s byte at `index`, or 0 past its end.
+func character(value string, index int) byte {
+	if index >= len(value) {
+		return 0
+	}
+
+	return value[index]
+}
