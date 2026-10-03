@@ -37,6 +37,7 @@ import (
 	"testing"
 
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"github.com/semiplane/semiplane/internal/web/components/chrome"
 	"github.com/semiplane/semiplane/internal/web/components/play"
@@ -327,10 +328,19 @@ func TestTheActionBarSitsBetweenTheRailAndTheFooter(t *testing.T) {
 //
 // The record's own reasoning: "an absent control is worse than a disabled one
 // with a reason". So this is not a check that a Move button is `aria-disabled` —
-// it is that no control anywhere in the document offers positional play, in its
-// visible text, its `aria-label` or its `title`. Positional interaction exists
-// at fine-pointer tiers and on TV through the token list (§7.6), so a control
-// here would be a control that works on no device this tier can reach.
+// it is that no control anywhere in the document offers positional play, in the
+// name it is announced under, its `title`, or (for a control whose name comes
+// from its contents) its visible text. Positional interaction exists at
+// fine-pointer tiers and on TV through the token list (§7.6), so a control here
+// would be a control that works on no device this tier can reach.
+//
+// What is checked is the *name*, not the subtree's text. The rail's `<aside>`
+// and the token list's `<section>` are focus stops too — `tabindex="-1"` is what
+// makes activating a token land somewhere — and both contain the sentence "Up
+// and down move between tokens", which is a fact about the token list rather
+// than an offer. Reading subtree text as a control's name flagged both, which is
+// the audit objecting to prose; resolving the name the way assistive technology
+// does is what makes the rule about offers.
 func TestThereIsNoMoveControlOnAPhone(t *testing.T) {
 	t.Parallel()
 
@@ -338,30 +348,62 @@ func TestThereIsNoMoveControlOnAPhone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			var offers []string
-
-			walkAll(parsed, func(node *html.Node) {
-				if node.Type != html.ElementNode || !focusable(node) {
-					return
-				}
-
-				for _, source := range []string{
-					attributeOr(node, "aria-label"),
-					attributeOr(node, "title"),
-					textOf(node),
-				} {
-					if namesPositionalPlay(source) {
-						offers = append(offers, node.Data+":"+strings.TrimSpace(source))
-					}
-				}
-			})
-
-			if len(offers) > 0 {
+			if offers := positionalPlayOffers(parsed); len(offers) > 0 {
 				t.Errorf("the document offers positional play through %v; §4.9 states "+
 					"there is no Move control on a phone, and an absent control is better "+
 					"than a disabled one that suggests the gesture exists", offers)
 			}
 		})
+	}
+}
+
+// positionalPlayOffers returns every focus stop whose name is the Move command,
+// as `element:text`.
+//
+// Extracted so the control below runs *this* rule rather than a second copy of
+// it: a control that reimplemented the walk would be checking its own reading of
+// the rule and would stay green when the rule itself was loosened.
+func positionalPlayOffers(parsed *html.Node) []string {
+	var offers []string
+
+	walkAll(parsed, func(node *html.Node) {
+		if node.Type != html.ElementNode || !focusable(node) {
+			return
+		}
+
+		for _, source := range []string{
+			controlName(node, parsed),
+			attributeOr(node, "title"),
+		} {
+			if namesPositionalPlay(source) {
+				offers = append(offers, node.Data+":"+strings.TrimSpace(source))
+			}
+		}
+	})
+
+	return offers
+}
+
+// controlName resolves the name a focus stop is announced with: its ARIA name
+// where it has one, else its contents — but only for the elements whose name
+// *comes* from their contents.
+//
+// `button`, `a[href]` and `summary` are the three in this document; everything
+// else (`aside`, `section`, `main`, any `tabindex` holder) is named by an
+// attribute or not at all, and handing it `textOf` would be reading a
+// container's whole subtree as though it were a label. That is precisely the
+// mistake this helper exists to avoid: `textOf(aside)` is every word the rail
+// renders, and one of them is "move".
+func controlName(node, document *html.Node) string {
+	if name := accessibleName(node, document); name != "" {
+		return name
+	}
+
+	switch node.Data {
+	case "button", "summary", "a":
+		return textOf(node)
+	default:
+		return ""
 	}
 }
 
@@ -379,6 +421,100 @@ func namesPositionalPlay(name string) bool {
 	}
 
 	return false
+}
+
+// TestTheNoMoveControlRuleObjectsToTheOfferItClaimsTo holds the absence rule the
+// way the landmark rule is held: one fixture that *is* the violation, and one
+// that proves the rule does not fire on prose.
+//
+// The second is the important one. The first version of this test read every
+// focus stop's subtree text as its name, so the rail's own sentence "Up and down
+// move between tokens" — a fact about the token list, rendered inside a
+// `<aside tabindex="-1">` — was read as an offer and the test was red on the
+// product it was written for. A rule that fires on prose is a rule that will be
+// deleted rather than narrowed, so both directions get a fixture.
+func TestTheNoMoveControlRuleObjectsToTheOfferItClaimsTo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a control whose name is Move", func(t *testing.T) {
+		t.Parallel()
+
+		parsed := table(t, sceneWithImage())
+
+		bar := elementWithAttribute(parsed, "data-testid", play.ActionsTestID)
+		if bar == nil {
+			t.Fatal("the document has no action bar, so the fixture changed nothing")
+		}
+
+		button := &html.Node{
+			Type:     html.ElementNode,
+			Data:     "button",
+			DataAtom: atom.Lookup([]byte("button")),
+			Attr: []html.Attribute{
+				{Key: "type", Val: "button"},
+				{Key: "data-testid", Val: "mutant-move"},
+			},
+		}
+		button.AppendChild(&html.Node{Type: html.TextNode, Data: "Move"})
+		bar.AppendChild(button)
+
+		offers := positionalPlayOffers(parsed)
+		if len(offers) == 0 {
+			t.Error("the rule accepted a document carrying a button named \"Move\"; " +
+				"an absence rule that cannot see the thing it rules out is a green " +
+				"light wired to nothing")
+		}
+
+		if !strings.Contains(strings.Join(offers, " "), "Move") {
+			t.Errorf("the rule fired, but not about the Move control: %v", offers)
+		}
+	})
+
+	t.Run("a control labelled Move by aria-label", func(t *testing.T) {
+		t.Parallel()
+
+		parsed := table(t, sceneWithImage())
+
+		token := elementWithAttribute(parsed, "data-testid", play.TokenTestID)
+		if token == nil {
+			t.Fatal("the document has no Token control, so the fixture changed nothing")
+		}
+
+		setAttribute(token, "aria-label", "Move")
+
+		offers := positionalPlayOffers(parsed)
+		if len(offers) == 0 {
+			t.Error("the rule accepted a control whose aria-label reads \"Move\"; a " +
+				"visible label is only one of the three places a control can offer " +
+				"positional play")
+		}
+	})
+
+	t.Run("a rail whose prose mentions moving and no control offering it", func(t *testing.T) {
+		t.Parallel()
+
+		parsed := table(t, sceneWithImage())
+
+		rail := elementWithAttribute(parsed, "data-testid", "shell-rail")
+		if rail == nil {
+			t.Fatal("the document has no rail, so the fixture's prose is missing")
+		}
+
+		// The fixture has to be what it claims: prose containing the verb, inside
+		// a focus stop, with no control offering anything. Without this the
+		// assertion below could pass on a document that simply mentions nothing.
+		if prose := strings.ToLower(textOf(rail)); !strings.Contains(prose, "move") {
+			t.Fatalf("the rail's prose does not mention moving (%q), so this fixture "+
+				"tests nothing; the rule's false positive was found in exactly this "+
+				"sentence", prose)
+		}
+
+		if offers := positionalPlayOffers(parsed); len(offers) != 0 {
+			t.Errorf("the rule reads a container's prose as an offer: %v. §4.9's rule "+
+				"is about controls, and a sentence inside a landmark that happens to "+
+				"contain the verb is not one", offers)
+		}
+	})
 }
 
 // TestTheTwoUnavailableControlsStateTheirReasonAndRemainReachable is §4.9's
@@ -704,6 +840,20 @@ func auditDocumentLandmarks(t auditer, name string, parsed *html.Node) {
 		case "navigation":
 			navigationNames = append(navigationNames, region.name)
 		case "banner", "main", "complementary", "contentinfo":
+		case "region", "search":
+			// §10.2's rule is *distinguishing labels*, not "one of the five".
+			// `region` and `search` are ARIA landmarks a document may add without
+			// the record describing them — the token list's `<section
+			// role="region">` named by its visible heading is this document's own —
+			// so what they are held to is the same condition the route's audit puts
+			// on them (`route_a11y_test.go`'s `needsName`): they exist only when
+			// they carry a name. An unnamed one is announced as "region" and
+			// skipped, which is worse than not being there.
+			if strings.TrimSpace(region.name) == "" {
+				t.Errorf("%s: the %s landmark has no accessible name; §10.2's rule is "+
+					"distinguishing labels, and a landmark a reader cannot name is one a "+
+					"screen reader announces as \"region\" and skips", name, region.role)
+			}
 		default:
 			t.Errorf("%s: %s is a %s landmark, which is not one this document places; "+
 				"a landmark the record does not describe is a region a reader can jump to "+
@@ -752,9 +902,11 @@ func auditDocumentLandmarks(t auditer, name string, parsed *html.Node) {
 // The explicit role where there is one and the implicit role of the tag where
 // there is not, because an explicit role *replaces* the implicit one — which is
 // what makes `role="navigation"` on a `<div>` a navigation landmark. The tag
-// list is §7.2's own five; `region` and `search` are deliberately absent, and
-// `auditDocumentLandmarks` reports either as a landmark this document does not
-// place rather than silently counting it.
+// list is §7.2's own five; `region` and `search` are deliberately absent from it
+// because `<section>` is a region **only when it is named**, and deriving that
+// from the tag would mean resolving every section's name before deciding whether
+// it is a landmark at all. Both arrive through an explicit role instead, and
+// `auditDocumentLandmarks` holds them to the name rather than to existence.
 func documentLandmarkRole(node *html.Node) string {
 	role := attributeOr(node, "role")
 	if role != "" {
@@ -803,15 +955,16 @@ var documentLandmarkRoles = []string{
 // --- The control for the new audit -------------------------------------------------
 
 // TestTheDocumentLandmarksAuditObjectsToTheViolationItClaimsTo holds the new
-// audit the same way `controls_test.go` holds the others: three documents built
+// audit the same way `controls_test.go` holds the others: four documents built
 // to break it, and a finding from each.
 //
-// Three rather than one because the rule is three claims — the landmarks are
-// present, the navigation pair is named, and the two names differ — and an audit
-// that could only catch the first would be an audit that passes a document whose
-// two navigations are indistinguishable. Each fixture mutates a document this
-// package really renders, so the only difference between it and a passing one is
-// the single change under test.
+// Four rather than one because the rule is four claims — the landmarks are
+// present, the navigation pair is named, the two names differ, and the two
+// landmarks this document *adds* to the five (the token list's `region`) are
+// named too — and an audit that could only catch the first would be an audit
+// that passes a document whose two navigations are indistinguishable. Each
+// fixture mutates a document this package really renders, so the only difference
+// between it and a passing one is the single change under test.
 func TestTheDocumentLandmarksAuditObjectsToTheViolationItClaimsTo(t *testing.T) {
 	t.Parallel()
 
@@ -830,6 +983,25 @@ func TestTheDocumentLandmarksAuditObjectsToTheViolationItClaimsTo(t *testing.T) 
 				}
 
 				removeAttribute(bar, "aria-label")
+
+				return true
+			},
+		},
+		{
+			// The conditional half of the `region` rule. The audit accepts a
+			// `region` landmark because the token list is one, so the only thing
+			// standing between that and an unnamed region nobody can navigate to is
+			// this name check — and a fixture that drops `aria-labelledby` is what
+			// proves the check is there rather than assumed.
+			what:     "a region with no accessible name",
+			mentions: "the region landmark has no accessible name",
+			breakIt: func(parsed *html.Node) bool {
+				tokenList := elementWithAttribute(parsed, "role", "region")
+				if tokenList == nil {
+					return false
+				}
+
+				removeAttribute(tokenList, "aria-labelledby")
 
 				return true
 			},
