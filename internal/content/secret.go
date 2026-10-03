@@ -49,15 +49,57 @@ package content
 //
 // # What this parser deliberately does not do
 //
-// It does not resolve, nest, or judge. A `[!secret]` inside a fenced code block is
-// text, and so is one inside an inline code span — `TestSecretsInCodeAreText`
-// holds it, because "documented in the design record" is not a test. A callout
-// inside another callout is found by its own header and reported separately,
-// because a secret nested in a secret has no state a viewer could act on.
+// It does not resolve or judge. A `[!secret]` inside a fenced code block is text,
+// and so is one inside an inline code span — `TestSecretsInCodeAreText` holds it,
+// because "documented in the design record" is not a test.
 //
 // It also never fails. A page mentioning `[!secret]` in prose, or a callout with
 // no body, still renders: the alternative is a page destroyed by a typo in a
 // marker, and the failure would be indistinguishable from a vault corruption.
+//
+// # Nesting, which this file used to describe wrongly
+//
+// This header used to say that a callout inside another callout "is found by its
+// own header and reported separately, because a secret nested in a secret has no
+// state a viewer could act on". **The claim was false and the reasoning inverted.**
+// The body loop below consumed every line that was still quoted, so a nested
+// callout was swallowed by its parent, never reported, and — once S5's redactor put
+// this scanner on the request path — a `[!secret]-` inside a revealed `[!secret]+`
+// reached a player as a `secret--collapsed` callout with its body in it. The reason
+// the old sentence gave is the opposite of the reason the code needed: the nesting
+// does have state a viewer can act on, because the outer callout's own state is the
+// thing that decides whether anybody but a GM ever sees those bytes.
+//
+// So the scanner recurses, and **an outer callout that contains one is collapsed
+// whatever its own marker byte says**. There is no rendering of a revealed outer
+// callout that withholds the nested body, so a GM who wrote `+` over a `-` made a
+// mistake and this subsystem resolves it the way §5.6.2 requires every failure path
+// to resolve — toward hiding. An accidentally revealed secret is a far worse
+// outcome than a reveal that arrives late or not at all.
+//
+// The nested callout is reported **as well**, with its own span, ordinal and body,
+// rather than being folded into the parent. Three things need it to exist:
+//
+//   - A ledger row has to be able to name it. §5.6.3's resolution order runs over
+//     the scanner's output, and a secret the scanner does not report is a secret
+//     nothing downstream can refer to.
+//   - Two nesting levels are representable, and only reporting the leaf lets a
+//     caller walk outward.
+//   - It is what makes the spans *nest*, which is the shape `redact.go` has to cut
+//     correctly. `TestTheOutermostSpansAreTheOnesThatGetCut` is that property, and
+//     it is stated as a property of the redactor rather than of the scanner on
+//     purpose: it is what makes the redactor safe against a scanner that does
+//     report nesting, whether or not the one it is handed today does.
+//
+// What this does **not** change: the file is not rewritten. A nested `+` stays `+`
+// on disk, so `SetMarker` and S7's reconciliation read the byte the author wrote.
+// Only the *reported* state is forced. That is deliberate — rewriting an author's
+// prose as a side effect of indexing a page is not this package's business — and it
+// leaves a real gap for S6/S7 to close, which is that revealing a callout that
+// nests another will report itself as revealed and render as collapsed.
+//
+// The false sentence is left in this header deliberately rather than deleted, so
+// that the next reader who remembers it finds the correction beside it.
 
 import (
 	"crypto/sha256"
@@ -160,17 +202,58 @@ const calloutPrefix = "[!secret]"
 // One walker rather than two passes because the two answers have to agree: a
 // `SetMarker` that found a different callout than a `ScanSecrets` would rewrite a
 // byte that is not the marker's, and that is a disclosure.
+//
+// **It recurses, once per level of nesting.** `scanRange` walks a byte range
+// looking for callouts and, when it finds one, scans that callout's own body for
+// the next level down. Two consequences, and the second is the point:
+//
+//   - A nested callout is reported as its own `Secret`, with its own span, ordinal
+//     and unquoted body, rather than being absorbed. See the package header for why
+//     the previous version's claim to the contrary was both false and backwards.
+//   - A callout whose body contains one comes back **forced to `SecretCollapsed`**.
+//     Not because the grammar says so — the grammar says `-` is a secret and `+` is
+//     public — but because there is no rendering of a public outer callout that
+//     withholds the nested body, so a public outer is a disclosure with no
+//     equivalent that does not disclose. Every other failure path in this subsystem
+//     resolves toward hiding for the same reason (§5.6.2), and the outer callout's
+//     own marker byte is the only thing standing between a GM's typo and a player's
+//     view of the secret.
+//
+// Ordinals are assigned once, at the end, over the whole pre-order walk. Pre-order
+// is document order here because a parent's header always precedes its child's, and
+// the subtrees are entered left to right — which is what makes `Ordinal` and
+// `data-ref-index` the same kind of number everywhere else in the package.
 func scanSecrets(source string) []Secret {
+	found := scanRange(source, 0, len(source), 0)
+
+	for index := range found {
+		found[index].Ordinal = index
+	}
+
+	return found
+}
+
+// scanRange finds the callouts in `source[from:to]` that sit at nesting level
+// `nesting`, together with everything nested inside them. Level 0 is the top of the
+// document; level *n* is inside *n* callouts.
+//
+// **The range is a hard bound**, and it is what makes recursion safe rather than
+// merely terminating: a nested walk cannot run past its parent's body, so a nested
+// callout's span is always contained in the outer one. That containment is the
+// property `redact.go`'s `outermostSpans` relies on, and it is why this is a range
+// walk and not a second pass over the whole source that would have to rediscover
+// which callouts belong to which.
+func scanRange(source string, from, limit, nesting int) []Secret {
 	var found []Secret
 
 	var openFence string
 
-	offset := 0
+	offset := from
 
-	for offset < len(source) {
-		lineEnd := strings.IndexByte(source[offset:], '\n')
+	for offset < limit {
+		lineEnd := strings.IndexByte(source[offset:limit], '\n')
 		if lineEnd < 0 {
-			// **The rest of the source, not the length of the source.** A file
+			// **The rest of the range, not the length of the source.** A file
 			// whose last line has no trailing newline takes this branch, and
 			// `len(source)` here made `offset+lineEnd` run past the end of the
 			// string for every line after the first — so `ScanSecrets` panicked
@@ -182,9 +265,17 @@ func scanSecrets(source string) []Secret {
 			// The body's own loop below already spells this the right way, which is
 			// the reason this was easy to miss: the two lines read as a pair, and
 			// one of the pair is wrong.
-			lineEnd = len(source) - offset
+			lineEnd = limit - offset
 		} else {
 			lineEnd += 1 // keep the newline
+		}
+
+		// The trailing newline can push the line one past `limit` when `limit` lands
+		// mid-line, which it does whenever a parent ended its body on the last
+		// byte of a line. Clamped rather than trusted, because a slice out of range
+		// here is a crash on the request path.
+		if offset+lineEnd > limit {
+			lineEnd = limit - offset
 		}
 
 		raw := source[offset : offset+lineEnd]
@@ -211,7 +302,18 @@ func scanSecrets(source string) []Secret {
 		// A callout inside a fence is text, and so is one inside an indented
 		// code block — which is why this is checked before the header is.
 		if openFence == "" {
-			if secret, ok := parseCalloutHeader(trimmed, offset); ok {
+			// **`nesting + 1`, and the `+1` is the whole of the grammar.** `nesting`
+			// counts the *enclosing callouts*; the `> ` that makes a call out of a
+			// quoted paragraph is one more level than that. So a top-level callout's
+			// header line carries one level of quoting and a callout nested in it
+			// carries two.
+			//
+			// It is also what keeps an unquoted line from being a callout: at zero
+			// levels `unquoteDepthLine` succeeds on any line at all, so passing `nesting`
+			// straight through would make a bare `[!secret]-` in a paragraph a secret
+			// — the one thing `parseCalloutHeader`'s "must be quoted" rule exists to
+			// prevent.
+			if secret, ok := parseCalloutHeader(trimmed, offset, nesting+1); ok {
 				secret.BodyStart = offset + lineEnd
 				secret.BodyEnd = offset + lineEnd
 
@@ -221,10 +323,10 @@ func scanSecrets(source string) []Secret {
 				// the `>` on those lines; a line with no `>` at all does.
 				consumed := lineEnd
 
-				for consumed < len(source) {
-					bodyLineEnd := strings.IndexByte(source[offset+consumed:], '\n')
+				for offset+consumed < limit {
+					bodyLineEnd := strings.IndexByte(source[offset+consumed:limit], '\n')
 					if bodyLineEnd < 0 {
-						bodyLineEnd = len(source) - offset - consumed
+						bodyLineEnd = limit - offset - consumed
 					} else {
 						bodyLineEnd += 1
 					}
@@ -241,15 +343,37 @@ func scanSecrets(source string) []Secret {
 					consumed += bodyLineEnd
 				}
 
-				secret.Body = unquote(strings.TrimRight(
-					source[secret.BodyStart:secret.BodyEnd], "\r\n",
-				))
+				secret.Body = unquoteDepth(
+					strings.TrimRight(
+						source[secret.BodyStart:secret.BodyEnd], "\r\n",
+					),
+					nesting+1,
+				)
+
+				// **Into the body, one level deeper, before the parent is recorded.**
+				// The order matters: `found` holds `Secret` values, so appending
+				// `secret` first and then forcing its state would leave the forced
+				// copy behind and the appended one carrying the author's own byte —
+				// a redaction decision that was computed and then thrown away, and
+				// one that fails open. It was written the wrong way round first and
+				// `TestTheOuterCalloutIsCollapsedWhateverItsMarkerByte` is what caught
+				// it.
+				nested := scanRange(source, secret.BodyStart, secret.BodyEnd, nesting+1)
+
+				if len(nested) > 0 {
+					// The one line in this file that overrides the grammar. The comment
+					// above says why; the reason it is here and not in
+					// `parseCalloutHeader` is that the header parser stays a pure
+					// reading of one line, so there is no second answer to "what does
+					// this line say" for `SetMarker`'s offsets to disagree with.
+					secret.State = SecretCollapsed
+				}
 
 				found = append(found, secret)
 
-				for index := range found {
-					found[index].Ordinal = index
-				}
+				// The nested results come after the parent, which is document order
+				// and is what the ordinal pass in `scanSecrets` relies on.
+				found = append(found, nested...)
 
 				offset += consumed
 
@@ -274,7 +398,8 @@ func ScanSecrets(source string) []Secret {
 	return scanSecrets(source)
 }
 
-// parseCalloutHeader reads one line and answers whether it opens a callout.
+// parseCalloutHeader reads one line and answers whether it opens a callout quoted
+// exactly `depth` levels deep.
 //
 // **Four shapes accepted, and the fourth is the interesting one.** `> [!secret]-`,
 // `> [!secret]+`, either with a title after the marker, and either with a trailing
@@ -283,8 +408,37 @@ func ScanSecrets(source string) []Secret {
 // the quoted line. Obsidian requires the marker at the start of the first
 // paragraph, and matching anywhere else would let a sentence mentioning the
 // keyword become a secret with a body.
-func parseCalloutHeader(line string, lineStart int) (Secret, bool) {
-	quoted, ok := unquoteOne(line)
+//
+// The depth is a parameter rather than a constant for two reasons, and the second
+// one is a limitation rather than a feature.
+//
+// First, the marker byte's offset depends on how many bytes of quoting precede it,
+// so a nested callout's marker has to land on the right byte for `SetMarker` like
+// any other. See the `MarkerOffset` comment below, which is an off-by-one this
+// change fixes.
+//
+// Second, it *restricts* where a callout may be found rather than merely measuring.
+// A caller asks for the quoting level its callout is at, and `scanRange` is what
+// recurses to ask one level deeper. So a callout inside a plain block quote, with
+// no callout around it, is still not found: a lone `> > [!secret]-` is two nested
+// block quotes, and the inner one is a paragraph rather than a callout. The
+// recursion follows the grammar, and the grammar's callout is the outermost quote.
+//
+// Note what that restriction costs and why it is not fixed here: a `[!secret]` two
+// levels deep inside ordinary quoted prose is invisible to this scanner, so a
+// secret written that way renders as a plain block quote. Widening the walk to
+// every quoting depth would find it, and would also mean deciding what a callout
+// inside a callout inside a plain quote *is* — a third grammar question with no
+// answer in §5.6. Recorded rather than silently left.
+//
+// It reads a line and returns what the line says. **It does not judge**, and in
+// particular it does not force `SecretCollapsed` for a callout with something
+// nested inside it: that is the walker's decision, made in `scanRange` where the
+// nested results are in hand. A header parser that also overrode the state would be
+// a second place answering "what is this callout's state", and the two would
+// disagree the first time either was changed.
+func parseCalloutHeader(line string, lineStart, depth int) (Secret, bool) {
+	quoted, quotedAt, ok := unquoteDepthLine(line, depth)
 	if !ok {
 		return Secret{}, false
 	}
@@ -304,10 +458,18 @@ func parseCalloutHeader(line string, lineStart int) (Secret, bool) {
 	}
 
 	secret := Secret{
-		State:        state,
-		HeaderStart:  lineStart,
-		HeaderEnd:    lineStart + len(line),
-		MarkerOffset: lineStart + 1 + 1 + len(calloutPrefix),
+		State:       state,
+		HeaderStart: lineStart,
+		HeaderEnd:   lineStart + len(line),
+		// **`quotedAt + len(calloutPrefix)`, not `1 + 1 + len(calloutPrefix)`.**
+		// The old constant assumed every line is `> ` — two bytes — which is wrong
+		// for `>[!secret]-` with no space after the marker, and for every level of
+		// nesting beyond the first. That was a live off-by-one in `MarkerOffset` on a
+		// legal callout, and it is the byte `SetMarker` rewrites: a reveal applied to
+		// the wrong offset is a secret disclosed to a player. Fixed by the same
+		// change that made `depth` a parameter, and held by
+		// `TestSetMarkerFindsTheMarkerWithoutASpaceAfterTheQuote`.
+		MarkerOffset: lineStart + quotedAt + len(calloutPrefix),
 	}
 
 	remainder := strings.TrimSpace(rest[1:])
@@ -412,31 +574,70 @@ func DerivedAnchor(campaignID int64, path string, secret Secret) string {
 	return hex.EncodeToString(digest.Sum(nil))[:12]
 }
 
-// unquoteOne strips one level of `>` quoting and answers whether the line had any.
+// unquoteDepthLine strips `depth` levels of `>` quoting from one line, and answers
+// whether the line carried that much quoting at all.
 //
-// **`>` followed by an optional space**, which is CommonMark's rule and Obsidian's.
-// A line of `>>>` quotes to `>`, and a line of `>` quotes to the empty string — so
-// an empty callout body line is `>` or `>` plus a space, and both must be
-// recognised as *continuing the callout* rather than ending it. That is why
+// **The offset comes back with the text, and that is the reason this function
+// exists in the shape it does.** Every byte stripped is a byte the caller's
+// `MarkerOffset` has to skip to land on the state character, and a nested callout's
+// marker is two quoting levels in with an indentation on top. Computing the offset
+// as `depth * 2` — or as the constant `2` this replaced — is an off-by-one waiting
+// for the first line that is not exactly `> `, and the byte it lands on is the one
+// `SetMarker` rewrites.
+//
+// The rules are CommonMark's and Obsidian's: `>` followed by an **optional** space.
+// A line of `>>>` at depth one quotes to `>`, and a line of `>` quotes to the empty
+// string — so an empty callout body line is `>` or `>` plus a space, and both must
+// be recognised as *continuing* the callout rather than ending it. That is why
 // `isQuote` asks "is this line quoted at all" rather than "does this line have
 // content".
-func unquoteOne(line string) (string, bool) {
-	trimmed := strings.TrimLeft(line, " ")
-	if !strings.HasPrefix(trimmed, ">") {
-		return "", false
+func unquoteDepthLine(line string, depth int) (string, int, bool) {
+	quotedAt := 0
+
+	for range depth {
+		// Leading spaces are quoting-neutral padding, not part of the content, so
+		// they are consumed without counting as a level — which is also why `at`
+		// below counts them for the offset.
+		for quotedAt < len(line) && line[quotedAt] == ' ' {
+			quotedAt++
+		}
+
+		if quotedAt >= len(line) || line[quotedAt] != '>' {
+			return "", 0, false
+		}
+
+		quotedAt++
+
+		// The optional space, and **a tab counts** — CommonMark allows either, and
+		// Obsidian reads `>\t[!secret]-` as a callout. The function this replaces had a
+		// comment saying it ate tabs and code that stripped spaces only, so
+		// `>\t[!secret]-` was not a callout here while being one everywhere else: a
+		// secret written with a tab rendered as a plain block quote for every reader.
+		//
+		// Recognising one more shape is the safe direction. The check is for the
+		// optional space only — a second `>` is left in place, because `>>> ` is a
+		// *deeper* quote and is what `depth` is counting.
+		if quotedAt < len(line) && (line[quotedAt] == ' ' || line[quotedAt] == '\t') {
+			quotedAt++
+		}
 	}
 
-	rest := trimmed[1:]
+	end := len(line)
+	if end > quotedAt && line[end-1] == '\r' {
+		end--
+	}
 
-	// A tab after `>` is still quoting, and eating it keeps the body's own
-	// indentation intact.
-	rest = strings.TrimPrefix(rest, " ")
-
-	return strings.TrimSuffix(rest, "\r"), true
+	return line[quotedAt:end], quotedAt, true
 }
 
-// unquote removes one level of quoting from every line of a body.
-func unquote(body string) string {
+// unquoteDepth removes `depth` levels of quoting from every line of a body.
+//
+// **A line that carries fewer levels than asked for is left alone**, which is what
+// keeps a nested body readable: the last line of a nested body that runs out of
+// `>` is already the author's text, and stripping nothing is right. The top-level
+// case never gets here — `unquoteDepth(body, 1)` on a body every line of which is
+// quoted is `unquote(body)` exactly.
+func unquoteDepth(body string, depth int) string {
 	if body == "" {
 		return ""
 	}
@@ -444,7 +645,7 @@ func unquote(body string) string {
 	lines := strings.Split(body, "\n")
 
 	for index, line := range lines {
-		if unquoted, ok := unquoteOne(line); ok {
+		if unquoted, _, ok := unquoteDepthLine(line, depth); ok {
 			lines[index] = unquoted
 		}
 	}
