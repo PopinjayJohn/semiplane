@@ -265,8 +265,15 @@ func TestTheVendoredBytesMatchThePin(t *testing.T) {
 
 		if !strings.HasPrefix(pkg.Source.Integrity, "sha512-") {
 			t.Errorf("%s pins %s with integrity %q; the tarball digest must be sha512, "+
-				"which is what npm publishes and what `make vendor` verifies.",
+				"which is what a registry publishes and what `make vendor` verifies.",
 				vendorManifest, pkg.Name, pkg.Source.Integrity)
+		}
+
+		if pkg.Source.Kind != "npm" && pkg.Source.Kind != "archive" {
+			t.Errorf("%s declares %s with source kind %q, and this reader knows npm "+
+				"and archive. A kind it does not know is an upstream `make vendor` "+
+				"refuses, so the pin describes bytes nothing can fetch",
+				vendorManifest, pkg.Name, pkg.Source.Kind)
 		}
 
 		for file := range pkg.Files {
@@ -277,8 +284,12 @@ func TestTheVendoredBytesMatchThePin(t *testing.T) {
 					vendorManifest, pkg.Files[file].Path, pkg.Files[file].SHA256)
 			}
 
-			if pkg.Files[file].Origin == "npm" && pkg.Source.Kind != "npm" {
-				t.Errorf("%s marks %s as coming from the package but %s has kind %q",
+			if pkg.Files[file].Origin == "archive" &&
+				pkg.Source.Kind != "npm" && pkg.Source.Kind != "archive" {
+				t.Errorf("%s marks %s as extracted from the pinned archive, but %s "+
+					"declares source kind %q, and neither of the two kinds fetched "+
+					"over https can supply it. A file claiming an upstream this "+
+					"manifest does not name is a file nothing fetches",
 					vendorManifest, pkg.Files[file].Path, pkg.Name, pkg.Source.Kind)
 			}
 		}

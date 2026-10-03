@@ -19,18 +19,15 @@
     "exactly one local entry and it is the licence, because MIT requires the notice",
     "to travel with the code.",
     "",
-    "**One package here is not fetched from npm, and this paragraph says so.**",
-    "`source.kind` is the reader's switch and both entries below say `npm`, but for",
-    "`@starfederation/datastar` the URL is a GitHub source tarball for a tag and not a",
-    "registry tarball, and its `integrity` is the sha512 of *that* archive in the same",
-    "`sha512-<base64>` spelling. The reader needs nothing else of `npm`: it fetches an",
-    "`https` URL, verifies a Subresource Integrity digest, and walks the archive for one",
-    "named member, and a GitHub tag archive satisfies all three identically. What the",
-    "label costs is precision, and the reason it is `npm` rather than something more",
-    "honest is that a third `kind` needs a change to `tools/vendor/main.go`, which is",
-    "the integrator's file: writing a manifest no committed reader understands would",
-    "have left `make vendor` failing on this entry. The work item that added it asks",
-    "for the change in its report instead.",
+    "**`source.kind` names the upstream, and there are two.** `npm` is a registry",
+    "tarball; `archive` is a project's own release tarball for a tag. Both take the",
+    "same path in `tools/vendor`: an `https` URL, a Subresource Integrity digest that",
+    "is checked *before* anything is decompressed, and one named member walked out of",
+    "the archive. So the label is bookkeeping rather than behaviour — but the",
+    "alternative was one label that was wrong for half the entries, in the one file",
+    "whose entire job is being trustworthy about provenance. `files[].origin` says",
+    "`archive` for a file extracted from the pinned source archive, whatever kind of",
+    "upstream served it, and `local` for a file this repository wrote.",
     "",
     "The digests are sha256 of the committed bytes, which is what `make vendor-check`",
     "recomputes. They are not the integrity value: that one covers the tarball, which is",
@@ -72,7 +69,7 @@
           "inPackage": "package/dist/pixi.min.mjs",
           "path": "internal/web/static/vendor/pixi.min.mjs",
           "mediaType": "text/javascript; charset=utf-8",
-          "origin": "npm",
+          "origin": "archive",
           "bytes": 841319,
           "sha256": "66257bc46776898bf8c54daaed402ed8f9ac109379c47b2dfa8aa048544d2953"
         },
@@ -80,7 +77,7 @@
           "inPackage": "package/LICENSE",
           "path": "internal/web/static/vendor/pixi.LICENSE",
           "mediaType": "text/plain; charset=utf-8",
-          "origin": "npm",
+          "origin": "archive",
           "bytes": 1092,
           "sha256": "5ce7447bc57f7349ffc48338782fbcabe613696e00712b20d66bc58e780f9473"
         }
@@ -133,7 +130,7 @@
         "media type is what a browser checks."
       ],
       "source": {
-        "kind": "npm",
+        "kind": "archive",
         "url": "https://codeload.github.com/starfederation/datastar/tar.gz/refs/tags/v1.0.4",
         "integrity": "sha512-yrRtzeKIyADb+PQ8Z/JxBGmiLVm4/Ae1bR7vWhoXJw5h66OzJHBMEWC9yf/LRjKFhWdFhm027WofrBXhbvW4ZA=="
       },
@@ -142,7 +139,7 @@
           "inPackage": "datastar-1.0.4/bundles/datastar.js",
           "path": "internal/web/static/vendor/star.js",
           "mediaType": "text/javascript; charset=utf-8",
-          "origin": "npm",
+          "origin": "archive",
           "bytes": 33553,
           "sha256": "727844adfc825ee651fb93c544a2a739986f9a21820a94524b35f0cac470cf91"
         },
@@ -150,7 +147,7 @@
           "inPackage": "datastar-1.0.4/LICENSE.md",
           "path": "internal/web/static/vendor/star.LICENSE",
           "mediaType": "text/plain; charset=utf-8",
-          "origin": "npm",
+          "origin": "archive",
           "bytes": 1052,
           "sha256": "17da0e216d3c6a819526f5b72a6a44d84d34bcd9beb4191ac6af89c1508ef08f"
         }
