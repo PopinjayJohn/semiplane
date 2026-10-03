@@ -112,6 +112,23 @@ record — they are listed here:
   a dated record to agree with the present would destroy the reason for keeping
   it. See
   [0051]({{ "decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/" | relURL }}).
+- **The theme layer is validated when its sheet is read, not "at registration,
+  and again whenever the watcher sees the manifest change".** UI §4.12.3 states
+  the registration-and-watcher timing. The manifest's ordinary writer is a sync
+  client, and registration is one moment in a file's life, so the check follows
+  the file instead. The consequence is that there is no registration-time
+  rejection and no watcher hook — which is a feature where the file is the input
+  and a liability where a bad theme should stop a boot. See
+  [0054]({{ "decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet/" | relURL }}).
+- **The SSE wire format in the records is a bare field list; the shipped one is
+  Datastar's framed form.** The records describe `selector`/`mode`/`elements`
+  fields, and architecture §7.1's §9 URL table is correct while the frame shape
+  it sits beside is not. The shipped stream carries Datastar's
+  `datastar-patch-elements` event with its `data-` prefix, and the earlier
+  implementation wrote the bare form with a reader written to agree — so the
+  sidebar would have shipped as a feature that never arrives, with no symptom
+  except a page that looks fine. Measured in a browser both ways. See
+  [0055]({{ "decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/" | relURL }}).
 - Diagrams render as code blocks. They are readable as source, which is how they
   were written.
 

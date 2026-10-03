@@ -55,9 +55,12 @@ func servedDocument(t *testing.T, path string, cookies ...*http.Cookie) (string,
 		// audits the *pre-campaign* shell document, which is why they are all nil:
 		// there is no campaign, so there is no content root to read, no index to
 		// query, no page to edit, no stream to open, no table to sit at and no
-		// plugin to render. The arity is the only thing this call has to track,
-		// and the router's own nil-tolerance is what keeps a campaign route out of
-		// a pre-campaign document rather than a panic at boot.
+		// plugin to render, and no brand sheet to generate. The arity is the only
+		// thing this call has to track, and the router's own nil-tolerance is what
+		// keeps a campaign route out of a pre-campaign document rather than a panic
+		// at boot — which for the theme route is the load-bearing case, because the
+		// `<link>` it serves is emitted only when a campaign exists.
+		nil,
 		nil,
 		nil,
 		nil,

@@ -100,9 +100,121 @@ fmt: ## Apply formatters (gofumpt + gci + golines)
 
 WEB_CSS_SRC := $(CURDIR)/internal/web/static/css/app.css
 WEB_CSS_OUT := $(CURDIR)/internal/web/static/dist/app.css
+WEB_DIST    := $(CURDIR)/internal/web/static/dist
+WEB_JS_SRC  := $(CURDIR)/internal/web/static/js
+WEB_VENDOR_SRC := $(CURDIR)/internal/web/static/vendor
+
+# --- The vendor pin (ADR 0052) ------------------------------------------------
+# Three targets, three different claims, and the division is the whole point:
+#
+#   vendor-check  re-hashes the bytes that are **committed**. No network. This is
+#                 the one in `check`, because it is the one that catches a
+#                 swapped blob in CI rather than trusting it.
+#   vendor-dry-run re-fetches and verifies, writes nothing. Network. This is the
+#                 check a manifest edit needs *before* it is committed, and the
+#                 reason it exists is that `vendor-check` cannot answer it: a
+#                 manifest edit changes the digests, so the offline check passes
+#                 the moment the wrong digests are written down.
+#   vendor        re-fetches, verifies, and writes. Network. Backs a `source`
+#                 whose bytes are not on disk yet.
+#
+# `vendor-check` and `vendor-dry-run` are deliberately two targets rather than
+# one with a flag: the first is gate-blocking and must reach no network — CI has
+# no npm account and no credentials, and a gate that fetched there would make
+# `make check` depend on a third party being up. The second is a developer's
+# command, run deliberately, with a network.
+#
+# **`vendor-check` is a `go test -run`, and that is a silent-pass hazard**, so it
+# carries the guard `make a11y` carries: `go test -run` exits **0** when the
+# pattern matches nothing, and a pattern matching nothing is a green gate wired
+# to no assertion at all. This repository has been bitten by that twice — the
+# wiki route held 23 tests and contributed none of them, and the assets route 49
+# — so a name here is a *claim* that the audit exists, and the claim is enforced
+# by counting what the pattern selects. See AGENTS.md.
+#
+# The check itself is `TestTheVendoredBytesMatchThePin` and it is **not**
+# reimplemented here. It reads the whole manifest rather than one package, so
+# adding a package to `packages` is covered without touching this file, and a
+# second digest check would be a second answer to the same question. It also
+# asserts the claim this target cannot: that **every file in the served vendor
+# tree is declared**, because a hand-copied script nobody hashed is a module the
+# browser loads with no digest covering it.
+VENDOR_PKG   := ./internal/web/static/js/map
+VENDOR_TESTS := Vendored
+
+.PHONY: vendor-check
+vendor-check: ## Re-hash every committed vendor byte against tools/vendor.json (no network)
+	@# The guard, in the same shape as the one under `a11y`: a listed pattern
+	@# that selects nothing is a gate nobody ran, and the exit status says 0.
+	@#
+	@# `|| true` on both substitutions, and that is not cosmetic. `.SHELLFLAGS`
+	@# carries `-e`, so a `go test -list` that exits non-zero — a package that
+	@# does not build, which is what a missing `*_templ.go` looks like from here
+	@# — kills the shell inside the assignment and the branch below never runs.
+	@# The guard then fails the target with no explanation, which is the one
+	@# outcome worse than the one it exists to prevent: a reader looking for a
+	@# missing audit rather than for a build that did not finish.
+	@listing="$$($(GO) test -list '$(VENDOR_TESTS)' $(VENDOR_PKG) 2>&1 >/dev/null || true)"; \
+		if [ -n "$$listing" ]; then \
+			echo "vendor-check: $(VENDOR_PKG) does not build, so the check cannot run:"; \
+			echo "$$listing" | sed 's/^/vendor-check:   /'; \
+			echo "vendor-check: report this as the build failure it is. Claiming it"; \
+			echo "vendor-check: 'contributes no test' sends a reader looking for a"; \
+			echo "vendor-check: missing audit instead of a missing generated file."; \
+			exit 1; \
+		fi
+	@ran="$$($(GO) test -list '$(VENDOR_TESTS)' $(VENDOR_PKG) 2>/dev/null | grep -c '^Test' || true)"; \
+		if [ "$$ran" -eq 0 ]; then \
+			echo "vendor-check: $(VENDOR_PKG) contributes no test matching VENDOR_TESTS."; \
+			echo "vendor-check: naming a package here is a claim that the vendor pin is"; \
+			echo "vendor-check: checked at all. Restore the test, or drop the package"; \
+			echo "vendor-check: from VENDOR_PKG — and then nothing checks the pin."; \
+			exit 1; \
+		fi
+	$(GO) test -count=1 -run '$(VENDOR_TESTS)' $(VENDOR_PKG)
+
+.PHONY: vendor-dry-run
+vendor-dry-run: ## Re-fetch every npm package and verify it, writing nothing (needs the network)
+	$(GO) run ./tools/vendor -dry-run
+
+.PHONY: vendor
+vendor: ## Re-fetch every npm package and verify it into internal/web/static/vendor/
+	$(GO) run ./tools/vendor
+
+# --- Staging the served browser assets ---------------------------------------
+# `internal/web` embeds `all:static/dist` and `/assets/` serves exactly that
+# tree, so **anything the browser fetches has to be in `static/dist/` or it 404s**
+# — and a 404 asset is a *silently* absent behaviour: the page renders, the
+# tabletop loads, and the map is simply a blank box. `make css` was building the
+# stylesheet into that tree and nothing was staging `static/js/` or
+# `static/vendor/` into it, which is how two work items arrived reporting the
+# same missing Makefile target rather than taking it.
+#
+# The relative layout is preserved because it is load-bearing twice over:
+# `scene.js` imports `../../vendor/pixi.min.mjs`, and `head.js` is the one
+# blocking script, so a flattened copy is a module graph that cannot resolve.
+#
+# `*.js` only, and that is not an optimisation. These trees also hold Go source:
+# the map's and the token list's audits are `*_test.go` files sitting beside the
+# modules they read, and a copy that took everything would embed a Go test file
+# into the binary and serve it at `/assets/js/…`. That is a source disclosure
+# through a route that has no gate on it.
+#
+# `tar -T -` rather than `cp --parents`: `cp --parents` is GNU, and a target
+# that only runs on the container's Linux is a target a contributor on macOS
+# cannot build the product with.
+.PHONY: stage-assets
+stage-assets: ## Stage the browser modules and vendored assets into internal/web/static/dist/
+	@rm -rf $(WEB_DIST)/js $(WEB_DIST)/vendor
+	@mkdir -p $(WEB_DIST)/js $(WEB_DIST)/vendor
+	@cd $(WEB_JS_SRC) && find . -type f -name '*.js' -print | tar -cf - -T - \
+		| tar -xf - -C $(WEB_DIST)/js
+	@cd $(WEB_VENDOR_SRC) && find . -type f -print | tar -cf - -T - \
+		| tar -xf - -C $(WEB_DIST)/vendor
+	@echo "staged $$(find $(WEB_DIST)/js $(WEB_DIST)/vendor -type f | wc -l) browser assets"
 
 .PHONY: css
-css: tailwind ## Build the stylesheet into internal/web/static/dist/
+css: tailwind stage-assets ## Build the stylesheet and stage the assets into internal/web/static/dist/
 	@mkdir -p $(dir $(WEB_CSS_OUT))
 	$(TOOLBIN)/tailwindcss --input $(WEB_CSS_SRC) --output $(WEB_CSS_OUT) --minify
 
@@ -183,9 +295,28 @@ test: ## Run tests
 # pass the guard below exists for. The wildcard is here for the first bullet only,
 # and the claim a name makes is enforced by the guard, not by the wildcard.
 A11Y_ROUTE_PKGS := $(wildcard ./internal/httpapi/wiki ./internal/httpapi/search \
-	./internal/httpapi/assets ./internal/httpapi/edit ./internal/httpapi/plugins)
+	./internal/httpapi/assets ./internal/httpapi/edit ./internal/httpapi/plugins \
+	./internal/httpapi/events ./internal/httpapi/theme)
 
-A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi $(A11Y_ROUTE_PKGS)
+# Component packages, listed separately rather than folded into A11Y_PKGS
+# silently, because for **two whole phases** they were absent. `./internal/web`
+# and `./internal/web/components` were in the gate and the packages below were
+# not, so `components/play`'s token-list audits and `components/chat`'s
+# live-region audit were written and never run by `make a11y`. Nothing said so.
+#
+# `go test -run` exits **0** on a pattern matching nothing, which is the silent
+# pass the ROUTE_PKGS guard exists for -- and that guard only walked
+# A11Y_ROUTE_PKGS, so a component package named without also being guarded had no
+# guard at all. The loop below therefore walks both lists.
+#
+# `components/play` earns its place on the same claim as any route package: the
+# token list is UI §7.6's **accessibility source of truth** for the tabletop, and
+# the document it renders into is a route document by any reading.
+A11Y_COMPONENT_PKGS := $(wildcard ./internal/web/components/play \
+	./internal/web/components/chat ./internal/web/components/live)
+
+A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi \
+	$(A11Y_COMPONENT_PKGS) $(A11Y_ROUTE_PKGS)
 
 # The pattern is a list of substrings of the gate's test names, and it is
 # deliberately *readable* rather than exhaustive-looking: a new gate test is added
@@ -219,8 +350,15 @@ a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 	@#
 	@# "The gate is green" must mean the gate looked. So a listed package that runs
 	@# nothing fails the gate, with the package named.
-	@for pkg in $(A11Y_ROUTE_PKGS); do \
-		listing=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>&1 >/dev/null); \
+	@# `|| true` on the substitution, and it is load-bearing: `.SHELLFLAGS`
+	@# carries `-e`, so a package that does not build exits the assignment before
+	@# the branch beneath it can print anything. The guard would then fail the
+	@# target silently, which is worse than the silent pass it was written to
+	@# stop — a reader would go looking for a missing audit rather than for a
+	@# build that did not finish. Found by writing `vendor-check`'s identical
+	@# guard and running it against a package that does not exist.
+	@for pkg in $(A11Y_ROUTE_PKGS) $(A11Y_COMPONENT_PKGS); do \
+		listing=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>&1 >/dev/null || true); \
 		if [ -n "$$listing" ]; then \
 			echo "a11y: $$pkg does not build, so the gate cannot look at it:"; \
 			echo "$$listing" | sed 's/^/a11y:   /'; \
@@ -233,7 +371,8 @@ a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 		if [ "$$ran" -eq 0 ]; then \
 			echo "a11y: $$pkg contributes no test matching A11Y_TESTS."; \
 			echo "a11y: naming a package here is a claim that it has §10.2 audits."; \
-			echo "a11y: add them, or drop the package from A11Y_ROUTE_PKGS."; \
+			echo "a11y: add them, or drop the package from A11Y_ROUTE_PKGS or"; \
+			echo "a11y: A11Y_COMPONENT_PKGS."; \
 			exit 1; \
 		fi; \
 	done
@@ -249,11 +388,28 @@ test-integration: ## Run integration-tagged tests
 	$(GO) test -race -count=1 -tags=integration $(PKGS)
 
 .PHONY: check
-check: ## Mandatory gate: fmt-check, css, templ, build, vet, lint, a11y, test
+check: ## Mandatory gate: fmt-check, vendor-check, css, templ, build, vet, lint, a11y, test
 	@echo "==> format check"
 	@diffs="$$($(GOENV) golangci-lint fmt --diff 2>/dev/null)"; \
 		if [ -n "$$diffs" ]; then echo "unformatted files:"; echo "$$diffs"; \
 		echo "run: make fmt"; exit 1; fi
+	@# `vendor-check` sits here, immediately after the format check and before
+	@# `css`, for two reasons and the first is the one that decides it.
+	@#
+	@# **It reads a committed file, not a build output**, exactly as the format
+	@# check above does. Everything from `css` down is about to *produce* the
+	@# tree the binary embeds; `vendor-check` is about whether the bytes going
+	@# into it are the bytes the repository claims to ship. A property of the
+	@# tree is checked before anything is built from the tree, because that is
+	@# when finding it is cheap.
+	@#
+	@# And it is the same argument that puts `css` and `templ` before `build`:
+	@# `stage-assets` copies `static/vendor/` into `static/dist/`, `internal/web`
+	@# embeds `all:static/dist`, and `build` therefore embeds **whatever vendored
+	@# bytes are on disk** into the shipped binary. A `build` that embedded a
+	@# swapped blob would produce a working binary serving somebody else's
+	@# JavaScript, and every gate below this line would report green about it.
+	@echo "==> vendor-check"; $(MAKE) --no-print-directory vendor-check
 	@echo "==> css";    $(MAKE) --no-print-directory css
 	@echo "==> templ";  $(MAKE) --no-print-directory templ
 	@echo "==> build";  $(MAKE) --no-print-directory build
@@ -340,6 +496,6 @@ clean: ## Remove build and test artifacts
 	rm -rf $(SITE_PUBLISH) $(SITE_CACHE) $(SITE_DIR)/.site-check $(SITE_PLAN)S
 	rm -f $(SITE_DIR)/.hugo_build.lock
 	rm -rf $(TOOLBIN)
-	rm -f internal/web/static/dist/app.css
+	rm -rf internal/web/static/dist
 	rm -f $(shell find internal -name '*_templ.go' 2>/dev/null)
 	$(GO) clean -testcache

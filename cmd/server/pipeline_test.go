@@ -330,6 +330,7 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 		newEventRoute(hub, discardLogger()),
 		newPlayRoute(i.plane.hub, discardLogger()),
 		newPluginRoute(i.store, i.plugins, i.plane.hub, discardLogger()),
+		newThemeRoute(roots, discardLogger()),
 	)
 }
 
@@ -591,7 +592,7 @@ func TestReadyzRendersThePipelineCountersAsZeros(t *testing.T) {
 	// this process has none of.
 	handler := httpapi.NewRouter(
 		discardLogger(), testConfig(), registry,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 
 	recorder := httptest.NewRecorder()

@@ -19,12 +19,13 @@ func TestAllEventNamesAreUniqueAndComplete(t *testing.T) {
 
 	names := observability.AllEventNames()
 
-	// A defensive count: the architecture record lists eighteen, and phase 4 adds
-	// five for the indexer under ADR 0032. If this fails, a signal was added
-	// without updating the test, which is the intended alarm — and, if the addition
-	// came with no record, this failure is the only thing standing between an
-	// unrecorded deviation and a shipped one.
-	const wantCount = 24
+	// A defensive count: the architecture record lists eighteen; phase 4 adds
+	// six for the indexer and the content pipeline under ADR 0032; phase 7 adds
+	// `state.write_ms`; and phase 9 adds `theme.brand_invalid` under ADR 0054. If
+	// this fails, a signal was added without updating the test, which is the
+	// intended alarm — and, if the addition came with no record, this failure is
+	// the only thing standing between an unrecorded deviation and a shipped one.
+	const wantCount = 25
 
 	if len(names) != wantCount {
 		t.Errorf("AllEventNames() has %d entries, want %d", len(names), wantCount)
