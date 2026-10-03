@@ -233,3 +233,116 @@ func TestStoreOpenMigrates(t *testing.T) {
 		t.Errorf("insert into campaign_state: %v; store.Open did not apply every migration", err)
 	}
 }
+
+// TestMigrateAppliesToThePreviousVersion is the upgrade-path assertion: a
+// database migrated by the previous phase's build is at version 10, and the
+// new migration must apply on top of it cleanly.
+//
+// The previous version is simulated rather than checked out, because the
+// runner has no "apply only these" mode: the full set is applied, then the
+// newest migration's bookkeeping row is deleted and its table dropped, which
+// leaves the database in exactly the state a version-10 build would have
+// left it. The assertion is then that Migrate applies 0011 and nothing else —
+// a runner that re-applied an earlier migration would fail on a CREATE TABLE,
+// and one that applied 0011 twice would fail on the primary key.
+func TestMigrateAppliesToThePreviousVersion(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("initial Migrate() error = %v, want nil", err)
+	}
+
+	// Roll back to version 10: drop the newest table and its bookkeeping row.
+	if _, err := db.ExecContext(t.Context(), "DROP TABLE secrets_revealed"); err != nil {
+		t.Fatalf("drop secrets_revealed: %v", err)
+	}
+
+	if _, err := db.ExecContext(t.Context(),
+		"DELETE FROM schema_migrations WHERE name = ?", "secrets-revealed",
+	); err != nil {
+		t.Fatalf("delete bookkeeping row: %v", err)
+	}
+
+	// The database is now at version 10. Migrate must apply exactly 0011.
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate() at the previous version error = %v, want nil", err)
+	}
+
+	applied := appliedVersions(t, db)
+
+	if _, ok := applied["secrets-revealed"]; !ok {
+		t.Error("secrets-revealed is unapplied after Migrate at the previous version")
+	}
+
+	// And the table is back.
+	var name string
+
+	row := db.QueryRowContext(t.Context(),
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", "secrets_revealed")
+
+	if err := row.Scan(&name); err != nil {
+		t.Errorf("secrets_revealed is missing after Migrate at the previous version: %v", err)
+	}
+}
+
+// TestMigrateShippedSetIsExactlyTheExpectedSet is the assertion that the
+// shipped migrations are unmodified and complete.
+//
+// The forward-only rule (AGENTS.md: "Never edit a shipped migration — add a
+// new one") is a process rule, and this is the practical enforcement available
+// to a test: the embedded migration set is exactly the expected set, so an
+// addition, a rename, or a removal is caught. A modification of a shipped
+// migration's *body* is not caught by this test — the name set is unchanged —
+// and that gap is stated rather than hidden: the guard is the process rule
+// plus the review that enforces it, and a test that claimed to catch body
+// edits would be a test that cannot fail.
+//
+// The table-existence check is the other half: a migration whose CREATE TABLE
+// was deleted would still record its name in schema_migrations (the SQL would
+// be a comment-only no-op), so the name set alone would pass. Asserting the
+// table exists is what catches a migration that was gutted rather than removed.
+func TestMigrateShippedSetIsExactlyTheExpectedSet(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate() error = %v, want nil", err)
+	}
+
+	applied := appliedVersions(t, db)
+
+	want := []string{
+		"schema-migrations",
+		"campaign-state",
+		"users",
+		"auth-sessions",
+		"campaigns",
+		"campaign-members",
+		"pages-and-search",
+		"page-revisions",
+		"audit-log",
+		"campaign-rule-modules",
+		"secrets-revealed",
+	}
+
+	if len(applied) != len(want) {
+		t.Errorf("applied %d migrations, want %d: %v", len(applied), len(want), applied)
+	}
+
+	for _, name := range want {
+		if _, ok := applied[name]; !ok {
+			t.Errorf("migration %q is unapplied: %v", name, applied)
+		}
+	}
+
+	// The table the newest migration creates must exist. A migration whose
+	// CREATE TABLE was deleted would still be recorded as applied (the SQL
+	// would be a comment-only no-op), so the name set alone would pass.
+	var name string
+
+	row := db.QueryRowContext(t.Context(),
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", "secrets_revealed")
+
+	if err := row.Scan(&name); err != nil {
+		t.Errorf("secrets_revealed is missing after Migrate(): %v", err)
+	}
+}
