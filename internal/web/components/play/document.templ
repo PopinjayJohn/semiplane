@@ -61,10 +61,25 @@ templ Document(view DocumentView, rail templ.Component) {
 			// polarity instead of a page pinned to one theme.
 			<meta name="color-scheme" content="light dark"/>
 			<title>{ view.Title }</title>
-			<link rel="stylesheet" href="/assets/app.css"/>
-			// §3.7's one blocking inline script, before the stylesheet link, so
+			// §3.7's one blocking inline script, **before** the stylesheet link, so
 			// `data-theme` and `data-ui` are both resolved before the first paint.
+			//
+			// It was after, and the comment above it claimed otherwise — which is
+			// how a comment that misdescribes the line beneath it survives review:
+			// nothing here reads the code, and `shell/head_test.go` audits the
+			// *shell's* documents rather than a route that renders its own `<head>`.
+			// `shell.AuditDocument` over the served page found it, and
+			// `TestThePlayPageSatisfiesTheShellContract` now holds it.
 			@shell.Resolver()
+			<link rel="stylesheet" href="/assets/app.css"/>
+			// The campaign's own brand sheet, after `app.css` so a brand token
+			// wins over the core declaration of the same name at equal
+			// specificity. Per-campaign and not per-user (UI §4.12.4), so the href
+			// is keyed by the slug already in the path and the document stays
+			// free of `Vary: Cookie` under §3.7.
+			if view.Campaign.Slug != "" {
+				<link rel="stylesheet" href={ view.Campaign.ThemeStylesheet() } data-testid="campaign-theme"/>
+			}
 		</head>
 		<body data-route="play">
 			// §7.2 fixes the order and the position: the first focusable elements

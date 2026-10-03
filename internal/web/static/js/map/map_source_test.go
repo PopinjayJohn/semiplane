@@ -26,7 +26,7 @@
 // UI §3.7's §10.3–§10.7 sweeps remain agent-assisted for that reason, and every
 // finding from them becomes a committed test here rather than a comment.
 
-package map_test
+package mapjs_test
 
 import (
 	"crypto/sha256"
