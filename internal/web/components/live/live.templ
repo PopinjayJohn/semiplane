@@ -1,0 +1,593 @@
+package live
+
+// The live chrome: the sidebar the event stream patches into, and the one place
+// the play document declares where each fragment lands.
+//
+// # What this component is and is not
+//
+// It is **mount points**, not content. Every container a patch is written into is
+// here, declared empty and carrying the region §7.5's table gives it, and the
+// client's job is to append into them. That is the whole inversion the design
+// record asks for: "rendered DOM fragments … patched by Datastar" means the
+// server decides what a thing is called and the client never renders content, and
+// a chrome that shipped its own announcement text would be a second place
+// deciding what a turn change is.
+//
+// The one exception is the history, which is here because history arrived with
+// the document: the initiative order and the dice rollbacks are in
+// `aria-live="off"` lists beside their live regions, which is §7.5's replay rule
+// stated as markup. `TestTheLiveRegionsAreEmptyAtLoadAndTheHistoryIsNot` holds both
+// halves of it.
+//
+// # The chat log is not here, and that is deliberate
+//
+// `components/chat` already renders `<ol data-chrome="chat-log" role="log"
+// aria-live="polite" aria-relevant="additions">`, empty at load, and its own
+// comment says that attribute is "a promise to phase 9's script". So the chat
+// target is declared in `regions.go` — with `chat.LogChromeHook` as its hook, read
+// from the package that owns it — and **this component does not render it**.
+//
+// Rendering it here would give a document that mounts both two
+// `[data-chrome="chat-log"]` elements, which §10.2's hook rule fails and which no
+// client can resolve: `querySelector` takes the first and the reader's log goes
+// nowhere. The chat panel and this chrome are two panels of one sidebar, and
+// `TestEveryTargetAppearsExactlyOnceInTheSidebar` renders both to prove it.
+//
+// # The connection state ships as prose and is revealed by the client
+//
+// `SocketState` renders **both** of its sentences into one assertive container,
+// with `hidden` on the one that is not currently true. The client toggles a
+// `hidden` attribute; it authors no English.
+//
+// The reason is §7.5's last row — "connection lost" rides the WebSocket, because
+// the connection is what dropped. A patch target for the connection state would
+// mean the notice arrived over the channel whose loss is the condition, which is
+// the one design that guarantees the reader who needed it most is the one who
+// does not get it. §9's "the header indicator is the only signal" during a
+// reconnect is the same argument from the other side.
+
+import (
+	"strconv"
+	"time"
+
+	"github.com/semiplane/semiplane/internal/web/components/chat"
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
+// The test hooks the chrome declares.
+//
+// Named constants for the reason every hook in this repository is one: §10.2's
+// rule asserts a `data-testid` appears exactly once and is not empty, so a hook
+// spelled two ways is a hook that appears twice and fails a document for a reason
+// nobody would guess.
+const (
+	// ChromeTestID is the chrome's own `<section>`.
+	ChromeTestID = "live-chrome"
+	// EventsTestID is the element carrying the one `data-init` that opens the
+	// stream.
+	EventsTestID = "live-events"
+	// WebSocketTestID is the element the client reads the tabletop socket from.
+	WebSocketTestID = "live-websocket"
+	// InitiativePanelTestID is the tracker's `<section>`.
+	InitiativePanelTestID = "live-initiative"
+	// InitiativeHeadingID is the tracker's heading, which its `aria-labelledby`
+	// names.
+	InitiativeHeadingID = "live-initiative-heading"
+	// InitiativeTestID is the patch target the client replaces.
+	InitiativeTestID = "live-initiative-track"
+	// InitiativeHistoryTestID is the order as the document carried it, in a
+	// silent list.
+	InitiativeHistoryTestID = "live-initiative-history"
+	// InitiativeEmptyTestID is the no-combatants state.
+	InitiativeEmptyTestID = "live-initiative-empty"
+	// InitiativeRowAttribute is the attribute a row carries so the client and the
+	// tests can find it. A `data-testid` would appear once per row and select
+	// nothing, which is the rule `components/chat`'s message rows state.
+	InitiativeRowAttribute = "data-initiative-row"
+	// InitiativeTurnAttribute is the row attribute carrying `aria-current`, so the
+	// state is data as well as ARIA and a test does not have to match on the
+	// attribute's value alone.
+	InitiativeTurnAttribute = "data-initiative-turn"
+
+	// DicePanelTestID is the dice log's `<section>`.
+	DicePanelTestID = "live-dice"
+	// DiceHeadingID is the dice log's heading, which its `aria-labelledby` names.
+	DiceHeadingID = "live-dice-heading"
+	// DiceTestID is the patch target the client appends into, and the live region.
+	DiceTestID = "live-dice-log"
+	// DiceHistoryTestID is the rollbacks the document carried, in a silent list.
+	DiceHistoryTestID = "live-dice-history"
+	// DiceEmptyTestID is the nothing-rolled state.
+	DiceEmptyTestID = "live-dice-empty"
+	// DiceTruncatedTestID says older rolls were dropped.
+	DiceTruncatedTestID = "live-dice-truncated"
+	// DiceLineAttribute is the attribute each roll carries. As with the tracker's
+	// rows: a hook on every line appears N times and selects nothing.
+	DiceLineAttribute = "data-dice-line"
+
+	// AnnounceTestID is the polite status region.
+	AnnounceTestID = "live-announce"
+	// AnnounceHeadingID is the region's own heading, which its `aria-labelledby`
+	// names — and which is **visually hidden**, because a status region whose
+	// label is visible announces "Status" every time it speaks.
+	AnnounceHeadingID = "live-announce-heading"
+
+	// NoticePanelTestID is the assertive region's patch target, which is empty at load.
+	NoticePanelTestID = "live-notice"
+	// NoticeKnownTestID is the silent list of conditions the document already knew,
+	// beside the region. See `NoticePanel` for why there are two.
+	NoticeKnownTestID = "live-notice-known"
+	// NoticeHeadingID is the assertive region's heading, also visually hidden.
+	NoticeHeadingID = "live-notice-heading"
+
+	// SocketPanelTestID is the connection-state container.
+	SocketPanelTestID = "live-socket"
+	// SocketConnectedTestID is the connected sentence's block. **Exported**, because
+	// `internal/web/static/js/live` reads it: the client toggles `hidden` between the
+	// two paragraphs and the hook it selects on has one owner.
+	SocketConnectedTestID = "live-socket-connected"
+	// SocketLostTestID is the lost sentence's block, and the assertive one. Exported
+	// for the same reason as `SocketConnectedTestID`.
+	SocketLostTestID = "live-socket-lost"
+)
+
+// ChromeHookAttribute is the attribute carrying the tabletop socket's URL.
+//
+// **`data-socket` and not `data-href`**, because the value is not a link anything
+// navigates to: it is a `ws:` or `wss:` URL the client opens, and an attribute
+// called `href` in a document with real anchors in it invites a browser or a
+// reader to treat it as one. §7.10's "hover-only affordances" and §7.7's "labels,
+// never placeholders" are both about the same class of mistake: a thing that
+// looks like one kind of control and is another.
+const SocketHookAttribute = "data-socket"
+
+// Chrome is the live sidebar: the mount points, the two connection hooks, and the
+// history that arrived with the document.
+//
+// `aria-label` on the `<section>` rather than `aria-labelledby` a heading inside
+// it, because **this section has no visible heading of its own** — it is a stack
+// of panels inside the rail's `complementary`, and §4.5 puts the rail's name on
+// the rail. A hidden heading here would be a heading a screen reader announces
+// and a sighted reader never sees, which is §7.2's rule in reverse.
+templ Chrome(view ChromeView) {
+	<section class="live-chrome" aria-label="Table activity" data-testid={ ChromeTestID }>
+		// The one element that opens the event stream.
+		//
+		// `data-init` rather than a `data-on:` event, and the reason is that this is
+		// the **first** thing that must happen: a stream opened by an event handler
+		// waits for a click, and the page's own rendering is not an interaction. It
+		// is also the only `data-init` on the page, which is what makes §7.5's
+		// second Task countable rather than asserted.
+		//
+		// `hidden`, and not `aria-hidden`: it is an empty element with no content, and
+		// `hidden` takes it out of the accessibility tree and out of the layout
+		// without an attribute whose value a §10.2 audit has to interpret.
+		<div
+			class="visually-hidden"
+			hidden
+			data-init={ "@get('" + view.EventsHref + "')" }
+			data-testid={ EventsTestID }
+		></div>
+		// The one element carrying the tabletop socket's URL. Read by the client and
+		// by nothing else; see `SocketHookAttribute` for why the attribute is called
+		// what it is.
+		<div
+			class="visually-hidden"
+			hidden
+			{ ChromeAttribute }={ WebSocketHook }
+			{ SocketHookAttribute }={ view.SocketHref }
+			data-testid={ WebSocketTestID }
+		></div>
+		@SocketState()
+		@InitiativePanel(view.Initiative)
+		@DicePanel(view.Dice)
+		@Announcement()
+		@NoticePanel(view.Notices)
+	</section>
+}
+
+// SocketState is the connection state, both sentences, one of them showing.
+//
+// **`role="alert"` on the container and `hidden` on the blocks**, and the two
+// together are the whole mechanism. A live region announces a *change* to its
+// contents; hiding the connected block is a removal, and inserting the lost block
+// is an addition, and the second of those is what a reader with the table open
+// needs to hear. The container is empty of visible content at load either way, so
+// nothing is announced on connect.
+templ SocketState() {
+	<div
+		class="live-socket"
+		role={ AlertRole }
+		aria-live={ Assertive }
+		aria-label="Connection"
+		data-testid={ SocketPanelTestID }
+	>
+		<p class="live-socket-state" data-testid={ SocketConnectedTestID }>
+			Connected to this table.
+		</p>
+		<p class="live-socket-state notice notice--warning" role={ AlertRole } data-testid={ SocketLostTestID } hidden>
+			The connection to this table was lost. Reconnecting. Nothing you typed has been lost.
+		</p>
+	</div>
+}
+
+// InitiativePanel is the tracker: the order as the document carried it, and the
+// target the client replaces.
+//
+// The history list is **`aria-live="off"` and inside the same panel**, and the
+// target list beside it is empty. The client's patch replaces the target's
+// children, so what a reader has and what a reader hears never overlap: the
+// history is on the page and silent, and the live order is what arrived after it.
+templ InitiativePanel(view InitiativeView) {
+	<section
+		class="live-panel live-initiative"
+		aria-labelledby={ InitiativeHeadingID }
+		data-testid={ InitiativePanelTestID }
+	>
+		<h2 id={ InitiativeHeadingID }>Initiative</h2>
+		if len(view.Entries) == 0 {
+			<p class="empty" data-testid={ InitiativeEmptyTestID }>{ initiativeEmpty(view) }</p>
+		} else {
+			<h3 class="visually-hidden">Order when this page loaded</h3>
+			<ol class="live-initiative-history" aria-live={ SilentLive } data-testid={ InitiativeHistoryTestID }>
+				for _, entry := range view.Entries {
+					@InitiativeRow(entry, view.Turn)
+				}
+			</ol>
+		}
+		// The patch target. **No `role` and no `aria-live`**, and that is the design:
+		// §7.5's announced-content table has no row for "the order changed" — it has
+		// one for "turn change", and that arrives in the polite status region below.
+		// A tracker that announced itself would read the whole order aloud on every
+		// change, which is the replay failure wearing a different hat.
+		<ol class="live-track" { ChromeAttribute }={ InitiativeHook } data-testid={ InitiativeTestID }></ol>
+	</section>
+}
+
+// InitiativeRow is one combatant.
+//
+// `aria-current="true"` on the row whose turn it is, and **not** a live region:
+// state a reader can ask about rather than a sentence they are interrupted with,
+// which is UI §7.6's argument about the canvas and the token list applied to the
+// tracker. A row is not a focus stop and carries no `.target`, because the
+// interactive representation of a placement is the token list.
+templ InitiativeRow(entry InitiativeEntry, turn string) {
+	<li
+		class="live-initiative-row"
+		{ InitiativeRowAttribute }
+		data-placement={ entry.PlacementID }
+		if entry.PlacementID == turn && turn != "" {
+			data-initiative-turn="true"
+		}
+		aria-current={ turnAttr(entry.PlacementID, turn) }
+	>
+		<span class="live-initiative-value">{ strconv.Itoa(entry.Initiative) }</span>
+		<span class="live-initiative-name">{ entry.Name }</span>
+	</li>
+}
+
+// DicePanel is the dice log: the rollbacks the document carried, and the live
+// region they are not in.
+templ DicePanel(view DicePanelView) {
+	<section class="live-panel live-dice" aria-labelledby={ DiceHeadingID } data-testid={ DicePanelTestID }>
+		<h2 id={ DiceHeadingID }>Dice</h2>
+		if view.Truncated {
+			<p class="empty-note" data-testid={ DiceTruncatedTestID }>
+				Older rolls are no longer in this log.
+			</p>
+		}
+		if len(view.History) == 0 {
+			<p class="empty" data-testid={ DiceEmptyTestID }>{ diceEmpty(view) }</p>
+		} else {
+			<h3 class="visually-hidden">Rolls from before this page loaded</h3>
+			<ol class="live-dice-history" aria-live={ SilentLive } data-testid={ DiceHistoryTestID }>
+				for _, roll := range view.History {
+					@DiceRow(roll)
+				}
+			</ol>
+		}
+		// The live region, **empty at load**. See the panel comment.
+		<ol
+			class="live-dice-log"
+			role={ LogRole }
+			aria-live={ Polite }
+			aria-atomic="false"
+			aria-relevant={ AdditionsRelevant }
+			aria-labelledby={ DiceHeadingID }
+			{ ChromeAttribute }={ DiceHook }
+			data-testid={ DiceTestID }
+		></ol>
+	</section>
+}
+
+// Announcement is the polite status region, and it is **empty**.
+//
+// The heading is a sibling and not a child, which is the load-bearing detail: a live
+// region is registered with the assistive technology when it appears, and what it
+// *contains* at that moment is the one thing §7.5's replay rule is about. A
+// `visually-hidden` `<h3>` inside the region is content the region contains, and
+// whether a particular browser announces it on load is exactly the kind of
+// question this project should not be relying on an answer to. Outside, the region
+// has nothing at all until something happens.
+//
+// `aria-atomic="false"` so a replaced sentence is announced as itself rather than as
+// the region's whole contents read from the top.
+templ Announcement() {
+	<div class="live-announce">
+		<h3 id={ AnnounceHeadingID } class="visually-hidden">What just changed</h3>
+		<p
+			class="live-announce-region"
+			role={ StatusRole }
+			aria-live={ Polite }
+			aria-atomic="false"
+			aria-labelledby={ AnnounceHeadingID }
+			{ ChromeAttribute }={ AnnounceHook }
+			data-testid={ AnnounceTestID }
+		></p>
+	</div>
+}
+
+// NoticePanel is the assertive region, and the conditions already known when the
+// document was rendered.
+//
+// **Two places, and the split is §7.5's replay rule applied to an alert.** The
+// `role="alert"` element is the *patch target* and it is empty: it fires on a
+// transition, and a reader who loads a page with a condition already true has not
+// transitioned — they have arrived, and `components/chat`'s compose-error paragraph
+// spells out why that matters ("a live region that fires on load is the search
+// route's mistake one level down"). The conditions the document already knew are in
+// a sibling marked `aria-live="off"`, where they are on screen, findable by
+// landmark, and never spoken.
+//
+// The heading is a sibling of both, for the same reason the announcement's is.
+//
+// Empty is the healthy state and not a missing one: §9's degraded rows are
+// conditions that persist until somebody fixes them, so a table in trouble says so
+// and a table in order says nothing. The container is present either way, because a
+// region that is absent cannot be patched into.
+templ NoticePanel(notices []NoticeView) {
+	<div class="live-notice">
+		<h3 id={ NoticeHeadingID } class="visually-hidden">Problems with this table</h3>
+		<div
+			class="live-notice-region"
+			role={ AlertRole }
+			aria-live={ Assertive }
+			aria-labelledby={ NoticeHeadingID }
+			{ ChromeAttribute }={ NoticeHook }
+			data-testid={ NoticePanelTestID }
+		></div>
+		if len(notices) > 0 {
+			<div class="live-notice-known" aria-live={ SilentLive } data-testid={ NoticeKnownTestID }>
+				for _, notice := range notices {
+					@Notice(notice)
+				}
+			</div>
+		}
+	</div>
+}
+
+// Notice is one degraded condition.
+//
+// `<section>` with `aria-labelledby` its own heading, for the reason
+// `components/chat`'s panel gives: a landmark a reader cannot jump to is not one,
+// and a visible heading is the only version of a name everyone else can read too.
+templ Notice(view NoticeView) {
+	if view.Kind == NoticeNone {
+		// Nothing at all rather than an empty section: §4.5's rule that a control a
+		// viewer cannot use is absent, extended to a notice with nothing to say. An
+		// empty `role="alert"` region is a landmark in the outline that names a
+		// problem that does not exist.
+	} else {
+		<section class="live-notice-item notice notice--warning" aria-labelledby={ noticeHeadingID(view.Kind) }>
+			<h4 id={ noticeHeadingID(view.Kind) }>{ view.Kind.Heading() }</h4>
+			if view.Detail != "" {
+				<p>{ view.Detail }</p>
+			}
+		</section>
+	}
+}
+
+// --- The fragments the stream patches in ---------------------------------------
+//
+// Each of these is the *whole* of what arrives, and each is a component rather
+// than a string so the escaping is templ's. §7.5's "rendered DOM fragments" is
+// literal: what crosses the connection is markup this process produced.
+
+// InitiativeFragment is the tracker, rebuilt whole.
+//
+// `mode: inner` on the target, so the container the client selected survives and
+// only its children change. The rows carry no focus stop, which is what
+// `Decide`'s focus check insists on and why `InitiativeRow` is a `<li>` and not a
+// `<button>`: the token list is where a placement is operable (§7.6), and a
+// tracker that re-rendered buttons would move focus under a reader every time the
+// order changed.
+templ InitiativeFragment(view InitiativeView) {
+	if len(view.Entries) == 0 {
+		<p class="empty" data-testid={ InitiativeEmptyTestID }>{ initiativeEmpty(view) }</p>
+	} else {
+		for _, entry := range view.Entries {
+			@InitiativeRow(entry, view.Turn)
+		}
+	}
+}
+
+// ChatLineFragment is one chat line, appended to the live log.
+//
+// **`chat.MessageRow` and not a row of this package's own**, because the chat log
+// has one renderer and this is it: the same escaping, the same `data-seq`, the
+// same time format, the same class vocabulary. A second row component would be a
+// second answer to what a chat line looks like, and the two would drift the first
+// time either was restyled.
+templ ChatLineFragment(message ChatLineView) {
+	@chat.MessageRow(message)
+}
+
+// DiceLineFragment is one roll, appended to the dice log.
+//
+// A `<li>` carrying `data-dice-line` and no focus stop: the log is a readout of
+// what the server computed (S-7.3), and a control on a roll line would be a
+// control that re-rolls, which is an intent and belongs on the WebSocket.
+templ DiceLineFragment(roll DiceLineView) {
+	@DiceRow(roll)
+}
+
+// DiceRow is one roll, in the history list and in the live log alike.
+//
+// `<time datetime>` carries the full instant in the markup either way, so a client
+// that wants to localise has the value and does not have to reparse, and the
+// visible time is UTC for the reason `chat.Message.At` gives: two readers of the
+// same table must not see two different times for one roll.
+templ DiceRow(roll DiceLineView) {
+	<li class="live-dice-line" { DiceLineAttribute }>
+		<p class="card-meta">
+			<strong>{ roll.Actor }</strong>
+			<time datetime={ roll.At.Format(time.RFC3339) }>{ clockLabel(roll.At) }</time>
+		</p>
+		<p class="live-dice-total">{ diceTotalLabel(roll) }</p>
+		if len(roll.Breakdown) > 0 {
+			<p class="card-meta live-dice-breakdown">{ diceBreakdownLabel(roll) }</p>
+		}
+	</li>
+}
+
+// AnnouncementFragment is one polite status sentence.
+//
+// **A `<p>` and nothing else.** The target is already a `role="status"`, so the
+// fragment's own element must not be another live region: a `role="status"` inside
+// a `role="status"` is two regions for one fact and the reader hears it twice. The
+// same reasoning is why no heading appears here — every replacement of a status
+// region's contents is spoken, and a heading would be spoken with it.
+templ AnnouncementFragment(view AnnouncementView) {
+	<p class="live-announce-sentence" data-testid="live-announce-sentence">{ view.Sentence }</p>
+}
+
+// NoticeFragment is one degraded condition, replacing the assertive region's
+// contents.
+//
+// The region is `role="alert"`, so this is an *insertion* rather than an
+// announcement the client chooses to speak, and §7.5's throttle is therefore a
+// floor on the gap between two of these as well. The alternative — polite, and
+// leaving the reader to notice — is wrong for these three conditions specifically:
+// each of them means the table the reader is looking at may be wrong.
+templ NoticeFragment(view NoticeView) {
+	@Notice(view)
+}
+
+// --- The copy ---------------------------------------------------------------------
+
+// initiativeEmpty is the tracker's empty state.
+func initiativeEmpty(view InitiativeView) string {
+	if view.Empty != "" {
+		return view.Empty
+	}
+
+	return "Nobody has joined the order yet."
+}
+
+// diceEmpty is the dice log's empty state.
+func diceEmpty(view DicePanelView) string {
+	if view.Empty != "" {
+		return view.Empty
+	}
+
+	return "Nothing has been rolled yet."
+}
+
+// turnAttr is a row's `aria-current`, or nothing.
+//
+// **Written only on the current row**, and not `aria-current="false"` on the
+// others: the attribute has three values and `false` is one of them, but a row
+// that says it is not current carries a fact nobody asked for, and §10.2's
+// reference-integrity rule is happier with a shorter attribute. The absence is
+// unambiguous — `aria-current` defaults to `false`.
+func turnAttr(placementID, turn string) string {
+	if turn == "" || placementID != turn {
+		return ""
+	}
+
+	return "true"
+}
+
+// noticeHeadingID is a notice's heading id, which its `aria-labelledby` names.
+//
+// Derived from the kind rather than from the notice's position, so two notices
+// never share an id — and §10.2's rule that an id is unique is what makes a
+// duplicated one a failure rather than an ambiguity a screen reader resolves by
+// picking the first.
+func noticeHeadingID(kind NoticeKind) string {
+	return NoticeHeadingID + "-" + strconv.Itoa(int(kind))
+}
+
+// clockLabel is the time as a reader sees it: the wall clock, UTC.
+func clockLabel(at time.Time) string {
+	return at.UTC().Format("15:04:05")
+}
+
+// diceTotalLabel is the roll's result as a sentence.
+//
+// **The total first and the expression after it**, because the total is what the
+// roll was for and the expression is how it was asked for. And "17 on 2d6+3"
+// rather than "2d6+3 = 17": a screen reader announces an equals sign as
+// "equals", which is noise between the two numbers a reader is comparing.
+func diceTotalLabel(roll DiceLineView) string {
+	if roll.Expression == "" {
+		return strconv.Itoa(roll.Total)
+	}
+
+	return strconv.Itoa(roll.Total) + " on " + roll.Expression
+}
+
+// diceBreakdownLabel is the individual dice, when there were any.
+func diceBreakdownLabel(roll DiceLineView) string {
+	numbers := make([]string, 0, len(roll.Breakdown))
+
+	for _, value := range roll.Breakdown {
+		numbers = append(numbers, strconv.Itoa(value))
+	}
+
+	return "Rolled " + joinComma(numbers) + "."
+}
+
+// joinComma is the list separator, and a function rather than `strings.Join` at
+// the call site so that the one list in this package that is *not* a plain join —
+// the conditions in `components/play`, which sorts first — has a spelling of its
+// own to be changed.
+func joinComma(values []string) string {
+	joined := ""
+
+	for index, value := range values {
+		if index != 0 {
+			joined += ", "
+		}
+
+		joined += value
+	}
+
+	return joined
+}
+
+// The composed panels the play document mounts, named so a route writes
+// `@live.Chrome(view.Chrome)` rather than five calls, and so a document that
+// forgets one of them is a missing component rather than a missing line.
+const (
+	// ChromeRendered is `Chrome`, the sidebar this package owns.
+	ChromeRendered = "Chrome"
+	// InitiativeFragmentRendered is `InitiativeFragment`, the tracker's body.
+	InitiativeFragmentRendered = "InitiativeFragment"
+	// ChatLineFragmentRendered is `ChatLineFragment`, one chat line.
+	ChatLineFragmentRendered = "ChatLineFragment"
+	// DiceLineFragmentRendered is `DiceLineFragment`, one roll.
+	DiceLineFragmentRendered = "DiceLineFragment"
+	// AnnouncementFragmentRendered is `AnnouncementFragment`, one status line.
+	AnnouncementFragmentRendered = "AnnouncementFragment"
+	// NoticeFragmentRendered is `NoticeFragment`, one degraded condition.
+	NoticeFragmentRendered = "NoticeFragment"
+)
+
+// TargetClass is re-exported so a caller mounting this chrome needs one import for
+// the panel and its target class.
+//
+// The value is `ui.TargetClass` and not the literal, because §10.6's rule is
+// about the *class* and a stylesheet rule written against one spelling is a
+// stylesheet rule the audit's selector matcher cannot find.
+const TargetClass = ui.TargetClass

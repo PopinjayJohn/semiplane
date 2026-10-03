@@ -195,6 +195,54 @@ func TestTheBuiltStylesheetCarriesTheTokensAndTheGrid(t *testing.T) {
 		}
 	})
 
+	// The two sheets phase 9 added. The reasoning above applies to them with
+	// nothing weaker: `theme.css` and `live.css` are imported from `app.css`
+	// and nowhere else, so an import that is never added produces a sidebar
+	// and a header with no styling at all while every §10.2 and §10.6 rule in
+	// this repository passes — the markup is correct and only the bytes are
+	// missing, which is the one thing a DOM walk cannot see.
+	//
+	// Each sheet is identified by a declaration **nothing else declares**, not
+	// by a class name and not by a substring. `--brand-header-image` is a token
+	// `theme.css` introduces and `tokens.css` deliberately does not (a second
+	// source of truth for one value is the thing ADR 0027 refuses, so it is
+	// declared once); `isolation:isolate` is the scrim mechanism §4.12.2's
+	// "a campaign stylesheet that could set --focus-ring could silently break
+	// 1.4.11" is guarding. A selector would not do: `hasRule` matching a
+	// substring reports `.notice` present on the strength of a
+	// `.notice--warning`, which is how this class of check comes to be ignored.
+	t.Run("Phase9Sheets", func(t *testing.T) {
+		t.Parallel()
+
+		for _, want := range []struct {
+			declaration string
+			why         string
+		}{
+			{
+				"--brand-header-image",
+				"theme.css is not in the build, so a campaign's brand header image " +
+					"never renders and the campaign's overridable token set is absent " +
+					"(UI §4.12.1)",
+			},
+			{
+				"isolation:isolate",
+				"theme.css's header scrim is not in the build, so a campaign's header " +
+					"image would sit over the header's text rather than behind it " +
+					"(UI §4.12.2)",
+			},
+			{
+				".live-dice-breakdown",
+				"live.css is not in the build, so the sidebar renders unstyled while " +
+					"every structural gate passes (UI §7.5)",
+			},
+		} {
+			if !strings.Contains(css, want.declaration) {
+				t.Errorf("the built stylesheet does not carry %q; %s",
+					want.declaration, want.why)
+			}
+		}
+	})
+
 	t.Run("FocusRing", func(t *testing.T) {
 		t.Parallel()
 

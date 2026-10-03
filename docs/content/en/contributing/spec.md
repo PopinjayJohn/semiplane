@@ -196,6 +196,13 @@ appear nowhere in the interface.
 
 - **S-9.1** The slug in the path partitions every cache key by visibility. **There is no
   `{session}` parameter anywhere.**
+- **S-9.2** `/c/{slug}/play` serves a **document** and `/c/{slug}/ws` is the upgrade. One
+  route cannot answer both: `Upgrade` is a header, and a URL that answers HTML to a `GET`
+  and a socket to a `GET` with `Upgrade` is two answers decided by a request header on one
+  address. Both sit behind `RequirePlay`, because a socket is a standing capability.
+- **S-9.3** `/c/{slug}/events` carries **rendered DOM fragments** for the sidebar and never
+  content. A notice saying "here is the page now" would be a second, unvalidatable copy of
+  the file on a connection with no `If-Match`.
 
 ## S-10 — Plugin system
 
@@ -215,6 +222,24 @@ appear nowhere in the interface.
   the game refuses to start, and it names the ID it wanted.
 - **S-10.7** System-specific views render **server-side** by templ. A `ClientView` may be added
   later without changing `Derive`.
+- **S-10.8** The **theme layer** — architecture §10.1's third tier, "plain files in the
+  campaign content root" — is a **manifest the server validates and a stylesheet the server
+  generates** at `/c/{slug}/theme.css`. A campaign cannot ship arbitrary CSS: a raw `.css` in
+  a content root is served as a static asset under `/c/{slug}/assets/` and is never linked
+  from the shell.
+- **S-10.9** The generated sheet **never declares a protected variable**: `--text-*`,
+  `--border*`, `--focus-ring`, `--callout-*`, `--type-scale`, `--space-scale`,
+  `--target-min`, `--dur-*`, `--radius-*`. That set is the accessibility contract — a
+  campaign stylesheet that could set `--focus-ring` or `--target-min` could silently break
+  1.4.11, 1.4.3 or 2.5.5, and no gate could catch it across every campaign.
+- **S-10.10** A brand pair failing its floor (`--brand-accent` against `--brand-accent-ink` at
+  ≥4.5:1, against `--bg` at ≥3:1) **degrades to the last known-good theme, or the core theme
+  if there never was one**, logs `theme.brand_invalid` at error level, and shows a GM notice
+  naming the rejected pair. **A rejected theme never ships an unreadable UI.** The same
+  fail-toward-safety direction as S-5.6.2's reconciliation cap.
+- **S-10.11** A campaign theme is **per-campaign, not per-user**. It is therefore not an
+  `sp_ui` preference and does not affect S-13.5: the `<link>` is rendered from the slug, which
+  is already in the path.
 
 ## S-11 — Search
 

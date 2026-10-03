@@ -11,11 +11,13 @@ import (
 	"github.com/semiplane/semiplane/internal/config"
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/httpapi/accounts"
 	"github.com/semiplane/semiplane/internal/httpapi/assets"
 	"github.com/semiplane/semiplane/internal/httpapi/edit"
 	"github.com/semiplane/semiplane/internal/httpapi/events"
 	pluginroutes "github.com/semiplane/semiplane/internal/httpapi/plugins"
 	"github.com/semiplane/semiplane/internal/httpapi/search"
+	"github.com/semiplane/semiplane/internal/httpapi/theme"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/realtime"
 	"github.com/semiplane/semiplane/internal/store"
@@ -206,6 +208,63 @@ func newAssetRoute(
 		Logger:      logger,
 		Instance:    instance,
 		SignOutHref: signOutHref,
+	}
+}
+
+// themeNotices adapts the theme route's refusal memory to the campaign
+// overview's `accounts.ThemeNotices`.
+//
+// **In the composition root, and not beside either side**, for the reason
+// `kindRegistry` is there: `theme.Notice` and `components.CampaignNotice` are
+// two types answering one question, and the place that knows both is the place
+// that writes every registration in this process. Putting the adapter in either
+// package would make one import the other to translate two strings -- and the
+// string it would be translating is a *refusal message*, which is exactly the
+// sort of value that must not acquire a second representation that can drift.
+//
+// `campaignID` is passed through untouched. This adapter does no gating and must
+// not: the caller decides who may see a notice, and a lookup that refused would
+// be authorisation in a function with no request to authorise.
+func themeNotices(handler *theme.Handler) accounts.ThemeNotices {
+	if handler == nil {
+		return nil
+	}
+
+	return themeNoticeLookup{handler}
+}
+
+// themeNoticeLookup is the method set, so the closure above is not the only
+// shape a reader has to imagine.
+type themeNoticeLookup struct{ handler *theme.Handler }
+
+func (lookup themeNoticeLookup) ThemeNotice(
+	campaignID int64,
+) (components.CampaignNotice, bool) {
+	notice, ok := lookup.handler.Notice(campaignID)
+	if !ok {
+		return components.CampaignNotice{}, false
+	}
+
+	return components.CampaignNotice{Token: notice.Token, Reason: notice.Reason}, true
+}
+
+// newThemeRoute builds the campaign theme handler (UI §4.12).
+//
+// `Roots` is the same `*content.Registry` the wiki and assets routes are given,
+// and that sharing is the point rather than a convenience: the theme manifest is
+// read through the **same `os.Root`** as every page beside it, so a manifest is
+// confined by exactly the boundary pages are. A second registry, or a path
+// resolved against the campaign's directory by hand, would be a second answer to
+// "may this name be read" — and S-3.5's confinement is the kind of boundary a
+// second implementation quietly does not have.
+//
+// The logger is passed for the reason it is on every other route: a refused
+// manifest is an error line an operator greps for, and `theme.brand_invalid` on
+// a campaign nobody looks at is a silently unreadable UI.
+func newThemeRoute(roots *content.Registry, logger *slog.Logger) *theme.Handler {
+	return &theme.Handler{
+		Roots:  roots,
+		Logger: logger,
 	}
 }
 

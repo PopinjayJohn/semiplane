@@ -14,7 +14,9 @@
 //     attempt for ten minutes must report a handful of campaigns, not six hundred,
 //     because a reader believes the number it reads.
 //   - The histogram is registered under §13.2's existing spelling, so
-//     `AllEventNames()` does not move.
+//     `AllEventNames()` does not move **for this file** — the count below moves
+//     only when some other work item adds a name, as ADR 0054's
+//     `theme.brand_invalid` did.
 //
 // # Why the elapsed durations are wall-clock literals
 //
@@ -325,13 +327,18 @@ func TestAFailedWriteLogsTheErrorClassAndNotTheBucket(t *testing.T) {
 // counter under an existing spelling and moves nothing. The count is a number another
 // file's test owns, and it is the only thing standing between a phase and an event
 // name nobody documented.
+//
+// 25 rather than 24 because phase 9's theme layer added `theme.brand_invalid`, and
+// ADR 0054 is the record that addition owed — which is this assertion doing its job
+// rather than an assertion being relaxed: the number moves only when a work item
+// that *did* add a name reaches this file, and it then has to say where.
 func TestWritesAddsNoEventName(t *testing.T) {
 	t.Parallel()
 
 	names := observability.AllEventNames()
 
-	if len(names) != 24 {
-		t.Errorf("AllEventNames() has %d names, want 24", len(names))
+	if len(names) != 25 {
+		t.Errorf("AllEventNames() has %d names, want 25", len(names))
 	}
 
 	writes, _ := newWrites(t)

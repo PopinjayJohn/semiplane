@@ -1118,13 +1118,17 @@ func TestErrorClassDistinguishesProtocolRefusals(t *testing.T) {
 // The count is asserted because a seventh `state.*` name would move a number another
 // file's test owns, and that test is the only thing standing between a phase and an
 // event name nobody documented.
+//
+// 24 became 25 for phase 9's `theme.brand_invalid` (ADR 0054), which is the tripwire
+// firing rather than the assertion being loosened: this file's own contribution is
+// still nothing, and the number now says whose contribution is in the list.
 func TestNoNewEventNameWasAdded(t *testing.T) {
 	t.Parallel()
 
 	names := observability.AllEventNames()
 
-	if len(names) != 24 {
-		t.Errorf("AllEventNames() has %d names, want 24: ruleset gating reports through "+
+	if len(names) != 25 {
+		t.Errorf("AllEventNames() has %d names, want 25: ruleset gating reports through "+
 			"plugin.version_mismatch, which §13.2 already lists", len(names))
 	}
 

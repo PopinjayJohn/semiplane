@@ -6,8 +6,10 @@
 # failure AGENTS.md records for phase 5's gate drafts and for the a11y package that
 # contributed no §10.2 audit while `make a11y` printed `ok`.
 #
-# Not committed: it is a development instrument, and a script in the repository is a
-# script somebody has to keep working. The report quotes its output.
+# It restores every file it touches, and it is safe to run against a clean worktree
+# only in the sense that it needs its inputs committed first: `restore` runs
+# `git checkout --` against the index, so stage your work before running it. The
+# report quotes its output.
 
 set -eu
 
@@ -17,13 +19,14 @@ export PATH=$PATH:/usr/local/go/bin
 PKG=./internal/httpapi/play/
 HANDLER=$PKG/play.go
 LOOP=$PKG/loop.go
+DOC=$PKG/document.go
 
 pass=0
 fail=0
 expected=0
 
 restore() {
-	git checkout -- "$HANDLER" "$LOOP" 2>/dev/null || true
+	git checkout -- "$HANDLER" "$LOOP" "$DOC" 2>/dev/null || true
 }
 
 # mutate_expect_miss NAME FILE FROM TO TEST
@@ -172,18 +175,22 @@ mutate() {
 	restore
 }
 
-# 1. The gate. `Mount` is the whole of the S-8 matrix on this route.
+# 1. The gate. `Mount` is the whole of the S-8 matrix on this route, and both of its
+#    routes are wrapped by the one `gate` value — so the mutation is on the assignment
+#    rather than on a call site, because dropping it there covers `/ws` and `/play`
+#    together (dropping only one of the two would be a partial mutation the S-8 matrix
+#    could not distinguish from a pass, since the matrix asserts both paths).
 mutate "the play gate is dropped from Mount" \
 	"$HANDLER" \
-	'mux.Handle("GET /c/{slug}/play", campaigns.RequirePlay(handler))' \
-	'mux.Handle("GET /c/{slug}/play", handler)' \
+	'	gate := campaigns.RequirePlay' \
+	'	gate := func(next http.Handler) http.Handler { return next }' \
 	'TestThePlayRouteAnswersTheS8Matrix'
 
 # 2. The gate swapped for the read gate: a public wiki page would be a public table.
 mutate "the play gate is swapped for the read gate" \
 	"$HANDLER" \
-	'campaigns.RequirePlay(handler)' \
-	'campaigns.RequireRead(handler)' \
+	'	gate := campaigns.RequirePlay' \
+	'	gate := campaigns.RequireRead' \
 	'TestThePlayRouteAnswersTheS8Matrix'
 
 # 3. Origin enforcement removed entirely: `CheckOrigin: true` in one line.
@@ -473,6 +480,53 @@ mutate "the reader goroutine is never started" \
 '		h.read(connCtx, raw, peer, reads)' \
 '		_ = connCtx' \
 	'TestAConnectionCostsOneReaderAndNothingElse'
+
+# 27. The document's cache headers. The document is reader-dependent, so a cacheable
+#     200 serves one reader's bytes to another.
+mutate "the document becomes cacheable" \
+	"$DOC" \
+	'	header.Set("Cache-Control", documentCache)' \
+	'	header.Set("Cache-Control", "public, max-age=60")' \
+	'TheDocumentIsPrivate'
+
+# 28. The visibility filter dropped, so a hidden placement reaches a player's list.
+mutate "a hidden placement reaches a player" \
+	"$DOC" \
+	'		if !seesHidden && !placement.Visible {' \
+	'		if false {' \
+	'TestTheTokenListShowsOnlyWhatTheReadersRoleEntitlesThemTo'
+
+# 29. The role check on the Play destination dropped, so a reader is offered a
+#     destination it cannot reach.
+mutate "the Play destination is offered to a reader" \
+	"$DOC" \
+	'	if !access.Tier.CanPlay() || access.Campaign.SystemID == "" {
+		return ""
+	}' \
+	'	if false {
+		return ""
+	}' \
+	'TestTheNavigationOffersEachDestinationToTheRoleThatCanUseIt'
+
+# 30. The settings destination is offered to a player, which is the other half of
+#     the same role split.
+mutate "the Settings destination is offered to a player" \
+	"$DOC" \
+	'	if !access.Tier.CanEdit() {
+		return ""
+	}' \
+	'	if false {
+		return ""
+	}' \
+	'TestTheNavigationOffersEachDestinationToTheRoleThatCanUseIt'
+
+# 31. The grammatical system is trusted to answer, so an unresolvable system
+#     renders a heading over an empty list instead of the honest empty state.
+mutate "an unresolvable system renders an empty sheet" \
+	"$DOC" \
+	'	if err != nil || system == nil {' \
+	'	if false {' \
+	'TheDieSheetRendersTheSystemsNotation'
 
 echo
 echo "hits: $pass   misses: $fail   expected-misses: $expected"

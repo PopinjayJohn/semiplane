@@ -133,7 +133,7 @@ func TestThePlayRouteAnswersTheS8Matrix(t *testing.T) {
 
 			if testCase.status != http.StatusSwitchingProtocols {
 				if got := harness.dialStatus(testCase.slug, header); got != testCase.status {
-					t.Errorf("GET /c/%s/play as user %d = %d, want %d",
+					t.Errorf("GET /c/%s/ws as user %d = %d, want %d",
 						testCase.slug, testCase.user, got, testCase.status)
 				}
 

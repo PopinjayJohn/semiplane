@@ -458,6 +458,14 @@ func runServer(_ []string) error {
 	eventRoute := newEventRoute(hub, logger)
 	playRoute := newPlayRoute(plane.hub, logger)
 	pluginRoute := newPluginRoute(db, plugins, plane.hub, logger)
+	themeRoute := newThemeRoute(contentRoots, logger)
+	// Set here rather than in the literal above, for the reason the literal's own
+	// comment gives: the account routes are built before the content roots are
+	// open, and the theme handler cannot exist without them. §4.12.3's GM notice
+	// reaches the campaign overview through this field, so leaving it nil would
+	// not fail anything -- it would simply never show a GM the brand pair their
+	// campaign is failing.
+	accountRoutes.Theme = themeNotices(themeRoute)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -474,6 +482,7 @@ func runServer(_ []string) error {
 			eventRoute,
 			playRoute,
 			pluginRoute,
+			themeRoute,
 		),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,

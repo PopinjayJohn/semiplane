@@ -152,6 +152,27 @@ const (
 	// directory rename is the indexer working, and a dashboard where a rising line
 	// could mean either that or a failure is a dashboard nobody trusts.
 	EventIndexRenamed EventName = "index.renamed"
+
+	// EventThemeBrandInvalid is a campaign theme manifest semiplane would not apply.
+	//
+	// Error and counted, and the level is UI §4.12.3's own: a brand colour that
+	// fails a contrast floor leaves the campaign looking unbranded with nothing to
+	// say why, and "a silently unreadable brand colour is a silent failure" is the
+	// sentence §13.2's principle is written for.
+	//
+	// It is the only event in this package added for a **refusal rather than a
+	// fault** — the watcher cannot add, the indexer cannot index, the content
+	// pipeline cannot render — which is what makes its attributes the narrowest set
+	// in the file: the campaign's id, its slug, and one fixed sentence naming the
+	// rule that was broken. Nothing a campaign wrote is among them, because a
+	// manifest is attacker-reachable input (Obsidian sync) and S-12.3 forbids putting
+	// it in a log aggregator.
+	//
+	// Not in the architecture record's §13.2 table, so this is the **seventh name**
+	// beyond it — after ADR 0032's six — and it is recorded in ADR 0054 rather than
+	// by editing §13.2. (`state.write_ms` is in the table, so it is one of the
+	// eighteen rather than an addition to them.)
+	EventThemeBrandInvalid EventName = "theme.brand_invalid"
 )
 
 // AllEventNames is every §13.2 signal name, in declaration order.
@@ -188,6 +209,7 @@ var eventNames = []EventName{
 	EventIndexPageDegraded,
 	EventIndexRenameSourceLeft,
 	EventIndexRenamed,
+	EventThemeBrandInvalid,
 }
 
 // Counter is a monotonically increasing value, and optionally a gauge that can

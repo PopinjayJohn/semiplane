@@ -38,7 +38,7 @@ func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler 
 	return httpapi.NewRouter(
 		logger, cfg, registry,
 		nil, nil, // no account routes, no store
-		nil, nil, nil, nil, nil, nil, nil, // no campaign-scoped routes
+		nil, nil, nil, nil, nil, nil, nil, nil, // no campaign-scoped routes
 	)
 }
 

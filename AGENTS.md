@@ -78,8 +78,8 @@ container lacks it, `apt-get install -y --no-install-recommends gcc libc6-dev`.
 ## The gate
 
 **No Go change is complete until `make check` passes.** It runs, in order:
-format diff check, `make css`, `make templ`, `go build`, `go vet`,
-`golangci-lint run`, `make a11y`, `go test -race`.
+format diff check, `make vendor-check`, `make css`, `make templ`, `go build`,
+`go vet`, `golangci-lint run`, `make a11y`, `go test -race`.
 
 `css` and `templ` precede `build` because `internal/web` embeds both outputs.
 The binary is the first place a missing stylesheet shows up, so `build` also
@@ -87,6 +87,17 @@ checks for the file and says `run: make css` rather than failing on the embed
 pattern. `make tailwind` downloads ~110MB once per checkout into `.toolbin/`
 and verifies it against a committed digest of its release manifest;
 [0019](docs/content/en/decisions/0019-tailwind-standalone-pinned.md).
+
+`vendor-check` precedes `css` for the same reason one step earlier: `css` stages
+`static/vendor/` into `static/dist/`, `internal/web` embeds `all:static/dist`,
+and `build` therefore embeds **whatever vendored bytes are on disk** into the
+shipped binary. It reaches no network — CI has no npm account, and a gate that
+fetched there would make `make check` depend on a third party being up. It is a
+`go test -run` and carries the same guard `a11y` does, because `go test -run`
+exits 0 on a pattern matching nothing. `make vendor` re-fetches and `make
+vendor-dry-run` re-fetches without writing; both need the network and neither is
+in `check`. The pin and its three targets:
+[0052](docs/content/en/decisions/0052-third-party-browser-assets-are-committed-and-digest-pinned.md).
 
 `make a11y` runs UI §10.1 (contrast), §10.2 (structural a11y, every route) and
 §10.6 (target size), and it is in `check` because those three are gate-blocking
@@ -130,16 +141,51 @@ each cost a PR:
   because no audited document carried a second `search` landmark; adding the
   fixture made it reachable and it immediately failed three unrelated rules, which
   is the audit working.
+- **Three work items independently shipped `TestTheSheetIsInsideTheBuild`, and
+  `A11Y_TESTS` matched none of them.** Phase 9 gave each stylesheet a test proving
+  it reached `static/dist/app.css`; `BuiltStylesheet` is in the pattern and the test
+  name does not contain it. So every sheet's built-artefact assertion ran under
+  `make check` and **not** under `make a11y` — the target whose entire job is the
+  claims that read the built stylesheet. Deleting a `@import` from `app.css` left
+  `make a11y` green on all three. Adding `SheetIsInsideTheBuild`,
+  `SheetDeclaresNo`, `RuleInTheSheet`, `SelectorInThisSheet` and
+  `SheetIsResponsibleFor` to the pattern made five more tests execute; deleting the
+  `play.css` import is now red. This is the **other half** of the same problem as
+  the route that held 23 tests and matched none, and it is the half the guard
+  cannot see: the guard checks that a package *contributes*, not that the
+  contribution is the test you meant.
+- **A disjunction needs both arms red, and an escape hatch left in place after the
+  thing it was escaping has arrived is a hole.** A sheet's test said "either
+  `app.css` imports this, or this sheet's header says it is not imported yet" —
+  correct while unwired, and **disarmed the moment the import landed**, because
+  deleting the import then found the stale sentence still sitting in the header and
+  passed. The marker tracks the wiring: it moved with the import, and both arms are
+  now red. A note must not outlive the fact it describes.
 
 ```bash
 make check          # the full gate
 make a11y           # just the UI §10.1/§10.2/§10.6 gate
+make vendor-check   # re-hash the committed vendor bytes (no network)
+make vendor-dry-run # re-fetch every npm package and verify it, writing nothing
+make vendor         # re-fetch every npm package and verify it into the vendor tree
 make lint-fix       # auto-fix what is fixable, then reformat
 make lint-verify    # validate .golangci.yml against the v2 schema
 make run            # dev server on :8080
 make vuln           # govulncheck
 make ci             # lint-verify + check
 ```
+
+**A browser asset that is not staged into `static/dist/` is not served, and nothing
+says so.** `internal/web` embeds `all:static/dist` and `/assets/` serves exactly that
+tree, so a module or a vendored file living only under `static/js/` or
+`static/vendor/` is a **404** — a silently absent behaviour, because the page
+renders, the tabletop loads, and the feature that needed the module is simply not
+there. `make stage-assets` copies both trees in with their relative layout preserved
+(`scene.js` imports `../../vendor/pixi.min.mjs`, so a flattened copy is a module
+graph that cannot resolve) and takes `*.js` only: those trees also hold the
+`*_test.go` files that audit the modules beside them, and a copy that took everything
+would embed a Go test file into the binary and serve it from a route with no gate on
+it. Adding a browser asset means adding it to that staging in the same commit.
 
 **The stylesheet is assembled in `internal/web/static/css/app.css` and nowhere
 else.** `@import "tailwindcss"` is followed by `tokens.css`, `shell.css` and
@@ -332,7 +378,18 @@ internal/web/     templ components and static assets
 docs/             Hugo documentation site (its own project root)
 demo-vault/       the demo campaigns (phase 11)
 scripts/          sync-labels.sh, check-site-links.sh, check-site-structure.sh
+tools/            install-tailwind.sh, and vendor.json + vendor/ (the vendor pin)
 ```
+
+**`tools/vendor/` is a Go program inside the module, and that is deliberate.** It is
+`make vendor`'s whole body — re-fetch, verify the npm integrity, extract the named
+members, and refuse to write anything the pin does not describe — so `go vet`,
+`golangci-lint` and `go test -race ./...` all reach it and its `httptest` TLS
+registry means the fetcher is covered by `make check` **offline**. A shell
+alternative would need its own harness. It has **no `check` subcommand**: the digest
+check is `TestTheVendoredBytesMatchThePin` in `internal/web/static/js/map`, it reads
+the whole manifest rather than one package, and a second implementation would be a
+second answer to the same question.
 
 **`cmd/server/systems.go` is where every registration in this process happens**, and it
 is a separate file rather than part of `wiring.go` because the rule it embodies is one
@@ -517,11 +574,14 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   `[!secret]` callout body in a log aggregator, which is the one thing S-12.3 forbids. Errors
   are classified by `errorClass`, never passed through: a Markdown or YAML parser quotes the line
   it choked on, and on a wiki page that line is routinely a callout body.
-- **Six event names beyond the architecture record's §13.2 list**, recorded in
-  [0032](docs/content/en/decisions/0032-index-signals-beyond-the-architecture-list.md) rather than
-  added quietly: four `index.*`, `content.settle_failed`, and the uncounted `index.renamed`.
-  `observability.AllEventNames()` is 24 where §13.2 lists 18, and its test asserts the count —
-  so a seventh addition without a record fails the build.
+- **Seven event names beyond the architecture record's §13.2 list**, recorded rather than
+  added quietly: six in
+  [0032](docs/content/en/decisions/0032-index-signals-beyond-the-architecture-list.md) — four
+  `index.*`, `content.settle_failed`, and the uncounted `index.renamed` — and the seventh,
+  `theme.brand_invalid`, in
+  [0054](docs/content/en/decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet.md).
+  `observability.AllEventNames()` is 25 where §13.2 lists 18, and its test asserts the count —
+  so an eighth addition without a record fails the build.
 
 ## Accessibility invariants
 

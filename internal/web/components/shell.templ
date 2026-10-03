@@ -93,6 +93,27 @@ templ shellDocument(view ShellView, campaign bool, centre, rail templ.Component,
 			<meta name="color-scheme" content="light dark"/>
 			<title>{ view.Title }</title>
 			<link rel="stylesheet" href="/assets/app.css"/>
+			// The campaign's own brand sheet, and only on a campaign route.
+			//
+			// UI §4.12.2: a campaign cannot ship arbitrary CSS. The server
+			// validates the manifest in the content root and *generates* this
+			// sheet, so the bytes carry the overridable tokens and none of the
+			// protected ones -- a campaign cannot set `--focus-ring` or
+			// `--target-min` even by dropping a raw `.css` file into its own
+			// content root, because a raw file is served as a static asset under
+			// `/c/{slug}/assets/` and is never linked from here.
+			//
+			// It comes **after** `app.css` so a brand token wins over the core
+			// declaration of the same name at equal specificity. That ordering is
+			// the entire mechanism; before it, every brand value would lose.
+			//
+			// A missing or unreadable sheet is not a failure of this page. The
+			// route answers the core sheet for a campaign whose manifest is
+			// absent, refused or unreadable -- a rejected theme degrades to the
+			// default and never ships an unreadable UI (ADR 0054).
+			if view.Campaign.Slug != "" {
+				<link rel="stylesheet" href={ view.Campaign.ThemeStylesheet() } data-testid="campaign-theme"/>
+			}
 			// §3.7's one blocking inline script, in `<head>` and before the
 			// stylesheet link, so `data-theme` and `data-ui` are both resolved
 			// before the first paint. It renders two script elements: the
