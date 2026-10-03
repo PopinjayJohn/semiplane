@@ -1,0 +1,124 @@
+package play
+
+// The tabbed utilities rail, and the D16 default it carries.
+//
+// # Why the tabs are `ui.Tabs` and the rule is a wrapper attribute
+//
+// `ui.Tabs` is the shared tabs primitive and it already renders the whole
+// pattern: `role="tablist"` with a name, roving `tabindex`, one selected tab,
+// `aria-controls` pointing at panels that exist, and `hidden` on the panels that
+// are not selected. Re-rendering any of that here would be a second answer to
+// the tabs pattern, which is the thing that package exists to prevent.
+//
+// What `ui.Tabs` has no room for is D16's rule, because the rule is not a
+// property of the tabs — it is a property of the *tiers*, and §3.7 resolves tiers
+// in the browser. So the rule is carried on the wrapper this component renders
+// around it, as `data-tab-defaults`: a JSON object mapping a tab id to the tiers
+// at which that tab is the default.
+//
+// Three things follow from putting it there rather than in the client, and each
+// is the reason:
+//
+//   - **The client knows no tier names.** It reads `data-ui`, looks the tier up
+//     in the document's own table, and selects the tab it names. A tier added to
+//     the resolver and not to the table cannot reach the document as a wrong
+//     answer; it reaches it as a missing key, which
+//     `TestTheRuleIsCarriedWholeAndNoTierIsResolved` fails on.
+//   - **The rule has a Go test.** `TestTheTierRulePartitionsEveryTierTheResolverCanWrite`
+//     asserts every tier is in exactly one tab's list. Ambiguity and absence are
+//     both failures, and neither is visible in a browser.
+//   - **The document carries every answer.** Seven tiers in, one tab chosen out —
+//     on the server that would be a document varying by device, which §13.5 and
+//     ADR 0035 rule out. Carrying the whole table makes the document's
+//     independence a property of its bytes rather than a promise.
+//
+// # The server selects one tab, and it is `Tokens`
+//
+// `ui.Tabs` needs a selection to render, and whatever it renders is what a reader
+// with no `data-ui` (no script, or a script that has not run) sees. That reader
+// has no tier, so this is the *fourth* case D16 does not name, and it is chosen on
+// the merits: on the five tablet tiers the token list is the only representation
+// of the table (§4.9) or the primary one (§7.6), and on the three laptop tiers it
+// is the accessibility source of truth. Initiative is the better default for a
+// GM with a pointer, and it is one `Tab`-and-arrow away from every tier.
+//
+// **One selection, in every document, on every device.** That is the whole claim,
+// and `TestTheRailSelectsTokensWhateverTheCallerAsks` holds the half of it that
+// is a server-side decision.
+
+import (
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
+// Rail is the tabbed rail: the rule, the campaign it is remembered for, and the
+// panels.
+//
+// The wrapper carries `data-rail-tabs`, which is what the client binds to, and
+// `data-campaign`, which keys the remembered tab. Both are needed before the
+// first panel exists, so both are here rather than inside `ui.Tabs`.
+templ Rail(view RailView) {
+	<div
+		class="rail-tabs"
+		data-rail-tabs
+		data-campaign={ view.Campaign }
+		data-tab-defaults={ view.defaults().json() }
+		data-testid="play-rail"
+	>
+		@ui.Tabs(tabsView(view))
+	</div>
+}
+
+// tabsView converts this package's tab shape into the shared primitive's.
+//
+// One conversion rather than making `ui.Tab` the route's model, for the reason
+// `components/viewmodels.go` splits its layers: `ui` cannot import a route's
+// model and a route should not be handing a primitive's struct to its own
+// business logic. The three fields are copied by name in one place, so the two
+// shapes cannot drift in what they share.
+//
+// **The selection is `TokensTabID` and is not the view's to choose.** There is no
+// `Selected` field on `RailView` on purpose, and the argument is the doc comment
+// above: a device-dependent selection cannot be made by a server that cannot see
+// the device. `TokensTabID` is also the first tab a caller fills, and
+// `TestTheRailSelectsTokensWhateverTheCallerAsks` passes a view whose first tab is
+// something else to hold it.
+func tabsView(view RailView) ui.TabsView {
+	tabs := make([]ui.Tab, 0, len(view.Tabs))
+
+	for _, tab := range view.Tabs {
+		tabs = append(tabs, ui.Tab{
+			ID:      tab.ID,
+			Label:   tab.Label,
+			Content: tab.Content,
+		})
+	}
+
+	return ui.TabsView{
+		Label:    view.Label,
+		Tabs:     tabs,
+		Selected: TokensTabID,
+		TestID:   "play-rail-tablist",
+	}
+}
+
+// TokensTab is the rail panel this package owns, as a tab.
+//
+// A constructor rather than a struct literal at each call site, because a caller
+// that filled the id and not the label — or the label and not the content — has
+// built a tab that displays one thing and shows another, and both mistakes
+// compile identically.
+func TokensTab(content templ.Component) Tab {
+	return Tab{ID: TokensTabID, Label: "Tokens", Content: content}
+}
+
+// The component list, asserted by a test so that a component added here and never
+// mounted cannot be quietly forgotten — the same shape `components/chat` uses.
+//
+// Not a `var`: the point is the constant, and a slice would be a second thing to
+// keep true.
+const (
+	// RailRendered is `Rail`, which is what the play route's rail mounts.
+	RailRendered = "Rail"
+	// TokenListRendered is `TokenList`, the panel this work item is about.
+	TokenListRendered = "TokenList"
+)
