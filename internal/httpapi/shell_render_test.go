@@ -466,6 +466,13 @@ func newCampaignFixture(t *testing.T) *campaignFixture {
 		// and a socket is not one. The mount itself is asserted where a socket can
 		// actually be opened — `play.TestThePlayRouteAnswersTheS8Matrix` opens
 		// one, and `cmd/server`'s wiring test asks the router it builds for a 101.
+		//
+		// `plugins.Handler` is nil for the same reason and one more: the two
+		// reference plugins render a widget and a link preview, neither of which
+		// is a shell document this file audits, and a plugin route with a hub over
+		// no state would answer 503 rather than render anything to audit. Its own
+		// audits live in `internal/httpapi/plugins`, which `A11Y_ROUTE_PKGS` names.
+		nil,
 		nil,
 	)
 

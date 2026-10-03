@@ -78,54 +78,10 @@ import (
 	"github.com/semiplane/semiplane/internal/domain"
 	"github.com/semiplane/semiplane/internal/httpapi/play"
 	"github.com/semiplane/semiplane/internal/observability"
+	"github.com/semiplane/semiplane/internal/plugin"
 	"github.com/semiplane/semiplane/internal/realtime"
 	"github.com/semiplane/semiplane/internal/store"
 )
-
-// coreSystemID is the system id the inert `realtime.Core` resolver reports.
-//
-// A constant rather than configuration because there is no configuration for it
-// yet, and because the inert core is what phase 7 ships: naming it "core" makes
-// a log line and a refusal read as what they are ("this build resolves nothing
-// under the core system") rather than as an unknown system. Phase 8 replaces the
-// resolver and this value with it.
-const coreSystemID = "core"
-
-// coreRulesetVersion is the version string the inert `realtime.Core` reports and
-// the one half of the fingerprint that is about the resolver.
-//
-// It is **not** the campaign's `ruleset_version` column value. That is the encoded
-// `sp1:` string the *gate* compares, produced by `FingerprintOf` from a registered
-// descriptor, and the two being different values is the point: a campaign written
-// under one ruleset and this process's resolver are two separate questions, and
-// collapsing them into one constant would make the gate compare a campaign against
-// a value that describes the server rather than the game.
-//
-// `p7` for "phase 7". It changes when the resolver's semantics do, and it does not
-// change when the inert core gains an operation — because S-7.7's fingerprint is
-// about the **meaning** of a persisted mutation, and an operation the resolver
-// still refuses is not a change in meaning. Phase 8 replaces the constant with the
-// gameplay system's own `RulesetVersion`.
-const coreRulesetVersion = "p7"
-
-// coreBasePackVersion is the base data pack the inert core resolves against.
-//
-// Present because `Fingerprint.validate` refuses an empty base pack, and for a
-// good reason stated in `ruleset.go`: a fingerprint naming no ruleset is
-// indistinguishable from "written under no particular ruleset", which is a
-// *different* answer with different consequences — one is a campaign this build
-// knows, the other is a campaign with nothing to compare against.
-//
-// Also `p7`, and for the same reason. The inert core ships no packs, and the
-// honest way to say "no packs yet" in a schema where the component is mandatory is
-// a placeholder that changes with the resolver rather than an empty string, which
-// the validator reads as an absent fingerprint.
-//
-// The overlay is **empty** and that is a real value, not a gap: `validate` exempts
-// it because architecture §10.4 makes a standalone pack a first-class shape. An
-// empty overlay is how this build says "this system ships one pack", and a phase 8
-// build that ships two names both.
-const coreBasePackVersion = "p7"
 
 // realtimePlane is the assembled plane, held as one value so the composition root
 // and the shutdown path both name one thing rather than four.
@@ -141,17 +97,24 @@ type realtimePlane struct {
 	hub      *realtime.Hub
 }
 
-// newRealtimePlane builds the plane over one store handle.
+// newRealtimePlane builds the plane over one store handle and the registered plugins.
 //
 // `ctx` is the **process** lifetime context (the signal context in `runServer`),
 // not a request's: `NewRegistry` and `NewHub` each keep it and derive a cancelable
 // child for their goroutines, so a context that died with the request that created
 // them would stop persistence within seconds of the first join. Both headers state
 // this and both are true.
+//
+// `registered` is the `systems.go` value rather than the individual registries, for
+// the reason that file gives: the resolver needs the gameplay registry, the gate needs
+// this build's fingerprint, and the plugin route needs the system lookup — and handing
+// over three values separately is three chances to pair a registry with another
+// registry's fingerprint, which is a wiring that compiles and resolves nothing.
 func newRealtimePlane(
 	ctx context.Context,
 	backing *store.Store,
 	registry *observability.Registry,
+	registered plugins,
 	logger *slog.Logger,
 ) *realtimePlane {
 	// §13.2's `state.write_ms`, before the registry it records into.
@@ -171,19 +134,48 @@ func newRealtimePlane(
 		Record: writes.Record,
 	})
 
-	// 2. The gate, over the fingerprint this process resolves under and a reader
+	// 2. The gate, over the fingerprint this build resolves under and a reader
 	// for the column a campaign was last written under.
-	gate := realtime.NewGate(expectedFingerprint(), rulesetVersionReader(backing))
-
-	// 3. The hub, over the registry and the resolver.
 	//
-	// `Core` is a value, not a pointer, and it is held by value here rather than
-	// looked up: ADR 0011 forbids `init()` registration and this is the explicit
-	// statement that replaces it. One per process, which is also what the
-	// fingerprint below assumes.
+	// `registered.fingerprint()` and not a constant: the four components come from the
+	// engine that was actually compiled, so a base-pack or overlay revision moves the
+	// gate's expectation **without an edit to this file**. That is ADR 0018's whole
+	// claim — the version names the resolution semantics, not this build's intentions
+	// — and a hand-written fingerprint would be the second encoding `ruleset.go` warns
+	// against, one that could not notice a pack had moved.
+	gate := realtime.NewGate(registered.fingerprint(), rulesetVersionReader(backing))
+
+	// 3. The resolver, over the gameplay registry and **this very state registry**.
+	//
+	// The ordering is mechanical, not stylistic: `plugin.ResolverConfig.States` is a
+	// concrete `*realtime.Registry` rather than an interface — S-10.2's promise is about
+	// `campaign_state` and the only convincing proof is a test against the real one — so
+	// a resolver built over a second registry would apply mutations to a document
+	// nothing persists and nothing broadcasts.
+	//
+	// `NewResolver` can fail on three wiring faults, none of which anything an operator
+	// did. **Panic rather than substitute a nil resolver**, for the reason ADR 0039
+	// rejected as an alternative: a hub with no resolver answers every intent
+	// `server_error`, which is safe and says nothing, so the failure is a boot that
+	// succeeds and refuses every roll. `plugin.New()` returns a registry whether or not
+	// anything was registered, so the only way to reach this panic is a `systems.go` bug.
+	resolver, err := plugin.NewResolver(plugin.ResolverConfig{
+		Systems:  registered.gameplay,
+		States:   states,
+		SystemOf: registered.systemOf(backing),
+	})
+	if err != nil {
+		panic(fmt.Sprintf("semiplane: the gameplay resolver is not wired: %v", err))
+	}
+
+	// 4. The hub, over the registry and the resolver.
+	//
+	// One per process, which is also what the gate's single expected fingerprint
+	// assumes: two hubs over one state registry is a divergence rather than a
+	// scale-out, and ADR 0004 is about exactly that.
 	hub := realtime.NewHub(ctx, realtime.HubConfig{
 		States:  states,
-		Resolve: realtime.Core{SystemID: coreSystemID, RulesetVersion: coreRulesetVersion},
+		Resolve: resolver,
 	})
 
 	return &realtimePlane{registry: states, gate: gate, hub: hub}
@@ -209,47 +201,6 @@ func newRealtimePlane(
 // own comment is about.
 func newPlayRoute(hub *realtime.Hub, logger *slog.Logger) *play.Handler {
 	return &play.Handler{Hub: hub, Logger: logger}
-}
-
-// expectedFingerprint is the resolution semantics **this process** offers.
-//
-// Built by `FingerprintOf` from the inert core's descriptor rather than written as
-// a literal, for one reason: an encoding written by hand and an encoding produced
-// by the package that defines it drift apart the first time the format changes,
-// and the drift is silent. `FingerprintOf` is also where a component carrying a
-// reserved separator is refused, which is the failure a hand-written string would
-// defer until a campaign tried to resume.
-//
-// The pack versions are named even though the inert core ships none, because
-// `Fingerprint.validate` requires a base pack and accepts an empty **overlay**
-// only — so this is the one descriptor shape the package accepts for a standalone
-// system. A phase 8 build names its own, and the boot pass in
-// `resumeCampaignStates` is what reports the campaigns the new fingerprint
-// strands.
-//
-// An impossible error, therefore. `FingerprintOf` is called with constants this
-// file owns and whose validity is asserted by the round-trip test below, so there
-// is nothing to return. It is handled rather than ignored because an ignored error
-// here would be a `Fingerprint{}` — an *empty* fingerprint, which is a different
-// thing from an absent one and compares as drift against every campaign.
-func expectedFingerprint() realtime.Fingerprint {
-	fingerprint, err := realtime.FingerprintOf(realtime.Descriptor{
-		System:      coreSystemID,
-		Ruleset:     coreRulesetVersion,
-		BasePack:    coreBasePackVersion,
-		OverlayPack: coreRulesetVersion,
-	})
-	if err != nil {
-		// Unreachable by construction, and a panic rather than a substituted zero
-		// value: this runs once at boot over compile-time constants, so a failure
-		// is a defect in this file rather than anything an operator did, and the
-		// honest response to one is to say so loudly at startup rather than to
-		// hand the gate a fingerprint that compares as drift against every
-		// campaign on the instance.
-		panic(fmt.Sprintf("semiplane: the core system's fingerprint does not encode: %v", err))
-	}
-
-	return fingerprint
 }
 
 // realtimeWriter is the registry's `Write` seam: one `campaign_state` row, in a

@@ -275,6 +275,12 @@ func degradedInstanceView() components.InstanceView {
 }
 
 // fullRouterWithInstance builds the router with an explicit instance view.
+//
+// Every campaign-scoped handler is nil, and **the plugin route is one of them on
+// purpose**: it renders a widget over a live hub, which this fixture has none of, and a
+// 503 is the honest answer rather than a page to assert on. Its own audits and its mount
+// are asserted where a hub exists — `internal/httpapi/plugins` for the audits, and
+// `cmd/server`'s wiring tests for the mount.
 func fullRouterWithInstance(backing httpapi.Store, instance components.InstanceView) http.Handler {
 	return httpapi.NewRouter(
 		slog.New(slog.DiscardHandler),
@@ -282,6 +288,7 @@ func fullRouterWithInstance(backing httpapi.Store, instance components.InstanceV
 		observability.NewRegistry(),
 		&accounts.Router{Store: backing, Instance: instance},
 		backing,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -443,6 +450,7 @@ func TestRouterWithoutAStoreStillServesLiveness(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 		config.Config{HandlerTimeout: time.Second},
 		observability.NewRegistry(),
+		nil,
 		nil,
 		nil,
 		nil,

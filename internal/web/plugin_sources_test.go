@@ -234,24 +234,84 @@ func TestTheScanCoverageIsAnAssertionAndNotAVacuousPass(t *testing.T) {
 
 // hasRule reports whether the built stylesheet carries a rule for a class.
 //
-// **`.` then the name, with no trailing character required**, because the minifier
-// writes `.a,.b{…}` and a check that demanded a `{` immediately after the class would
-// read zero against a correct build for every class that is ever grouped with
-// another. The same argument `TestTheBuiltStylesheetCarriesTheTokensAndTheGrid` makes
-// about attribute-value quotes.
+// **A selector boundary, not a bare substring.** `strings.Contains(css, ".notice")`
+// answers `true` for a stylesheet carrying only `.notice--warning`, which is exactly the
+// state this assertion exists to catch: the widget's own `.notice` was never emitted, a
+// modifier was, and a substring check reports the page styled. Measured, not
+// hypothesised — the minified stylesheet carries three `.notice--*` rules and no
+// `.notice`, so removing the bare rule left `hasRule("notice")` answering `true`.
 //
-// A class whose name needs escaping in a selector is checked in both forms, since
-// `w-1/2` and `hover:bg-red-500` are written escaped by the minifier and unescaped by
-// whoever wrote them. Getting that wrong produces a failing test for a correct build,
-// which is how a check like this comes to be ignored.
+// The boundary is "the next character is not one a class name can continue with", which
+// is the same set `escapeSelector` handles on the other side: identifier characters and
+// the escaped punctuation. A selector end, a combinator, a pseudo-class or a brace all
+// satisfy it, and a further `-`, `_`, `:` or escape does not.
+//
+// **Both forms, and both are needed.** The unescaped match is tried first because the
+// overwhelming majority of class names need no escaping; the escaped match is the
+// fallback for the characters Tailwind's own utilities contain. A class that needed
+// escaping and was looked for only unescaped would report missing against a correct
+// build, and a test that fails on a correct build is a test that gets commented out.
 func hasRule(css, class string) bool {
-	if strings.Contains(css, "."+class) {
+	if selectorMatches(css, class) {
 		return true
 	}
 
 	escaped := escapeSelector(class)
 
-	return escaped != class && strings.Contains(css, "."+escaped)
+	return escaped != class && selectorMatches(css, escaped)
+}
+
+// selectorMatches reports whether the built stylesheet contains `.` followed by the
+// given selector text and a character that cannot continue a class name.
+func selectorMatches(css, selector string) bool {
+	// Each pass skips a match that turned out to be the *prefix* of a longer class name,
+	// resuming after the matched text rather than at the dot — so `.button--primary`
+	// cannot make the loop revisit itself and a pathological stylesheet cannot spin.
+	for offset := 0; offset < len(css); {
+		at := strings.Index(css[offset:], "."+selector)
+		if at < 0 {
+			return false
+		}
+
+		end := offset + at + 1 + len(selector)
+		if !continuesSelector(css[end:]) {
+			return true
+		}
+
+		offset = end
+	}
+
+	return false
+}
+
+// continuesSelector reports whether a selector continues past where a class name ends.
+//
+// **The characters that can continue one**, and nothing else. Alphanumerics and `_` are
+// ordinary identifier characters, `-` continues a name and starts a modifier, and a
+// backslash continues into an escape — the variant separator, so a variant-prefixed
+// class is only fully matched once its whole escaped text has been consumed.
+//
+// **An unescaped colon is a boundary, not a continuation**, and that is the subtle one.
+// A variant's colon is *escaped* in a selector (`hover\:bg-accent-600`) while a
+// pseudo-class's is bare (`:hover`), so a bare colon can never be inside a class name and
+// can always be read as the start of a pseudo-class. Getting this backwards reports
+// `.card-meta:hover{}` as no rule for `card-meta` — a class this assertion would then say
+// is missing from a build that styles it.
+func continuesSelector(rest string) bool {
+	if rest == "" {
+		// A truncated file is not a build this assertion can reason about, and calling
+		// it a boundary would report a class present on the strength of a missing
+		// closing brace.
+		return true
+	}
+
+	switch next := rest[0]; {
+	case next >= 'a' && next <= 'z', next >= 'A' && next <= 'Z',
+		next >= '0' && next <= '9', next == '_', next == '-', next == '\\':
+		return true
+	default:
+		return false
+	}
 }
 
 // escapeSelector renders a class name the way a minifier writes it in a selector.
@@ -291,9 +351,9 @@ func escapeSelector(class string) string {
 
 // pluginSources returns the plugin source files, as name → contents.
 //
-// **`*.go` and `*.templ`, and test files among them.** The plugins' markup is Go
-// string constants and their tests carry templates too, and a glob that missed the
-// test files would be a narrower claim than the one the `@source` line makes — Tailwind
+// **`*.go` and `*.templ`, test files among them.** The plugins' markup is Go string
+// constants and their tests carry templates too, and a glob that missed the test
+// files would be a narrower claim than the one the `@source` line makes — Tailwind
 // scans every file it is pointed at, whatever its name.
 func pluginSources(t *testing.T) (map[string]string, error) {
 	t.Helper()
@@ -331,16 +391,29 @@ func pluginSources(t *testing.T) (map[string]string, error) {
 
 // pluginClasses returns every class the plugin sources declare, and the scan sentinel.
 //
-// The sentinel is read through the **Go parser** rather than a regular expression,
-// which is the reason it is worth a parser: the declaration is a constant
-// declaration, so reading it as Go means a renamed identifier or a value built from
-// another constant produces "no sentinel is declared" — the honest answer — rather
-// than a regex that matched the wrong string and certified coverage nothing depends
-// on.
+// # Two readers, and the reason the first one is a parser
 //
-// The classes themselves come from `class="…"` attributes, for the reason this file's
-// header gives: prose in a Go constant is not a class, and a walk that treated it as
-// one would be a walk whose every result is noise.
+// Go sources are read through `go/parser` and the class attributes are then taken from
+// the **string literals**, so a `class="…"` written in a comment is not a class. This
+// is not a refinement — it is the difference between the walk working and the walk
+// lying. `linkpreview`'s own test file contains `class="untargeted"` inside a comment
+// explaining that a rename would be caught, and a walk that read comments reported
+// `untargeted` as a class the stylesheet was missing. The failure is loud and it is
+// *wrong*, and a gate that cries wolf about a comment is a gate whose next real failure
+// is ignored. AGENTS.md states the same rule for the accessibility audits — parse the
+// DOM, never substring-match the markup — and a Go comment is the same hazard.
+//
+// `.templ` files are read as raw text, and none exist under the plugin root today. If
+// one lands, its classes are picked up by the same regexp as the Go literals, and a
+// class named in a `{{/* comment */}}` would be reported — the honest failure for a
+// format whose comments this package does not parse.
+//
+// # The sentinel is read through the same parser, and that is what makes it a parser
+//
+// The declaration is a constant declaration, so reading it as Go means a renamed
+// identifier or a value built from another constant produces "no sentinel is declared"
+// — the honest answer — rather than a regex that matched the wrong string and certified
+// coverage nothing depends on.
 func pluginClasses(sources map[string]string) (classes classSet, sentinel string, err error) {
 	classes = newClassSet()
 
@@ -356,75 +429,156 @@ func pluginClasses(sources map[string]string) (classes classSet, sentinel string
 	for _, path := range paths {
 		source := sources[path]
 
-		for _, match := range classAttribute.FindAllStringSubmatch(source, -1) {
-			classes.add(strings.Fields(match[1])...)
-		}
+		// The Go parser path, with its own sentinel read. A `.templ` file takes the
+		// raw-text path and can hold no sentinel.
+		if strings.HasSuffix(path, ".go") {
+			literals, declared, found, parseErr := goSourceLiterals(path, source)
+			if parseErr != nil {
+				return nil, "", parseErr
+			}
 
-		found, declared, parseErr := scanSentinel(path, source)
-		if parseErr != nil {
-			return nil, "", parseErr
-		}
+			for _, literal := range literals {
+				classes.add(classesIn(literal)...)
+			}
 
-		if found && sentinel == "" {
+			if !found {
+				continue
+			}
+
+			if sentinel != "" && declared != sentinel {
+				return nil, "", errSentinelDisagrees(path, declared, sentinel)
+			}
+
 			sentinel = declared
+
+			continue
 		}
 
-		if found && declared != sentinel {
-			return nil, "", errSentinelDisagrees(path, declared, sentinel)
-		}
+		classes.add(classesIn(source)...)
 	}
 
 	return classes, sentinel, nil
 }
 
-// scanSentinel reads one file's scan-sentinel declaration, if it has one.
+// goSourceLiterals returns a Go file's string literals and its scan sentinel, if it
+// declares one.
 //
-// Parsed, and only for the string-valued constant declarations: a file that does not
-// parse is reported rather than skipped, because a plugin source the parser cannot
-// read is a file whose contents this assertion knows nothing about, and silence there
-// would be the vacuous pass again.
-func scanSentinel(path, source string) (found bool, declared string, err error) {
-	if !strings.Contains(source, "ScanSentinelClass") {
-		return false, "", nil
-	}
-
+// **Parsed rather than read as text**, for the reason `pluginClasses` gives, and with
+// `parser.SkipObjectResolution` because this is a lexical question and resolving every
+// declaration to check one constant name is work the walk does not need.
+//
+// A file that does not parse is an error rather than a skip: a plugin source this
+// package cannot read is a file whose contents the assertion knows nothing about, and
+// silence there is the vacuous pass this whole arrangement exists to prevent.
+func goSourceLiterals(
+	path, source string,
+) (literals []string, sentinel string, found bool, err error) {
 	file, err := parser.ParseFile(token.NewFileSet(), path, source, parser.SkipObjectResolution)
 	if err != nil {
-		return false, "", fmt.Errorf("parse the plugin source %s: %w", path, err)
+		return nil, "", false, fmt.Errorf("parse the plugin source %s: %w", path, err)
 	}
 
-	for _, decl := range file.Decls {
-		genDecl, isGen := decl.(*ast.GenDecl)
-		if !isGen {
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.BasicLit:
+			if value.Kind != token.STRING {
+				return true
+			}
+
+			unquoted, unquotedErr := strconv.Unquote(value.Value)
+			if unquotedErr != nil {
+				// A string this package cannot unquote is not a class list and not
+				// markup; skipping it is the only answer that does not invent one.
+				return true
+			}
+
+			literals = append(literals, unquoted)
+
+			return true
+		case *ast.GenDecl:
+			declared, isSentinel := sentinelIn(value)
+			if isSentinel {
+				sentinel, found = declared, true
+			}
+
+			return true
+		default:
+			return true
+		}
+	})
+
+	return literals, sentinel, found, nil
+}
+
+// sentinelIn reports a declaration's value when it is the scan sentinel.
+//
+// **The value must be a plain string literal**, and anything else is "not the
+// sentinel". A sentinel computed at runtime would be a declaration whose value this
+// assertion cannot check, and treating it as absent is the safe direction: the
+// coverage test then fails saying no sentinel exists rather than passing on a class
+// nobody can name.
+func sentinelIn(decl *ast.GenDecl) (string, bool) {
+	if decl.Tok != token.CONST {
+		return "", false
+	}
+
+	for _, spec := range decl.Specs {
+		valueSpec, isValue := spec.(*ast.ValueSpec)
+		if !isValue || len(valueSpec.Names) != 1 || len(valueSpec.Values) != 1 {
 			continue
 		}
 
-		for _, spec := range genDecl.Specs {
-			valueSpec, isValue := spec.(*ast.ValueSpec)
-			if !isValue || len(valueSpec.Names) != 1 || len(valueSpec.Values) != 1 {
+		if valueSpec.Names[0].String() != "ScanSentinelClass" {
+			continue
+		}
+
+		literal, isLiteral := valueSpec.Values[0].(*ast.BasicLit)
+		if !isLiteral || literal.Kind != token.STRING {
+			return "", false
+		}
+
+		unquoted, err := strconv.Unquote(literal.Value)
+		if err != nil {
+			return "", false
+		}
+
+		return unquoted, true
+	}
+
+	return "", false
+}
+
+// classesIn returns the class names one `class="…"` attribute value declares.
+//
+// # Templ actions are dropped, and the drop is the whole reason this is not a `Fields`
+//
+// A plugin template writes `class="{{.TargetClass}}"` — the class is supplied by the
+// component's view model, so the literal in the source is an **expression**, not a
+// class name. Reporting it as one would fail the coverage walk against markup that is
+// correct, and `hasRule` would have to be taught to recognise every templ form to
+// tolerate it. So an attribute value is split on whitespace and any field containing
+// `{{` is dropped.
+//
+// **The substituted class is not thereby unchecked**, and this is worth being explicit
+// about because it looks like a hole: what `{{.TargetClass}}` expands to is
+// `ui.TargetClass`, a constant in `internal/web/components/ui`, whose spelling is
+// asserted there and whose `.target` rule is asserted from the **built** stylesheet by
+// §10.6's target-size gate. The coverage walk's subject is the classes a plugin's own
+// source spells out; the interpolated ones belong to the package that declares them.
+func classesIn(text string) []string {
+	var names []string
+
+	for _, match := range classAttribute.FindAllStringSubmatch(text, -1) {
+		for field := range strings.FieldsSeq(match[1]) {
+			if strings.Contains(field, "{{") {
 				continue
 			}
 
-			if valueSpec.Names[0].String() != "ScanSentinelClass" {
-				continue
-			}
-
-			literal, isLiteral := valueSpec.Values[0].(*ast.BasicLit)
-			if !isLiteral || literal.Kind != token.STRING {
-				continue
-			}
-
-			quoted, unquotedErr := strconv.Unquote(literal.Value)
-			if unquotedErr != nil {
-				return false, "", fmt.Errorf("unquote the scan sentinel in %s: %w",
-					path, unquotedErr)
-			}
-
-			return true, quoted, nil
+			names = append(names, field)
 		}
 	}
 
-	return false, "", nil
+	return names
 }
 
 // errSentinelDisagrees is the failure for two files declaring different sentinels.
@@ -432,8 +586,8 @@ func errSentinelDisagrees(path, declared, first string) error {
 	return &sentinelDisagreementError{path: path, declared: declared, first: first}
 }
 
-// sentinelDisagreementError is the typed form of that failure, so the message says what to
-// do rather than what happened.
+// sentinelDisagreementError is the typed form of that failure, so the message says
+// what to do rather than what happened.
 type sentinelDisagreementError struct {
 	path     string
 	declared string
@@ -458,17 +612,6 @@ type classSet map[string]struct{}
 func newClassSet() classSet { return make(classSet) }
 
 // add records each of the given names.
-//
-// **The template expression `{{.TargetClass}}` is kept, not filtered.** A class name
-// this walk cannot resolve is a class whose presence in the built file is a question
-// rather than a fact, and dropping it would be to make the walk's output tidier at the
-// cost of making it wrong: the class it names is the plugin's `.target` contract and
-// §10.6's target-size gate reads it from the built stylesheet by that very name.
-//
-// So it is recorded, and `hasRule` then answers the question honestly — `{{.TargetClass}}`
-// has no rule, and a plugin interpolating an unknown class into `class="…"` is a
-// defect this walk reports rather than hides. The alternative, filtering anything that
-// is not `[-a-zA-Z0-9_/]`, would silence that and silence a typo at the same time.
 func (c classSet) add(names ...string) {
 	for _, name := range names {
 		if name == "" {
@@ -491,50 +634,56 @@ func (c classSet) values() []string {
 	return names
 }
 
-// TestTheSelectorMatchingHandlesTheClassesTailwindActuallyEscapes is the check on the
-// check: `hasRule` matches a class name against the built stylesheet, and the built
-// stylesheet is minified, so a name needing an escape must be found in escaped form.
+// TestASelectorPrefixIsNotASelector is the check on `hasRule` that the minified build
+// forced, and it is the one a reader should read before believing the coverage walk.
 //
-// **Both forms, and both directions.** The unescaped match is tried first because the
-// overwhelming majority of class names need no escaping and must be found by a plain
-// substring; the escaped match is the fallback for the three characters Tailwind's own
-// utilities contain. A class that needed escaping and was looked for only in unescaped
-// form would report missing against a correct build, and a test that fails on a correct
-// build is a test that gets commented out.
-func TestTheSelectorMatchingHandlesTheClassesTailwindActuallyEscapes(t *testing.T) {
+// **The measured defect.** `strings.Contains(css, ".notice")` answers `true` for a
+// stylesheet carrying only `.notice--warning`, `.notice--error` and nothing else — and
+// the built stylesheet carries exactly three `.notice--*` rules. So a bare substring
+// check reported the roller's own `.notice` present on the strength of a modifier it
+// never uses, and the walk passed with the bare rule deleted from the build. That is a
+// silent pass of the kind this file exists to prevent, found by deleting the rule and
+// requiring the assertion to notice.
+//
+// Three near-misses, because each is a character that could plausibly have been
+// forgotten: a hyphen (the modifier), an escaped colon (a variant), and a second
+// hyphen past a matcher that only checked the first.
+func TestASelectorPrefixIsNotASelector(t *testing.T) {
 	t.Parallel()
 
+	const stylesheet = ".notice--warning{}" +
+		".hover\\:bg-accent-600:hover{}" +
+		".button--primary{}" +
+		".card-meta{}" +
+		".notice{}"
+
 	for _, testCase := range []struct {
-		name    string
-		class   string
-		renders string
+		class string
+		want  bool
 	}{
-		{name: "Plain", class: "notice", renders: ".notice,.card-meta{"},
-		{name: "Fraction", class: "w-1/2", renders: `.w-1\/2{`},
-		{name: "Decimal", class: "p-1.5", renders: `.p-1\.5{`},
-		{name: "Variant", class: "hover:bg-accent-600", renders: `.hover\:bg-accent-600{`},
-		{
-			name:    "TargetStylePunctuation",
-			class:   `w-[calc(100%-1rem)]`,
-			renders: `.w-\[calc\(100\%-1rem\)\]{`,
-		},
+		{class: "notice", want: true},
+		{class: "notice--warning", want: true},
+		{class: "notice--error", want: false},
+		{class: "button", want: false},
+		{class: "button--primary", want: true},
+		{class: "card", want: false},
+		{class: "card-meta", want: true},
+		{class: "hover:bg-accent-600", want: true},
+		{class: "hover:bg-red-500", want: false},
+		// The bare word inside a longer identifier, which is the case a matcher that
+		// checked only the character immediately after would also get right — and the
+		// one a matcher that checked *anywhere later* would get wrong.
+		{class: "notice--warning-extra", want: false},
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
+		t.Run(testCase.class, func(t *testing.T) {
 			t.Parallel()
 
-			if !hasRule(testCase.renders, testCase.class) {
-				t.Errorf("hasRule(%q, %q) = false on the minified selector it renders as; a "+
-					"class needing an escape must be found in escaped form, or the assertion "+
-					"fails on a correct build and gets deleted with it",
-					testCase.class, testCase.renders)
+			if got := hasRule(stylesheet, testCase.class); got != testCase.want {
+				t.Errorf("hasRule = %v for %q, want %v; a class name that is only a "+
+					"prefix of a longer one is not a rule for it, and a matcher that "+
+					"says otherwise certifies a page as styled when it is not",
+					got, testCase.class, testCase.want)
 			}
 		})
-	}
-
-	// And the negative: a class nothing renders is reported missing. A `hasRule` that
-	// answered true for everything would satisfy every case above.
-	if hasRule(".notice{", "card-meta") {
-		t.Error("hasRule found a class the stylesheet does not carry; it must answer false " +
-			"for a class with no rule, or the coverage walk passes unconditionally")
 	}
 }

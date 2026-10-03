@@ -167,12 +167,23 @@ test: ## Run tests
 # `./internal/httpapi/assets` are here because each renders a distinct document
 # under the same shell, and §10.2 says *every* route.
 #
-# `$(wildcard ...)` over the route packages, so naming a route is a matter of
-# creating its directory rather than of editing this line — and so this target
-# cannot fail on a package that does not exist yet, which is the mistake a literal
-# list makes the moment one lands before another.
+# **Each entry is a name AND a `$(wildcard)`, and adding a route is two steps.**
+# The wildcard gives two things, and only one of them is the one it looks like:
+#
+#   - a route package that does not exist yet cannot fail the target, so this line
+#     can be extended before the package lands, which is the mistake a literal list
+#     makes the moment one lands before another;
+#   - **it expands nothing that is not already named.** `$(wildcard a b c)` is
+#     `a b c` with the missing ones dropped. It is not a directory scan.
+#
+# So a new route is invisible to this gate until somebody adds its name here, and
+# `internal/httpapi/plugins` was: the directory landed with #64's six audits and the
+# gate did not look at them, because nobody edited this line. Nothing said so —
+# `go test -run` exits 0 on a pattern that matches nothing, which is the same silent
+# pass the guard below exists for. The wildcard is here for the first bullet only,
+# and the claim a name makes is enforced by the guard, not by the wildcard.
 A11Y_ROUTE_PKGS := $(wildcard ./internal/httpapi/wiki ./internal/httpapi/search \
-	./internal/httpapi/assets ./internal/httpapi/edit)
+	./internal/httpapi/assets ./internal/httpapi/edit ./internal/httpapi/plugins)
 
 A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi $(A11Y_ROUTE_PKGS)
 
@@ -188,11 +199,13 @@ A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi $(A11Y_
 #   ...RepresentsTheRoutes    the audit's self-tests over the §10.2 rules
 #   Target|TvMode|Preferences
 #     AreNever|FocusIndicator UI §10.6 and §3.3, the stylesheet gate in a11y_test.go
-#   BuiltStylesheet           that no layer is missing from the build
+#   BuiltStylesheet           that no layer is missing from the build, and that the
+#     |ScanCoverage           plugin sources are among the scan roots (the scan-coverage
+#                             half of the built-artefact gate, internal/web)
 #   ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget
 #     |EntitledToAssert|DegradedWarning
 #                             the composition's own invariants
-A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType|ExactlyOneH1|SkipLink
+A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|ScanCoverage|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType|ExactlyOneH1|SkipLink
 
 .PHONY: a11y
 a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate

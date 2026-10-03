@@ -393,7 +393,7 @@ func attackModes(pack *Pack, subject *creature) []Advantage {
 // # The hit and the critical are two questions, and this file used to ask them as one
 //
 // **Asking the critical rule whether the attack landed was wrong, and the shape of the
-// bug is worth recording because it is quiet.** `defaultCritical` short-circuits on the
+// defect is worth recording because it is quiet.** `defaultCritical` short-circuits on the
 // defender's exemption — 2024's `crit_ignored_by_incapacitated` answers `false` before
 // it consults the attack die at all — so a resolver that took the rule's answer as "it
 // hit" made a **natural 20 miss** against an unconscious, paralysed or incapacitated

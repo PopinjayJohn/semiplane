@@ -14,10 +14,13 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/assets"
 	"github.com/semiplane/semiplane/internal/httpapi/edit"
 	"github.com/semiplane/semiplane/internal/httpapi/events"
+	pluginroutes "github.com/semiplane/semiplane/internal/httpapi/plugins"
 	"github.com/semiplane/semiplane/internal/httpapi/search"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
+	"github.com/semiplane/semiplane/internal/realtime"
 	"github.com/semiplane/semiplane/internal/store"
 	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/plugins/linkpreview"
 )
 
 // signOutHref is where every campaign-scoped document's sign-out form posts.
@@ -49,24 +52,6 @@ const signOutHref = "/logout"
 // exists so that a pathological vault cannot make the process's memory grow
 // without limit.
 const renderCacheEntries = 512
-
-// pageKinds is the page-kind registry `content.Parse` discriminates against.
-//
-// Empty, and deliberately so: the plugin registry is P8, and a page whose `kind`
-// names something this build does not know degrades to prose (S-3.3), which is
-// exactly the behaviour an empty registry produces. Wiring a hand-written list of
-// semiplane's own five kinds here would mean two vocabularies — this one and the
-// registry's — that agree until P8 disagrees with this one, and a page that
-// renders as a token in development and as prose in production is the kind of
-// defect that is only ever found by a user.
-//
-// `nil` would behave identically today, and an explicit empty type is better: it
-// names the decision rather than leaving it to the reader's inference about what
-// nil does.
-type pageKinds map[string]struct{}
-
-// HasPageKind reports whether a kind is registered. Always false until P8.
-func (pageKinds) HasPageKind(string) bool { return false }
 
 // pageLister answers the wiki route's one query on a cache miss: which pages does
 // this campaign contain.
@@ -154,10 +139,13 @@ const productVersion = ""
 // that a page's references resolve is asserting it about the handler the product
 // serves rather than about a fixture that resembles it.
 //
-// `kinds` and `pages` are parameters rather than being read from a registry inside
-// here: P8 replaces the former with the plugin registry and this phase replaced
-// the latter with the maintained table, and a constructor that looked them up would
-// have to be edited for each.
+// `kinds` is the **plugin registry's** kind table (`plugins.pageKinds`), handed in
+// rather than looked up here: this package does not know what a gameplay plugin
+// declares, and a constructor that reached for it would have to be edited the first
+// time the answer moved. `pages` is the maintained `pages` table for the same reason
+// on the other axis — the index is a rebuildable cache of the filesystem, and a
+// route that walked the tree itself would be a second source of truth about what
+// the campaign contains.
 func newWikiRoute(
 	roots *content.Registry,
 	renderers wiki.CampaignRenderers,
@@ -316,6 +304,51 @@ func newEventRoute(hub *events.Hub, logger *slog.Logger) *events.Handler {
 	return &events.Handler{Hub: hub, Logger: logger}
 }
 
+// newPluginRoute builds the campaign-scoped plugin handler.
+//
+// # Four fields, and each one is a decision
+//
+//   - `UI` is the UI tier from `systems.go`, so the page types and render hooks a
+//     plugin registered are the ones this route serves. A second registry would be a
+//     second answer to "which page types does this build have", and the failure is the
+//     bad one: a route serving a page type nothing registered renders whatever the
+//     mismatch produced.
+//   - `Hub` is the realtime hub, which is what makes the roller's send a *gameplay*
+//     act rather than a form post. §10.6's roller "dispatches the same intents a human
+//     player would, so it passes identical authorisation and validation", and the only
+//     way that is true is for the button and the keystroke to reach the same hub.
+//   - `Systems` reports a campaign's system, so the roller shows **the campaign's own
+//     notation** rather than guessing one. That is §10.4's whole claim — the table is
+//     data and the resolver reads it — and `rules.Grammar`'s own comment is the reason
+//     guessing is forbidden: "the protocol never assumes d20". It is a **function over
+//     the store** rather than the registry, because the answer lives in a column, and
+//     it degrades: a campaign whose system this build does not resolve renders the
+//     widget with no notation and the widget says so, which is S-10.6's first row
+//     reached from the UI side.
+//   - `Preview` is the link-preview fetcher. **Constructed here with `linkpreview.New()`**
+//     rather than left nil, and the nil-tolerant 503 branch in `plugins.Handler` is not
+//     exercised by this build — which is the right way round: the honest failure is a
+//     preview that cannot be fetched, and the branch exists for a deployment that
+//     genuinely has no fetcher rather than so the composition root can skip a line.
+//
+// The logger is the process logger, for the reason the asset route's is: a refused
+// roll is a line an operator greps for, and "there is no logger here" is not a reason
+// for there to be none.
+func newPluginRoute(
+	backing *store.Store,
+	registered plugins,
+	hub *realtime.Hub,
+	logger *slog.Logger,
+) *pluginroutes.Handler {
+	return &pluginroutes.Handler{
+		UI:      registered.ui,
+		Hub:     hub,
+		Systems: registered.systemFor(backing),
+		Preview: linkpreview.New(),
+		Logger:  logger,
+	}
+}
+
 // editorRenderers is the wiki route's renderer map seen as the editor's.
 //
 // A conversion and nothing else. Go does not copy a map when converting between
@@ -400,6 +433,3 @@ func mustListCampaigns(ctx context.Context, db *store.Store) []domain.Campaign {
 var _ interface {
 	PagesForCampaign(ctx context.Context, campaignID int64) ([]domain.Page, error)
 } = pageLister{}
-
-// ensure the kind registry satisfies the domain's, for the same reason.
-var _ domain.PageKindRegistry = pageKinds{}

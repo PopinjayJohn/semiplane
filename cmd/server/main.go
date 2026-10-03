@@ -218,11 +218,35 @@ func runServer(_ []string) error {
 
 	registered := mustListCampaigns(ctx, db)
 
+	// # The plugins, built first of everything that resolves anything
+	//
+	// `systems.go` holds the registrations and this is the one line that runs them.
+	// It is here rather than lower down for two reasons, and the second is why it
+	// cannot move:
+	//
+	//  - The realtime plane's resolver is `plugin.Resolver` over this gameplay
+	//    registry, and the gate's expected fingerprint is the engine's own four
+	//    components. Both are below.
+	//  - **The content pipeline's page-kind registry is this gameplay registry too**
+	//    (§10.7: `kind` is registry-backed, so a page's `ancestry` is a game object
+	//    in a build shipping 5e and prose in one that is not). The pipeline is
+	//    constructed further down with `pageKinds`, so registering after it would
+	//    mean the wiki renders every plugin kind as prose in a build that knows it —
+	//    a product that is quietly right about nothing.
+	//
+	// A refusal stops the boot, and `systems.go` says why that is the right
+	// direction: every one of them is about a compiled-in data pack or about this
+	// composition root, never about anything an operator did to their instance.
+	plugins, err := registerPlugins(logger)
+	if err != nil {
+		return fmt.Errorf("register the plugins: %w", err)
+	}
+
 	// # The realtime plane, built here and before any route that needs it
 	//
-	// Four values with a strict dependency flow — registry, then gate, then hub,
-	// then route — and `realtime.go` states each step's reason. Two things about
-	// *where* it is built are worth saying here rather than there:
+	// Four values with a strict dependency flow — registry, then gate, then
+	// resolver, then hub — and `realtime.go` states each step's reason. Two things
+	// about *where* it is built are worth saying here rather than there:
 	//
 	//  - **Before the campaign routes**, because `playRoute` is one of them and
 	//    because the boot pass over the fingerprints needs the campaign list,
@@ -232,7 +256,15 @@ func runServer(_ []string) error {
 	//    `observability.Writes` registered into the same registry as the
 	//    pipeline's surfaces. Both of those already exist at this point and
 	//    neither exists later.
-	plane := newRealtimePlane(ctx, db, registry, logger)
+	plane := newRealtimePlane(ctx, db, registry, plugins, logger)
+
+	// The page-kind registry every renderer and the editor share, held once and
+	// handed down. **One value rather than three lookups** because `content.NewRenderer`
+	// and `wiki.Handler` each keep it and a second registry would be a second answer
+	// to "which kinds does this build know" — and the failure mode is the bad one: a
+	// page that renders as a game object on the wiki and as prose in the editor, with
+	// nothing in either log to say which side is wrong.
+	kinds := plugins.pageKinds()
 
 	// Every campaign's fingerprint is checked against what this build resolves
 	// under, and nothing is opened. The boot pass is read-only by construction
@@ -243,6 +275,13 @@ func runServer(_ []string) error {
 	// underlying reason — a subsystem that is not asked a question at boot
 	// answers it on a user's first request.
 	resumeCampaignStates(ctx, plane, registered, logger)
+
+	// The same argument for the same reason, over the other half of §10.8: a campaign
+	// whose `system_id` names no registered system is refused at every intent by the
+	// resolver, and a per-intent refusal is seen by a client rather than by an operator.
+	// This pass is what puts "campaign X names system Y, which this build does not
+	// resolve" in a log before the server listens.
+	reportMissingSystems(plugins.gameplay, registered, logger)
 
 	// The shutdown step for the realtime plane. **Not** a `defer`: it has to run
 	// in the same `beforeDrain` step as the event hub and before the HTTP drain,
@@ -336,7 +375,7 @@ func runServer(_ []string) error {
 			continue
 		}
 
-		renderers[registered[i].Slug] = content.NewRenderer(registered[i].Slug, pageKinds{})
+		renderers[registered[i].Slug] = content.NewRenderer(registered[i].Slug, kinds)
 	}
 
 	// The content pipeline: one watcher, one settle filter, one indexer over every
@@ -354,7 +393,7 @@ func runServer(_ []string) error {
 		contentRoots,
 		registered,
 		db,
-		pageKinds{},
+		kinds,
 		signals,
 		hub.Sink(),
 	)
@@ -389,7 +428,7 @@ func runServer(_ []string) error {
 	wikiRoute := newWikiRoute(
 		contentRoots,
 		renderers,
-		pageKinds{},
+		kinds,
 		pageLister{db: db},
 		instance,
 		logger,
@@ -412,12 +451,13 @@ func runServer(_ []string) error {
 		contentRoots,
 		db,
 		editorRenderers(renderers),
-		pageKinds{},
+		kinds,
 		instance,
 		logger,
 	)
 	eventRoute := newEventRoute(hub, logger)
 	playRoute := newPlayRoute(plane.hub, logger)
+	pluginRoute := newPluginRoute(db, plugins, plane.hub, logger)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -433,6 +473,7 @@ func runServer(_ []string) error {
 			editRoute,
 			eventRoute,
 			playRoute,
+			pluginRoute,
 		),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
