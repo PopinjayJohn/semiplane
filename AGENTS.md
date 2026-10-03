@@ -78,8 +78,8 @@ container lacks it, `apt-get install -y --no-install-recommends gcc libc6-dev`.
 ## The gate
 
 **No Go change is complete until `make check` passes.** It runs, in order:
-format diff check, `make css`, `make templ`, `go build`, `go vet`,
-`golangci-lint run`, `make a11y`, `go test -race`.
+format diff check, `make vendor-check`, `make css`, `make templ`, `go build`,
+`go vet`, `golangci-lint run`, `make a11y`, `go test -race`.
 
 `css` and `templ` precede `build` because `internal/web` embeds both outputs.
 The binary is the first place a missing stylesheet shows up, so `build` also
@@ -87,6 +87,17 @@ checks for the file and says `run: make css` rather than failing on the embed
 pattern. `make tailwind` downloads ~110MB once per checkout into `.toolbin/`
 and verifies it against a committed digest of its release manifest;
 [0019](docs/content/en/decisions/0019-tailwind-standalone-pinned.md).
+
+`vendor-check` precedes `css` for the same reason one step earlier: `css` stages
+`static/vendor/` into `static/dist/`, `internal/web` embeds `all:static/dist`,
+and `build` therefore embeds **whatever vendored bytes are on disk** into the
+shipped binary. It reaches no network — CI has no npm account, and a gate that
+fetched there would make `make check` depend on a third party being up. It is a
+`go test -run` and carries the same guard `a11y` does, because `go test -run`
+exits 0 on a pattern matching nothing. `make vendor` re-fetches and `make
+vendor-dry-run` re-fetches without writing; both need the network and neither is
+in `check`. The pin and its three targets:
+[0052](docs/content/en/decisions/0052-third-party-browser-assets-are-committed-and-digest-pinned.md).
 
 `make a11y` runs UI §10.1 (contrast), §10.2 (structural a11y, every route) and
 §10.6 (target size), and it is in `check` because those three are gate-blocking
@@ -134,12 +145,27 @@ each cost a PR:
 ```bash
 make check          # the full gate
 make a11y           # just the UI §10.1/§10.2/§10.6 gate
+make vendor-check   # re-hash the committed vendor bytes (no network)
+make vendor-dry-run # re-fetch every npm package and verify it, writing nothing
+make vendor         # re-fetch every npm package and verify it into the vendor tree
 make lint-fix       # auto-fix what is fixable, then reformat
 make lint-verify    # validate .golangci.yml against the v2 schema
 make run            # dev server on :8080
 make vuln           # govulncheck
 make ci             # lint-verify + check
 ```
+
+**A browser asset that is not staged into `static/dist/` is not served, and nothing
+says so.** `internal/web` embeds `all:static/dist` and `/assets/` serves exactly that
+tree, so a module or a vendored file living only under `static/js/` or
+`static/vendor/` is a **404** — a silently absent behaviour, because the page
+renders, the tabletop loads, and the feature that needed the module is simply not
+there. `make stage-assets` copies both trees in with their relative layout preserved
+(`scene.js` imports `../../vendor/pixi.min.mjs`, so a flattened copy is a module
+graph that cannot resolve) and takes `*.js` only: those trees also hold the
+`*_test.go` files that audit the modules beside them, and a copy that took everything
+would embed a Go test file into the binary and serve it from a route with no gate on
+it. Adding a browser asset means adding it to that staging in the same commit.
 
 **The stylesheet is assembled in `internal/web/static/css/app.css` and nowhere
 else.** `@import "tailwindcss"` is followed by `tokens.css`, `shell.css` and
@@ -332,7 +358,18 @@ internal/web/     templ components and static assets
 docs/             Hugo documentation site (its own project root)
 demo-vault/       the demo campaigns (phase 11)
 scripts/          sync-labels.sh, check-site-links.sh, check-site-structure.sh
+tools/            install-tailwind.sh, and vendor.json + vendor/ (the vendor pin)
 ```
+
+**`tools/vendor/` is a Go program inside the module, and that is deliberate.** It is
+`make vendor`'s whole body — re-fetch, verify the npm integrity, extract the named
+members, and refuse to write anything the pin does not describe — so `go vet`,
+`golangci-lint` and `go test -race ./...` all reach it and its `httptest` TLS
+registry means the fetcher is covered by `make check` **offline**. A shell
+alternative would need its own harness. It has **no `check` subcommand**: the digest
+check is `TestTheVendoredBytesMatchThePin` in `internal/web/static/js/map`, it reads
+the whole manifest rather than one package, and a second implementation would be a
+second answer to the same question.
 
 **`cmd/server/systems.go` is where every registration in this process happens**, and it
 is a separate file rather than part of `wiring.go` because the rule it embodies is one
