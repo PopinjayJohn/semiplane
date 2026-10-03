@@ -50,6 +50,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/semiplane/semiplane/internal/httpapi/play"
+	"github.com/semiplane/semiplane/internal/web/components/live"
 	"github.com/semiplane/semiplane/internal/web/components/ui"
 )
 
@@ -299,7 +300,7 @@ func isLandmarkRole(role string) bool {
 // question the browser already answers. What the partial version must not do is
 // report an unnamed landmark as named, which is why a reference that resolves to
 // nothing falls through to `aria-label` and then to empty.
-func accessibleName(node *html.Node, root *html.Node) string {
+func accessibleName(node, root *html.Node) string {
 	if ids := attr(node, "aria-labelledby"); ids != "" {
 		if name := referencedText(root, ids); name != "" {
 			return name
@@ -313,7 +314,7 @@ func accessibleName(node *html.Node, root *html.Node) string {
 func referencedText(root *html.Node, ids string) string {
 	parts := make([]string, 0, len(strings.Fields(ids)))
 
-	for _, id := range strings.Fields(ids) {
+	for id := range strings.FieldsSeq(ids) {
 		target := byID(root, id)
 		if target == nil {
 			continue
@@ -351,6 +352,59 @@ func elementText(node *html.Node) string {
 }
 
 // byID finds an element by id.
+// firstHeadingAfter returns the first heading element in document order that
+// follows `from`, or nil.
+//
+// Document order, not tree order, and the distinction is the point: a heading
+// nested inside a landmark that appears *earlier* in the document is still later
+// in the outline, and an outline rule that walked the tree would judge a
+// document by its nesting rather than by what a reader hears.
+func firstHeadingAfter(root, from *html.Node) *html.Node {
+	if from == nil {
+		return nil
+	}
+
+	seen := false
+
+	var walk func(*html.Node) *html.Node
+
+	walk = func(node *html.Node) *html.Node {
+		if node == from {
+			seen = true
+		}
+
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			if seen && isHeadingElement(child) {
+				return child
+			}
+
+			if found := walk(child); found != nil {
+				return found
+			}
+		}
+
+		return nil
+	}
+
+	return walk(root)
+}
+
+// isHeadingElement reports whether node is one of `h1` through `h6`.
+//
+// The tag name is checked rather than a list, because the six are a closed set
+// in HTML and a rule that listed them would need editing if that ever changed —
+// while a rule that matched "an `h` followed by a digit" would also match an
+// element this repository does not render.
+func isHeadingElement(node *html.Node) bool {
+	if node.Type != html.ElementNode {
+		return false
+	}
+
+	return len(node.Data) == 2 &&
+		node.Data[0] == 'h' &&
+		node.Data[1] >= '1' && node.Data[1] <= '6'
+}
+
 func byID(root *html.Node, id string) *html.Node {
 	var found *html.Node
 
@@ -506,7 +560,10 @@ func structuralRules() []routeRule {
 	return []routeRule{
 		{name: "exactly one h1", audit: exactlyOneH1},
 		{name: "heading levels never skip", audit: headingLevelsNeverSkip},
-		{name: "landmarks are present and distinguishing", audit: landmarksArePresentAndDistinguishing},
+		{
+			name:  "landmarks are present and distinguishing",
+			audit: landmarksArePresentAndDistinguishing,
+		},
 		{name: "skip links come first and resolve", audit: skipLinksComeFirstAndResolve},
 		{name: "no positive tabindex", audit: noPositiveTabindex},
 		{name: "no aria-hidden on a focus stop", audit: noAriaHiddenOnAFocusStop},
@@ -643,9 +700,8 @@ func landmarksArePresentAndDistinguishing(a *docAudit) []string {
 	}
 
 	if present["navigation"] < 1 {
-		faults = append(faults, fmt.Sprintf(
-			"%s: the document has no navigation landmark (UI §4.3)", a.where,
-		))
+		faults = append(faults, a.where+
+			": the document has no navigation landmark (UI §4.3)")
 	}
 
 	// Distinctness, keyed on role *and* name: two landmarks of different roles
@@ -1042,8 +1098,8 @@ func everyReferenceResolves(a *docAudit) []string {
 		"aria-activedescendant for form"
 
 	a.elements(func(node *html.Node) {
-		for _, attribute := range strings.Fields(references) {
-			for _, id := range strings.Fields(attr(node, attribute)) {
+		for attribute := range strings.FieldsSeq(references) {
+			for id := range strings.FieldsSeq(attr(node, attribute)) {
 				if byID(a.root, id) == nil {
 					faults = append(faults, fmt.Sprintf(
 						"%s: %s has %s=%q, which resolves to nothing (UI §10.2)",
@@ -1271,19 +1327,14 @@ func TestTheSkipLinkAndTheLandmarkItNamesAreOneCondition(t *testing.T) {
 func TestEveryRouteAuditPassesOnADocumentThisRouteCouldServe(t *testing.T) {
 	t.Parallel()
 
-	type namedRule struct {
-		name  string
-		audit func(*docAudit) []string
-	}
-
-	checks := make([]namedRule, 0, len(structuralRules())+2)
-	for _, rule := range structuralRules() {
-		checks = append(checks, namedRule{name: rule.name, audit: rule.audit})
-	}
+	// `routeRule` and not a local copy of it: the struct is already declared for
+	// `structuralRules()` and a second identical type is a second thing to keep in
+	// step when a field is added — which is how a rule list and its checks drift.
+	checks := append([]routeRule{}, structuralRules()...)
 
 	checks = append(checks,
-		namedRule{name: "target class", audit: targetClassOnEveryFocusStop},
-		namedRule{name: "vocabulary", audit: vocabularyFaults},
+		routeRule{name: "target class", audit: targetClassOnEveryFocusStop},
+		routeRule{name: "vocabulary", audit: vocabularyFaults},
 	)
 
 	for _, doc := range servedDocuments(t) {
@@ -1439,17 +1490,36 @@ func violations() []violation {
 			},
 		},
 		{
+			// The fixture used to retag `#token-list-heading` as an `h4`, which
+			// skipped a level **only because the token list's heading happened to
+			// sit at `h2`**. Wiring the live chrome and the chat panel into the
+			// rail put an `h3` between the document's `h1` and that heading, the
+			// jump stopped being a skip, and this meta-test reported it — which is
+			// the whole reason the meta-test exists: a fixture that quietly stops
+			// violating its rule is an audit nobody can fail, with a green light
+			// on top.
+			//
+			// So the mutation no longer names a particular heading. It takes the
+			// **first heading after the document's own `h1`** and makes it an `h3`,
+			// because `h1` → `h3` skips `h2` whatever else the document contains.
+			// A skip that depends on what surrounds it is not a fixture; it is a
+			// coincidence that happens to hold until the next component is added.
 			name:     "a heading that skips a level",
 			why:      "an outline that jumps two levels hides the section in between",
 			rule:     "heading levels never skip",
 			mentions: "skip",
 			mutate: func(root *html.Node) bool {
-				heading := byID(root, "token-list-heading")
-				if heading == nil {
+				pageHeading := byID(root, "page-heading")
+				if pageHeading == nil {
 					return false
 				}
 
-				heading.Data = "h4"
+				first := firstHeadingAfter(root, pageHeading)
+				if first == nil {
+					return false
+				}
+
+				first.Data = "h3"
 
 				return true
 			},
@@ -1703,7 +1773,7 @@ func violations() []violation {
 func removeClass(node *html.Node, token string) bool {
 	kept := make([]string, 0, len(strings.Fields(attr(node, "class"))))
 
-	for _, class := range strings.Fields(attr(node, "class")) {
+	for class := range strings.FieldsSeq(attr(node, "class")) {
 		if class != token {
 			kept = append(kept, class)
 		}
@@ -2055,4 +2125,103 @@ func TestTheVocabularyAuditFindsTheWordWhereverItIs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- The live chrome's hooks ----------------------------------------------------
+
+// TestTheDocumentCarriesEveryHookTheLiveChromePatches is the seam between two
+// work items, and it is the assertion that makes the seam exist.
+//
+// # Why it is here and not in `components/live`
+//
+// C3 owns the hooks, C4 owns the document, and nothing else in the tree says the
+// two meet. `live.Chrome` renders five `data-chrome` targets; this route mounts
+// it. If it did not, every rule in `components/live` would still pass — that
+// package tests *its own* rendered chrome, which is correct and is exactly why
+// the gap is invisible from there. The sidebar would ship as a set of regions
+// that never receives a patch, and the symptom would be a table whose initiative
+// tracker is permanently empty with nothing in any log.
+//
+// # What "present" means
+//
+// Counted over the **parsed DOM**, once each, and by hook rather than by testid —
+// `live.TargetByName` is what `live.Decide` resolves a fragment's target against,
+// so a target this route rendered under a different spelling would be refused
+// with `unknown_target` on every frame, silently. Counting is per hook because
+// `chat`'s own comment names the failure: two elements carrying one hook means
+// `querySelector` takes the first and drops every line after it.
+func TestTheDocumentCarriesEveryHookTheLiveChromePatches(t *testing.T) {
+	t.Parallel()
+
+	document := parseDocument(t, servedDocuments(t)[0])
+
+	for _, target := range live.Targets() {
+		t.Run(target.Name, func(t *testing.T) {
+			t.Parallel()
+
+			found := elementsWithChrome(t, document, target.Hook)
+
+			if len(found) != 1 {
+				t.Errorf("the document carries %d elements with %s=%q, want exactly 1. "+
+					"Zero means %s refuses every fragment for this target with "+
+					"unknown_target, and the region stays empty for the life of the "+
+					"table; more than one means querySelector takes the first and "+
+					"silently drops every patch after it",
+					len(found), live.ChromeAttribute, target.Hook, "live.Decide")
+			}
+		})
+	}
+}
+
+// TestTheDocumentOpensExactlyOneSocketAndOneEventStream is UI §7.5's second
+// Task, asserted on the document rather than on the client.
+//
+// Both directions, because neither is visible from the other: a client that
+// opened a second socket is invisible to a document count, and a document that
+// published two URLs is invisible to a client count. §7's ~6-connection ceiling
+// is what makes "exactly one" a budget rather than a preference.
+func TestTheDocumentOpensExactlyOneSocketAndOneEventStream(t *testing.T) {
+	t.Parallel()
+
+	document := parseDocument(t, servedDocuments(t)[0])
+
+	sockets := elementsWithChrome(t, document, live.WebSocketHook)
+	if len(sockets) != 1 {
+		t.Errorf("the document carries %d elements with %s=%q, want 1: the tabletop "+
+			"socket is a standing capability and a second one is a second writer",
+			len(sockets), live.ChromeAttribute, live.WebSocketHook)
+	}
+
+	// The stream opener is counted by the attribute `data-init`, because that is
+	// what Datastar acts on — an element with no `data-init` opens nothing, so a
+	// count of "elements that look like the stream" would be a count of
+	// intentions rather than of behaviour.
+	var openers int
+
+	document.elements(func(node *html.Node) {
+		if strings.Contains(attr(node, "data-init"), "/events") {
+			openers++
+		}
+	})
+
+	if openers != 1 {
+		t.Errorf("the document carries %d elements whose data-init opens the event "+
+			"stream, want 1 (UI §7.5: the play page opens exactly one WS and one SSE)",
+			openers)
+	}
+}
+
+// elementsWithChrome counts the elements carrying `data-chrome="hook"`.
+func elementsWithChrome(t *testing.T, document *docAudit, hook string) []*html.Node {
+	t.Helper()
+
+	var found []*html.Node
+
+	document.elements(func(node *html.Node) {
+		if attr(node, live.ChromeAttribute) == hook {
+			found = append(found, node)
+		}
+	})
+
+	return found
 }

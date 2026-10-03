@@ -60,7 +60,9 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
 	"github.com/semiplane/semiplane/internal/realtime"
 	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/chat"
 	"github.com/semiplane/semiplane/internal/web/components/chrome"
+	"github.com/semiplane/semiplane/internal/web/components/live"
 	webplay "github.com/semiplane/semiplane/internal/web/components/play"
 )
 
@@ -169,12 +171,76 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 
+	//nolint:contextcheck // See `documentView`: templ's constructors take no
+	// context and the only place one enters this route is the Render below.
 	if err := webplay.Document(view, rail).Render(ctx, w); err != nil {
 		h.log(ctx, slog.LevelError, "play.document_render_failed",
 			slog.String("campaign", access.Campaign.Slug),
 			slog.String("error", err.Error()),
 		)
 	}
+}
+
+// The two connection addresses the sidebar reads, and why they are composed here
+// rather than read from the request.
+//
+// `r.URL` would be the obvious source and the wrong one: the document is served
+// behind `campaigns.Resolve`, whose own pattern is `/c/{slug}/`, and a request
+// that arrived at `/c/greyhaven/play` says nothing about where the socket is. The
+// slug is the fact, it has been through `domain.ValidateSlug`, and both addresses
+// are **derived from it rather than echoed from a header** — which is the same
+// reason architecture §9 puts the slug in the path: it partitions every cache key
+// by visibility.
+//
+// Two connections and not four (architecture §7's ~6 ceiling): the WebSocket
+// carries structured state to the canvas, and the event stream carries rendered
+// fragments to the sidebar. `TestTheDocumentOpensExactlyOneOfEach` counts both in
+// the rendered document rather than trusting this comment.
+func socketHref(slug string) string { return "/c/" + slug + "/ws" }
+
+func eventsHref(slug string) string { return "/c/" + slug + "/events" }
+
+// degradedNotices is what §4.7's degraded conditions would be read from.
+//
+// **Empty, and that is a stated gap rather than a stub.** The notices C3 renders
+// are the degraded watcher, an exhausted secret reconciliation, and a stream the
+// server cannot serve whole. Two of those three are phase 10's work and do not
+// exist yet; the third is `events.Handler`'s business and has no accessor on this
+// route.
+//
+// What this route *can* see is nothing: `campaigns.Access` carries the campaign,
+// the membership and the tier, and a degraded watcher is not among them. Inventing
+// a signal here would be a notice that is never true, and a notice region that
+// renders an empty state forever is the honest answer — it is exactly what a
+// healthy table looks like, which is how `ChromeView.Notices` documents its zero
+// value.
+//
+// The socket state beside it is the notice a reader actually gets today, and it
+// is client-owned: both sentences are rendered and the client reveals one.
+func (h *Handler) degradedNotices(campaigns.Access) []live.NoticeView {
+	return nil
+}
+
+// messages is the chat history the document renders before any stream opens.
+//
+// **Nil, and this is the phase's one real gap on this route.** §7.5 requires the
+// chat log to carry its scrollback in the document while announcing none of it —
+// "a user joining mid-table would otherwise hear the whole table read aloud" — so
+// the intended shape is history-in-the-DOM, silence-on-connect.
+//
+// `realtime.Hub` exposes no history accessor: `Join`, `Publish`, `Apply`,
+// `Dispatch` and `Stats` are its whole surface, and the campaign state it holds is
+// placements and initiative rather than a chat ring. So there is nothing to read
+// here, and the panel renders its empty state while lines arrive over the stream.
+//
+// The consequence is real and worth stating rather than hiding: **a reload loses
+// the chat scrollback**, because the only writer is the stream. Carrying it needs
+// either a ring on the hub or a column in `campaign_state`, and both are a
+// decision about what survives a restart — which is a phase 12 question about
+// persistence, not a field to add here. `TestTheChatPanelIsPresentAndCarriesTheLogHook`
+// holds the container so the omission is one field rather than a missing region.
+func (h *Handler) messages() []chat.Message {
+	return nil
 }
 
 // documentView assembles the whole document: the title, the four landmarks'
@@ -185,6 +251,20 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request) {
 // from the same four facts — the campaign, the reader, the instance and the live
 // state — and two functions each reading three of them is how the navigation and
 // the banner end up disagreeing about which campaign this is.
+// context enters at `Render(ctx, …)` in `serveDocument` and nowhere else; the
+// component closures templ generates capture nothing and take no context, so
+// there is nothing here for the linter to see passing one. The fix it asks for —
+// threading `ctx` into `Chrome(...)`, `Rail(...)` and `TokenList(...)` — is not
+// an API templ has, and `internal/httpapi/search` and `components/live` carry
+// the same suppression for the same reason.
+//
+// **The context is the request's, unchanged.** `internal/httpapi/events` detaches
+// it with `context.WithoutCancel` because an SSE stream is meant to outlive the
+// handler budget; a document render is bounded by the same budget as the request
+// that asked for it, so detaching this one would buy nothing and would hide the
+// next real use of the context.
+//
+//nolint:contextcheck // templ components are context-free constructors. The
 func (h *Handler) documentView(
 	ctx context.Context,
 	access campaigns.Access,
@@ -223,15 +303,42 @@ func (h *Handler) documentView(
 		},
 	}
 
-	return view, webplay.Rail(webplay.RailView{
-		Label:    "Table panels",
-		Campaign: access.Campaign.Slug,
-		Tabs: []webplay.Tab{
-			webplay.TokensTab(webplay.TokenList(webplay.TokenListView{
-				Placements: h.placements(ctx, access),
-			})),
-		},
-	})
+	// The rail carries three components, and **each renders its own hook** rather
+	// than this route naming one.
+	//
+	// That is the whole contract between here and C3's package, and it is why
+	// this function composes components instead of writing markup: the five patch
+	// targets are `data-chrome` attributes on elements `live.Chrome` renders, and
+	// the chat log's container is rendered by `components/chat`. A route that
+	// hand-wrote those attributes would be a second spelling of every hook, and
+	// `live.Decide` refuses a fragment whose `Target.Selector` does not match the
+	// one `live.TargetByName` holds — so a hand-written hook is a patch refused
+	// with `unknown_target`, silently, on every frame.
+	//
+	// **Order is the reader's**, and it is the record's: the token list is the
+	// accessibility source of truth for the table (§7.6), the tracker and the dice
+	// log are what happened, and the chat log is what was said. The live chrome's
+	// own notice and announcement regions sit above them because a degraded
+	// watcher is the one thing a reader must not have to scroll to find.
+	return view, templ.Join(
+		live.Chrome(live.ChromeView{
+			EventsHref: eventsHref(access.Campaign.Slug),
+			SocketHref: socketHref(access.Campaign.Slug),
+			Notices:    h.degradedNotices(access),
+		}),
+		webplay.Rail(webplay.RailView{
+			Label:    "Table panels",
+			Campaign: access.Campaign.Slug,
+			Tabs: []webplay.Tab{
+				webplay.TokensTab(webplay.TokenList(webplay.TokenListView{
+					Placements: h.placements(ctx, access),
+				})),
+			},
+		}),
+		chat.Panel(chat.PanelView{
+			Messages: h.messages(),
+		}),
+	)
 }
 
 // documentTitle composes the `<title>` in UI §7.2's three-part form:

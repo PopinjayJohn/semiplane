@@ -601,6 +601,11 @@ func (s *fixtureStore) CampaignsForUser(
 	defer s.mu.Unlock()
 
 	listed := make([]domain.Campaign, 0, len(s.campaigns))
+	// rangeValCopy: `s.campaigns` is a `map[int64]domain.Campaign`, so a range
+	// value cannot be addressed, and `listed` holds whole rows because the
+	// caller sorts and renders them. Copying 128 bytes per campaign is the price
+	// of that contract and there is no indexing form available to avoid it.
+	//nolint:gocritic // see above: a map range cannot take an address
 	for _, campaign := range s.campaigns {
 		if _, member := s.memberships[campaign.ID][userID]; member {
 			listed = append(listed, campaign)
@@ -926,7 +931,7 @@ func (h *harness) fetch(path string, user int64) documentResponse {
 		h.t.Context(),
 		http.MethodGet,
 		h.server.URL+path,
-		nil,
+		http.NoBody,
 	)
 	if err != nil {
 		h.t.Fatalf("build the request for %s: %v", path, err)

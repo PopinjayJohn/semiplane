@@ -70,7 +70,12 @@ func TestTheURLSchemeSplitsTheDocumentFromTheSocket(t *testing.T) {
 	// Measured rather than assumed in both directions: the serializer emits the
 	// doctype in lower case, and the *claim* is that this is a document, not what
 	// case its prologue is in.
-	if body := strings.ToLower(strings.TrimSpace(document.body)); !strings.HasPrefix(body, "<!doctype html>") {
+	if body := strings.ToLower(
+		strings.TrimSpace(document.body),
+	); !strings.HasPrefix(
+		body,
+		"<!doctype html>",
+	) {
 		t.Errorf("GET /play body begins %q, want a document: the record's VTT row is "+
 			"an HTML page a browser can be pointed at", truncate(document.body))
 	}
@@ -342,25 +347,25 @@ func TestTheTitleIsThreePartsInTheRecordsForm(t *testing.T) {
 		harness := newHarness(t, &stubResolver{})
 		addCampaign(t, harness, domain.Campaign{
 			ID:         3,
-			Slug:       "quiet-harbor",
+			Slug:       "quiet-harbour",
 			Visibility: domain.VisibilityPublic,
 			SystemID:   string(dnd5e.SystemID),
 		}, map[int64]domain.Membership{
 			gmUserID: {CampaignID: 3, UserID: gmUserID, Role: domain.RoleGM},
 		})
 
-		got := harness.get("quiet-harbor", gmUserID)
+		got := harness.get("quiet-harbour", gmUserID)
 
-		want := "<title>Table — quiet-harbor — Greyhaven</title>"
+		want := "<title>Table — quiet-harbour — Greyhaven</title>"
 		if !strings.Contains(got.body, want) {
 			t.Errorf("the document's title is not %q; a campaign with no name still "+
 				"has a URL, and the title falls back to it", want)
 		}
 
-		if !strings.Contains(got.body, ">quiet-harbor</h1>") {
+		if !strings.Contains(got.body, ">quiet-harbour</h1>") {
 			t.Errorf("the <h1> is not %q; the heading falls back the same way the "+
 				"title's middle part does, or two halves of one document disagree",
-				"quiet-harbor")
+				"quiet-harbour")
 		}
 	})
 }

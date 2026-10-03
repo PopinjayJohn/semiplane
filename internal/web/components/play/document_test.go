@@ -61,12 +61,6 @@ func sceneWithImage() play.SceneView {
 	}
 }
 
-// sceneBare is a scene with an image and nothing else: `Width`, `Height` and
-// `Grid` are optional, and the image is the authority on its own size.
-func sceneBare() play.SceneView {
-	return play.SceneView{Source: "/c/greyhaven/assets/maps/crypt.png"}
-}
-
 // rollWithNotation is a system's grammar as the die sheet renders it.
 //
 // Two fields of four are enough for `available()` to answer true — a notation
@@ -244,10 +238,10 @@ func TestTheActionBarPresentsTheFourControlsInTheOrderTheRecordGives(t *testing.
 			// The names, which is what a reader sees, and the element type that
 			// makes each one operable with no script at all.
 			names := map[string]string{
-				play.TokenTestID:    "Token",
+				play.TokenTestID:             "Token",
 				play.RollTestID + "-trigger": "Roll",
-				play.EndTurnTestID:  "End turn",
-				play.ChatTestID:     "Chat",
+				play.EndTurnTestID:           "End turn",
+				play.ChatTestID:              "Chat",
 			}
 
 			for _, testID := range got {
@@ -762,7 +756,10 @@ func TestTheDocumentSatisfiesTheStructuralContract(t *testing.T) {
 		{name: "no aria-hidden on a focus stop", audit: auditNoAriaHiddenOnAFocusStop},
 		{name: "no positive tabindex", audit: auditNoPositiveTabindex},
 		{name: "no role application", audit: auditNoRoleApplication},
-		{name: "every focus stop carries the target class", audit: auditEveryFocusStopCarriesTheTargetClass},
+		{
+			name:  "every focus stop carries the target class",
+			audit: auditEveryFocusStopCarriesTheTargetClass,
+		},
 		{name: "no retired vocabulary", audit: auditNoRetiredVocabulary},
 		{name: "landmarks are present and distinguishing", audit: auditDocumentLandmarks},
 	}
