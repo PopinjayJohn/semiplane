@@ -10,6 +10,19 @@
 bin/
 dist/
 
+# `go build ./...` from the repository root writes **each main package's binary
+# into the current directory**, so the gate's own build step drops a 30MB
+# `server` here. The Go template above misses it because it lists `*.exe` and
+# `bin/`, and a Go binary on Linux has neither.
+#
+# This is here because `git add -A` committed one, and it is a trap for every
+# agent rather than a one-off: `make check` runs `go build ./...` from the root,
+# so the file appears on every clean gate, and "generated files are never in a
+# diff" is only true if something stops them being added. Named explicitly
+# because a pattern like `/server` also stops a *source* directory called
+# `server` from being tracked, and this repository's is `cmd/server`.
+/server
+
 # Test binary, built with `go test -c`
 *.test
 

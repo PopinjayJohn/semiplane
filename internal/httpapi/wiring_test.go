@@ -295,6 +295,7 @@ func fullRouterWithInstance(backing httpapi.Store, instance components.InstanceV
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 }
 
@@ -450,6 +451,7 @@ func TestRouterWithoutAStoreStillServesLiveness(t *testing.T) {
 		slog.New(slog.DiscardHandler),
 		config.Config{HandlerTimeout: time.Second},
 		observability.NewRegistry(),
+		nil,
 		nil,
 		nil,
 		nil,

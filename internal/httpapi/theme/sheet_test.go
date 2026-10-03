@@ -524,6 +524,25 @@ func ruleSelectors(css string) []string {
 	return selectors
 }
 
+// preludeContains reports whether a rule's selector prelude selects for
+// `selector`, treating the prelude as the comma-separated **list** it is.
+//
+// One member compared whole, after trimming, rather than a substring search. A
+// substring is the wrong tool here for the same reason it is wrong elsewhere in
+// this package's history: `[data-theme=light]` is a substring of
+// `[data-theme=lightweight]`, so a search would answer true for a rule that has
+// nothing to do with the one asked about, and the test would pass on the
+// strength of a neighbour.
+func preludeContains(prelude, selector string) bool {
+	for one := range strings.SplitSeq(prelude, ",") {
+		if strings.TrimSpace(one) == selector {
+			return true
+		}
+	}
+
+	return false
+}
+
 // blocksOf returns the concatenated bodies of **every** rule in css with the
 // given selector.
 //
@@ -534,29 +553,42 @@ func ruleSelectors(css string) []string {
 // on — a wrong failure, which is worse than none because the next real one gets
 // ignored. Later rules win in CSS, so the concatenation is also the right order
 // to search a declaration in.
+//
+// **A selector *list* counts as containing it, and that is the whole
+// correction.** Tailwind's minifier merges rules whose bodies are identical into
+// one rule with a comma-separated selector list, and it did exactly that here:
+// theme.css declares `--brand-header-image: none` under `[data-theme="light"]`
+// and again under `[data-theme="dark"]`, so the built file carries
+//
+//	[data-theme=light],[data-theme=dark]{--brand-header-image:none}
+//
+// and never the literal text `[data-theme=light]{`. A search for `selector + "{"`
+// therefore finds nothing and reports the token missing from a theme block that
+// carries it — **a wrong failure, on a correct build**, which is worse than no
+// assertion at all because the next real one gets ignored alongside it.
+//
+// This was invisible until `app.css` imported the sheet, because before that the
+// token was in no built file at all and both branches agreed. The mutation that
+// proves it: change the selector match back to `selector+"{"` and this test goes
+// red on the merged rule.
 func blocksOf(t *testing.T, css, selector string) string {
 	t.Helper()
 
 	var bodies strings.Builder
 
-	for from := 0; ; {
-		at := strings.Index(css[from:], selector+"{")
-		if at < 0 {
-			break
+	for _, match := range selectorPattern.FindAllStringIndex(css, -1) {
+		prelude := strings.TrimSuffix(strings.TrimSpace(css[match[0]:match[1]]), "{")
+		if !preludeContains(prelude, selector) {
+			continue
 		}
 
-		at += from
-		open := at + len(selector)
-
-		body, closed := braceBody(css, open)
+		body, closed := braceBody(css, match[1]-1)
 		if !closed {
 			t.Fatalf("the %s rule's body is never closed", selector)
 		}
 
 		bodies.WriteString(body)
 		bodies.WriteString("\n")
-
-		from = open + 1
 	}
 
 	if bodies.Len() == 0 {

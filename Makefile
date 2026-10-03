@@ -295,9 +295,28 @@ test: ## Run tests
 # pass the guard below exists for. The wildcard is here for the first bullet only,
 # and the claim a name makes is enforced by the guard, not by the wildcard.
 A11Y_ROUTE_PKGS := $(wildcard ./internal/httpapi/wiki ./internal/httpapi/search \
-	./internal/httpapi/assets ./internal/httpapi/edit ./internal/httpapi/plugins)
+	./internal/httpapi/assets ./internal/httpapi/edit ./internal/httpapi/plugins \
+	./internal/httpapi/events ./internal/httpapi/theme)
 
-A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi $(A11Y_ROUTE_PKGS)
+# Component packages, listed separately rather than folded into A11Y_PKGS
+# silently, because for **two whole phases** they were absent. `./internal/web`
+# and `./internal/web/components` were in the gate and the packages below were
+# not, so `components/play`'s token-list audits and `components/chat`'s
+# live-region audit were written and never run by `make a11y`. Nothing said so.
+#
+# `go test -run` exits **0** on a pattern matching nothing, which is the silent
+# pass the ROUTE_PKGS guard exists for -- and that guard only walked
+# A11Y_ROUTE_PKGS, so a component package named without also being guarded had no
+# guard at all. The loop below therefore walks both lists.
+#
+# `components/play` earns its place on the same claim as any route package: the
+# token list is UI §7.6's **accessibility source of truth** for the tabletop, and
+# the document it renders into is a route document by any reading.
+A11Y_COMPONENT_PKGS := $(wildcard ./internal/web/components/play \
+	./internal/web/components/chat ./internal/web/components/live)
+
+A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi \
+	$(A11Y_COMPONENT_PKGS) $(A11Y_ROUTE_PKGS)
 
 # The pattern is a list of substrings of the gate's test names, and it is
 # deliberately *readable* rather than exhaustive-looking: a new gate test is added
@@ -338,7 +357,7 @@ a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 	@# stop — a reader would go looking for a missing audit rather than for a
 	@# build that did not finish. Found by writing `vendor-check`'s identical
 	@# guard and running it against a package that does not exist.
-	@for pkg in $(A11Y_ROUTE_PKGS); do \
+	@for pkg in $(A11Y_ROUTE_PKGS) $(A11Y_COMPONENT_PKGS); do \
 		listing=$$($(GO) test -list '$(A11Y_TESTS)' $$pkg 2>&1 >/dev/null || true); \
 		if [ -n "$$listing" ]; then \
 			echo "a11y: $$pkg does not build, so the gate cannot look at it:"; \
@@ -352,7 +371,8 @@ a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 		if [ "$$ran" -eq 0 ]; then \
 			echo "a11y: $$pkg contributes no test matching A11Y_TESTS."; \
 			echo "a11y: naming a package here is a claim that it has §10.2 audits."; \
-			echo "a11y: add them, or drop the package from A11Y_ROUTE_PKGS."; \
+			echo "a11y: add them, or drop the package from A11Y_ROUTE_PKGS or"; \
+			echo "a11y: A11Y_COMPONENT_PKGS."; \
 			exit 1; \
 		fi; \
 	done

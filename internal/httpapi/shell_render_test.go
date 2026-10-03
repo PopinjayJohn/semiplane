@@ -474,6 +474,11 @@ func newCampaignFixture(t *testing.T) *campaignFixture {
 		// audits live in `internal/httpapi/plugins`, which `A11Y_ROUTE_PKGS` names.
 		nil,
 		nil,
+		// `theme.Handler` is nil for the same reason: the generated sheet is a
+		// stylesheet, not a shell document, and its audits live in
+		// `internal/httpapi/theme`. What this file audits is the `<link>` the
+		// shell emits, which is a shell concern and is asserted here.
+		nil,
 	)
 
 	// Signed in as the campaign's GM. The editor and the stream are GM-only, so an

@@ -36,6 +36,30 @@
 @import "./shell.css";
 @import "./tv.css";
 
+/* The two sheets phase 9 added, after the three above and for a reason that is
+ * narrower than it looks.
+ *
+ * `theme.css` styles what the server *generates* from a campaign's brand
+ * manifest: the header scrim, the wash, the `@font-face` blocks. `live.css`
+ * styles the sidebar the SSE stream patches into: the live-region containers,
+ * the connection and degraded notices, the initiative tracker, the chat and dice
+ * scroll regions.
+ *
+ * Both come after `tv.css` rather than beside `tokens.css` or `shell.css`
+ * because both override rules those sheets already set, at equal specificity.
+ * `theme.css` restates what the header's background is, and `live.css` the
+ * notice treatments; either imported earlier, every rule in it would lose. That
+ * is the same argument that puts `tv.css` last, and it is load-bearing in the
+ * same way — so it is stated here rather than discovered as a styling bug.
+ *
+ * **A missing import is not a compile error and not a test failure.** It is a
+ * product that renders unstyled while every other gate passes, which is why
+ * `internal/web`'s built-artefact tests assert each of these reached
+ * `static/dist/app.css` rather than trusting the list below. The list is the
+ * only place the stylesheet is assembled. */
+@import "./theme.css";
+@import "./live.css";
+
 /* templ renders server-side, so a class name lives in Go source, not in a
  * template file the scanner would find. Pointing the scanner at both roots is
  * what keeps a `data-testid`-adjacent utility from silently vanishing from the

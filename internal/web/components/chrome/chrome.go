@@ -131,6 +131,30 @@ type CampaignRef struct {
 	Slug string
 }
 
+// ThemeStylesheet is the campaign's own brand sheet (UI §4.12.2).
+//
+// A sibling of `href` and not a field on the view model, because the slug is
+// already here and a second copy of it in a model is a second answer to "which
+// campaign is this document about" — the shape of bug AGENTS.md records for the
+// `front_matter` column and the design-record index both.
+//
+// **Per-campaign, not per-user** (§4.12.4), and that is the load-bearing part:
+// the address is derived from the slug, which is already in the path, so this
+// costs the document nothing under §3.7's `no Vary: Cookie`. A per-user theme
+// would put a reader's preference into a URL that is not keyed by the reader,
+// which is either a shared cache serving one account's brand to another or a
+// cookie-varying document — and ADR 0035 is the record of why the second is not
+// acceptable.
+//
+// Exported, unlike `href` and `label`, because the `<link>` is emitted by the
+// shell in `internal/web/components` rather than by a component in this package:
+// templ generates into the caller's package, so an unexported method here is not
+// reachable from there. That is the only reason it is exported, and the comment
+// is here so a reader does not take the asymmetry for an oversight.
+func (campaign CampaignRef) ThemeStylesheet() string {
+	return campaign.href() + "/theme.css"
+}
+
 // label is the name to show for the campaign, falling back to its slug.
 //
 // Unexported: the fallback is a rendering decision, and a route that wanted a

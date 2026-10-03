@@ -63,6 +63,37 @@ templ CampaignList(view CampaignListView) {
 					if card.Visibility != "" {
 						<p class="card-meta">{ card.Visibility }</p>
 					}
+					// UI §4.12.3's third bullet: the rejected theme reaches the
+					// GM here, on the overview they already visit.
+					//
+					// `role="status"` and polite, not `role="alert"`. The record's
+					// table reserves assertive for a thing the reader must act on
+					// *now* — a 412, a lost connection, a secret reveal. A brand
+					// that failed contrast has already degraded to the default, so
+					// nothing is broken while they read; interrupting a screen
+					// reader mid-sentence to say so would be worse than the silence.
+					//
+					// The `roleIsGM` guard is the point of the block, and it is here
+					// as well as at the call site: a route that filled the field for
+					// a player would otherwise render it, and §4.12.3 says "a GM
+					// notice". Two checks of one condition, because this is the
+					// surface and the other is the route that fills it.
+					if card.ThemeNotice != nil && card.roleIsGM() {
+						<p
+							class="card-notice"
+							role="status"
+							aria-live="polite"
+							data-testid="campaign-theme-notice"
+						>
+							<span class="card-notice-label">{ card.ThemeNotice.Label() }</span>
+							if card.ThemeNotice.Token != "" {
+								// `code` because the token is the half the GM edits, and
+								// a token set in a different face reads as prose.
+								<code class="card-notice-token">{ card.ThemeNotice.Token }</code>
+							}
+							<span class="card-notice-reason">{ card.ThemeNotice.Reason }</span>
+						</p>
+					}
 				</li>
 			}
 		</ul>
