@@ -43,7 +43,10 @@
 
 package content
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Redactor removes content the viewer may not see, operating on the *source*
 // text before the render.
@@ -106,16 +109,19 @@ type Redactor interface {
 // offsets and cuts bytes, and the one thing it must get right is that **the cuts
 // do not move each other**.
 //
-// They do not, and the reason is two lines of `scanSecrets`: after a callout it
-// sets `offset += consumed`, where `consumed` has advanced past the header line
-// and every body line, and that is the same value it recorded as `BodyEnd`. So
-// the scan resumes at the previous callout's `BodyEnd`, the next callout's
-// `HeaderStart` is therefore at or after it, and the spans arrive **sorted and
-// non-overlapping**. `spliceOut` may then walk them in order and copy each gap
-// once, with no offset arithmetic of its own to get wrong — which is also why
-// there is no defensive clamping in it. A clamp would guard a property the
-// scanner already holds, and it would be code whose necessity is unreadable to
-// anyone who has not read the scanner's loop.
+// They do not, and the reason is two lines of `scanRange`: after a callout it sets
+// `offset += consumed`, where `consumed` has advanced past the header line and
+// every body line, and that is the same value it recorded as `BodyEnd`. So the walk
+// resumes at the previous callout's `BodyEnd` and the next callout's `HeaderStart`
+// is at or after it — which makes the spans **sorted**.
+//
+// Sorted is not the same as disjoint, and this file used to assume they were. They
+// stopped being the same thing when `scanSecrets` learned to report a callout nested
+// inside another: a nested span is contained in its parent's by construction, so
+// "sorted and non-overlapping" became "sorted, and sometimes nested". The claim in
+// this paragraph was true for as long as it was harmless and false the moment it
+// mattered, and the two halves of the fix are the two halves of the sentence: the
+// span list is filtered by `outermost`, and `spliceOut` no longer assumes.
 //
 // # Front matter is scanned too, and that is deliberate
 //
@@ -164,31 +170,27 @@ type Redactor interface {
 // it is not vacuous: it was written by adding a `fmt.Errorf` carrying the source
 // to the `includeSecrets` branch and watching it fail.
 //
-// # One gap, measured rather than assumed
+// # Nesting, and what it cost to get here right
 //
 // A callout nested inside a callout — `> > [!secret]-` inside an outer `+` — is
-// absorbed by the outer callout's body and is **not** reported by `ScanSecrets`,
-// because the body loop consumes every line that is still quoted. So the inner
-// `-` is not cut, and this is what a player receives for
-// `> [!secret]+ Outer` / `> > [!secret]- Inner`:
+// **reported by `ScanSecrets` and cut here**. It was not, and a player received the
+// inner body inside a `secret--collapsed` element. Two separate fixes, and it is
+// worth keeping them apart because only the first one stops the disclosure:
 //
-// ```html
-// <div class="secret secret--revealed" data-secret="revealed"><p>Outer.</p>
-// <div class="secret secret--collapsed" data-secret="collapsed"><p>Inner.</p></div>
-// </div>
-// ```
+//   - **The scanner reports it.** That alone is sufficient: the inner span then
+//     exists, so `cutSpans` has something to remove, and a revealed outer no longer
+//     means "nothing is cut from this callout".
+//   - **The scanner forces the outer to collapsed.** That is about *bookkeeping*,
+//     not about bytes. A nesting mistake must not be able to record itself as a
+//     public reveal in the ledger, and §5.6.2 requires every failure path in this
+//     subsystem to resolve toward hiding.
 //
-// That is `secret.go`'s decision to own rather than this file's to paper over:
-// `secret.go` states that a nested callout "is found by its own header and
-// reported separately", so the intent is unambiguous and the code does not yet do
-// it. Fixing it means teaching the scanner to look inside a callout it decided
-// to keep, and a redactor that re-implemented enough Markdown to find it would
-// be the second grammar this file's own comment above exists to avoid — and the
-// blunt version of that hack, matching the marker as a substring, would delete
-// every `[!secret]` a page merely *mentions*.
-// `TestANestedCalloutIsTheOuterCalloutsToDecide` pins the measured behaviour so
-// the fix is a visible diff, and it carries the defect into the report rather than
-// leaving it in a comment.
+// Because the outer is forced collapsed, the outer span is cut and the inner one —
+// contained in it — is dropped by `outermost`, so the bytes to remove are the outer
+// callout's and the nesting is a single cut. `TestANestedCalloutIsRemovedFromA
+// PlayerPage` asserts that at the response level, and
+// `TestARevealedCalloutIsPublicAndSurvivesForAPlayer` is the control that a
+// revealed callout whose body merely *mentions* the keyword is still public.
 func OmitSecrets() Redactor {
 	return omitSecrets{}
 }
@@ -263,12 +265,15 @@ type secretSpan struct {
 	from, to int
 }
 
-// cutSpans returns the ranges to remove, in document order, skipping the
-// revealed ones.
+// cutSpans returns the byte ranges to remove, in document order, skipping the
+// revealed ones and keeping only the outermost of what is left.
 //
 // A slice of spans rather than an index into the source for the caller to loop
 // over, because the loop that uses it is the only place offsets appear and it
 // should be the shortest one possible.
+//
+// The outermost filter is `outermost`'s job and not an afterthought: it is what
+// keeps this function's answer **sensible**, as opposed to merely safe.
 func cutSpans(source string) []secretSpan {
 	found := scanSecrets(source)
 
@@ -282,7 +287,88 @@ func cutSpans(source string) []secretSpan {
 		spans = append(spans, secretSpan{from: secret.HeaderStart, to: secret.BodyEnd})
 	}
 
-	return spans
+	return outermost(spans)
+}
+
+// outermost drops every span contained in another, and returns the rest sorted by
+// position.
+//
+// # Containment, and why a nested secret needs no cut of its own
+//
+// A nested callout's span lies inside its parent's — `scanRange` bounds the nested
+// walk to the parent's body, which is what makes that true — so cutting both would
+// either double-cut (harmless) or, cut in the wrong order, cut a range that has
+// already moved. It would also make the answer harder to read: `cutSpans` is asked
+// for "the bytes to remove", and the bytes to remove for a page holding a nested
+// secret are the outer callout's. Nothing else.
+//
+// So the property is named, not incidental: **`cutSpans` returns only the outermost
+// spans**, and `TestTheOutermostSpansAreTheOnesThatGetCut` holds it, cross-checked
+// against a brute-force containment test.
+//
+// # Why the sort, and why `to` is the tie-break
+//
+// Sorting by `from` alone is not enough, and the version this replaced was wrong in
+// a way the table of hand-written cases did not have: given `[2,5)` then `[2,14)`,
+// the first is contained in the second and must go, but a single forward pass that
+// only looks *backwards* has already kept it by the time it learns otherwise. Two
+// callouts cannot share a `from` — they are different lines — so the scanner cannot
+// produce that input, and the first version of this function would have been correct
+// on every real page and wrong on the definition it claimed to implement.
+//
+// Which is the argument for implementing the *definition* rather than the
+// special case. Ordering by `from` ascending and `to` descending puts every
+// container before everything it contains: a span starting earlier is already
+// earlier, and one starting at the same byte is the wider one and so sorts first.
+// With that order, "is this span contained in another" reduces to "does its `to` fall
+// at or before the widest `to` seen so far", because any container is by then
+// behind us.
+//
+// **That is the whole of the single pass**, and it is why the filter is O(n) rather
+// than O(n²): `cutSpans` runs on every non-GM page render. The brute-force
+// comparison in the test is not ceremony for it — it is the only thing that would
+// notice the argument being wrong.
+//
+// One thing recorded because it looks like a simplification and is not a change:
+// replacing `widest` with `kept[len(kept)-1].to` is **provably the same function**.
+// Kept spans have strictly increasing `to` (that is what the filter enforces) and
+// non-decreasing `from` (that is what the sort gives), so the last kept span carries
+// the widest `to` seen. It was measured as a mutation and every test stayed green.
+// `widest` is kept because it states the property directly rather than leaning on an
+// invariant about `kept`, and because the next reader who does the substitution
+// should find the reasoning already here.
+func outermost(spans []secretSpan) []secretSpan {
+	// `SortStableFunc` rather than a hand-rolled insertion sort: equal spans keep
+	// their input order, so the first of two identical ones is the one kept, which
+	// is not a distinction that matters but is one not worth having to reason about.
+	ordered := make([]secretSpan, len(spans))
+	copy(ordered, spans)
+
+	slices.SortStableFunc(ordered, func(a, b secretSpan) int {
+		if a.from != b.from {
+			return a.from - b.from
+		}
+
+		return b.to - a.to
+	})
+
+	kept := make([]secretSpan, 0, len(ordered))
+
+	// `widest` is the largest `to` among the spans already passed. Zero rather than
+	// minus one because a span's `to` is always greater than its `from` and `from` is
+	// never negative, so no real span can be contained in a zero-width one.
+	widest := 0
+
+	for _, span := range ordered {
+		if span.to <= widest {
+			continue
+		}
+
+		kept = append(kept, span)
+		widest = span.to
+	}
+
+	return kept
 }
 
 // spliceOut removes every span from source and returns what is left.
@@ -292,8 +378,26 @@ func cutSpans(source string) []secretSpan {
 // longer describe it, so the second cut lands on the wrong bytes; and splicing
 // from the end backwards instead of collecting first is the same arithmetic with
 // an extra loop, which is where an off-by-one hides. Building the result in one
-// forward pass over sorted, non-overlapping spans has no offset arithmetic at
-// all: the only variable is where the last copy ended.
+// forward pass over sorted spans has almost no offset arithmetic at all: the only
+// variable is where the last copy ended.
+//
+// # Total on overlapping input, on purpose
+//
+// A span that begins before `copied` is one whose bytes have already been removed,
+// by an enclosing span. It is skipped, and `copied` never moves backwards. The
+// naive version — copy the gap, then set `copied = span.to` — takes a slice with a
+// negative length and panics, which is what this function used to do to a page
+// holding a nested callout.
+//
+// **Skipping is chosen over panicking deliberately**, and it is the one place in
+// this file where a defensive branch earns its keep. A panic here is a 500 for
+// every reader of the page, which is a self-inflicted outage; a wrong splice is a
+// page that renders mangled for players and correctly for the GM, which is a
+// disclosure-shaped failure that fails *quietly*. Between those, the total function
+// is the better failure and the containment filter in `cutSpans` is what makes the
+// answer right rather than merely survivable. Both are tested, and
+// `TestSpliceOutSurvivesOverlappingSpans` asserts that the two agree on nested
+// input rather than assuming they do.
 //
 // `Grow` is an upper bound rather than a prediction. The result is never longer
 // than the source, and the common case — a page with one collapsed callout and
@@ -305,10 +409,15 @@ func spliceOut(source string, spans []secretSpan) string {
 	out.Grow(len(source))
 
 	// `copied` is how far into the source the last copy ended, so the next copy
-	// starts there. It is the only offset this function computes.
+	// starts there. It is the only offset this function computes, and it is
+	// monotonic because a backwards step would re-emit bytes already dropped.
 	copied := 0
 
 	for _, span := range spans {
+		if span.from < copied {
+			continue
+		}
+
 		out.WriteString(source[copied:span.from])
 		copied = span.to
 	}

@@ -791,72 +791,157 @@ func TestACalloutShapedLineInFrontMatterIsCutToo(t *testing.T) {
 	}
 }
 
-// TestANestedCalloutIsTheOuterCalloutsToDecide pins a measured defect in
-// `secret.go`, because the measured behaviour and the documented behaviour are
-// different and the difference is a disclosure.
+// TestANestedCalloutIsRemovedFromAPlayerPage is the disclosure this file used to
+// carry, asserted the other way round.
 //
-// `secret.go` states that "a callout inside another callout is found by its own
-// header and reported separately". It is not: the scanner's body loop consumes
-// every line that is still quoted, so `> > [!secret]-` is swallowed by the outer
-// callout and never appears in the result. So when the outer callout is `+` —
-// public, therefore kept — the inner `-` is not cut, and it reaches a player as
-// a `secret--collapsed` callout with its text inside it.
+// The previous version of this test was named `…IsTheOuterCalloutsToDecide` and
+// pinned the *leak*: `secret.go` said a nested callout "is found by its own header
+// and reported separately", the body loop swallowed it instead, and a player
+// received
 //
-// This is **not fixed here**, and the reason is a boundary rather than a
-// difficulty: teaching the redactor to look inside a callout it decided to keep
-// means re-implementing enough Markdown to find the nested header, which is the
-// second grammar this file exists to avoid — and the blunt version of that hack,
-// matching the marker as a substring, would delete every `[!secret]` a page merely
-// *mentions*, which is a different and worse failure. The fix belongs to
-// `secret.go`, whose header already says what the answer is.
+// ```html
+// <div class="secret secret--collapsed" data-secret="collapsed"><p>Inner.</p></div>
+// ```
 //
-// The assertion is the **rendered** consequence and not the redactor's return
-// value, because the redactor's return value is not the disclosure: the point is
-// that the inner callout comes back as a `secret--collapsed` element with its body
-// in it, and only the render shows that.
+// with the text in it. The scanner now recurses, so the nested callout is reported,
+// the outer is forced collapsed, and the outer callout's span takes the whole nest
+// with it.
 //
-// What this file can do is make the current behaviour a **visible diff** rather
-// than a silent one: it fails today only when the behaviour changes, and the
-// change it is waiting for is the right one.
-func TestANestedCalloutIsTheOuterCalloutsToDecide(t *testing.T) {
+// **Asserted at the response level and through the DOM**, not on the redactor's
+// return value, because the redactor's return value was never the disclosure: the
+// leak was in what the renderer was then handed. Both fixtures are needed, and for
+// different reasons — a revealed outer proves the *forcing* is doing something, a
+// collapsed one proves the prose either side survives.
+func TestANestedCalloutIsRemovedFromAPlayerPage(t *testing.T) {
 	t.Parallel()
 
-	const source = "A.\n\n> [!secret]+\n> Outer.\n> > [!secret]-\n> > Inner.\n\nB.\n"
+	for name, fixture := range map[string]struct{ source, want string }{
+		"a collapsed secret in a revealed callout": {
+			// The exact shape from the report. The outer says `+`, so this is the
+			// fixture where "cut everything" and "force the outer collapsed" differ.
+			source: "A.\n\n> [!secret]+ Outer, revealed to the party.\n" +
+				"> > [!secret]- The traitor is Captain " + theSecret + ".\n\nB.\n",
+			want: "A.\n\n\nB.\n",
+		},
+		"a collapsed secret in a collapsed callout": {
+			source: "A.\n\n> [!secret]-\n> Outer.\n" +
+				"> > [!secret]-\n> > The traitor is Captain " + theSecret + ".\n\nB.\n",
+			want: "A.\n\n\nB.\n",
+		},
+		"a revealed callout nested in a collapsed one": {
+			// The inner state does not matter. A `+` inside a `-` is still inside it,
+			// and the outer cut takes it either way.
+			source: "A.\n\n> [!secret]-\n> Outer.\n" +
+				"> > [!secret]+\n> > The traitor is Captain " + theSecret + ".\n\nB.\n",
+			want: "A.\n\n\nB.\n",
+		},
+		"two levels of nesting": {
+			source: "A.\n\n> [!secret]+\n> Outer.\n" +
+				"> > [!secret]- Middle.\n" +
+				"> > > [!secret]- The traitor is Captain " + theSecret + ".\n\nB.\n",
+			want: "A.\n\n\nB.\n",
+		},
+		"a nest beside an ordinary secret": {
+			// Two independent cuts: the nest and the callout after it. A filter that
+			// dropped everything inside the first span would leave the second behind.
+			source: "A.\n\n> [!secret]+\n> Outer.\n" +
+				"> > [!secret]- The traitor is Captain " + theSecret + ".\n\n" +
+				"> [!secret]-\n> A captain of " + theSecret + "'s regiment.\n\nB.\n",
+			want: "A.\n\n\n\nB.\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	got, err := content.OmitSecrets().Redact(source, false)
-	if err != nil {
-		t.Fatalf("Redact() error = %v, want nil", err)
+			got, err := content.OmitSecrets().Redact(fixture.source, false)
+			if err != nil {
+				t.Fatalf("Redact() error = %v, want nil", err)
+			}
+
+			if got != fixture.want {
+				t.Errorf("Redact() =\n%q\nwant\n%q\nsource:\n%q",
+					got, fixture.want, fixture.source)
+			}
+
+			// And the response, because the source is not the response and only one
+			// of them is what a player reads.
+			document := renderForViewer(t, fixture.source, false)
+
+			assertTextAbsentFromEveryByte(t, document, theSecret)
+			assertTextAbsentFromEveryByte(t, document, "[!secret]")
+
+			if found := hidingMechanisms(document); len(found) > 0 {
+				t.Errorf("a nested secret was hidden rather than omitted: %v\n%s",
+					found, document)
+			}
+
+			// The prose either side survives, and as two blocks.
+			blocks := blockTexts(t, document)
+			want := []string{"p: A.", "p: B."}
+
+			if len(blocks) != len(want) {
+				t.Fatalf("the page has %d block(s), want %d:\n%v", len(blocks), len(want), blocks)
+			}
+
+			for index, expected := range want {
+				if blocks[index] != expected {
+					t.Errorf("block %d = %q, want %q", index, blocks[index], expected)
+				}
+			}
+		})
 	}
+}
 
-	if got != source {
-		t.Errorf("a nested callout inside a *revealed* one was cut. When this starts "+
-			"failing the other way, `secret.go` has learned to report nested callouts "+
-			"and the comment above should be replaced with what it now does:\ngot:\n%q",
-			got)
-	}
+// TestARevealedCalloutIsPublicAndSurvivesForAPlayer is the control the nesting fix
+// needs, and it is the control that decides whether the fix over-reaches.
+//
+// The forcing rule says "a callout whose body contains another **callout** is
+// collapsed". The tempting wrong implementation is "a callout whose body contains
+// the string `[!secret]`", and it would hide every page documenting the syntax —
+// which is a page in every campaign that uses the feature, and the regression nobody
+// would think to report because the symptom is a page that looks shorter.
+//
+// So the fixture is a revealed callout whose body **mentions** the keyword as prose,
+// at three placings that are not headers: mid-sentence, at the start of a line
+// inside the quote, and inside an inline code span. All three must stay revealed and
+// must render.
+func TestARevealedCalloutMentioningTheKeywordIsStillPublic(t *testing.T) {
+	t.Parallel()
 
-	// The measured disclosure, pinned so the report's claim is a test and not an
-	// assertion: a player receives the inner body inside a collapsed callout.
-	rendered := renderForViewer(t, source, false)
+	for name, source := range map[string]string{
+		"mid-sentence": "A.\n\n> [!secret]+ Revealed.\n" +
+			"> The keeper wrote [!secret] and left.\n\nB.\n",
+		"at the start of a quoted line": "A.\n\n> [!secret]+ Revealed.\n" +
+			"> [!secret] is the marker.\n\nB.\n",
+		"inside an inline code span": "A.\n\n> [!secret]+ Revealed.\n" +
+			"> Write `[!secret]-` and it is a secret.\n\nB.\n",
+		"with a malformed marker": "A.\n\n> [!secret]+ Revealed.\n" +
+			"> [!secret]? is not a marker.\n\nB.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if !strings.Contains(rendered, "Inner.") ||
-		!strings.Contains(rendered, `data-secret="collapsed"`) {
-		t.Errorf("the nested collapsed callout no longer renders as one, so this "+
-			"fixture no longer demonstrates the defect it was written for:\n%s", rendered)
-	}
+			got, err := content.OmitSecrets().Redact(source, false)
+			if err != nil {
+				t.Fatalf("Redact() error = %v, want nil", err)
+			}
 
-	// The same shape inside a *collapsed* outer callout is removed whole, which is
-	// the direction every failure path in this subsystem has to resolve toward
-	// (§5.6.2): the outer cut takes the inner with it, so no text survives.
-	const collapsed = "A.\n\n> [!secret]-\n> Outer.\n> > [!secret]-\n> > Inner.\n\nB.\n"
+			if got != source {
+				t.Errorf("a revealed callout mentioning the keyword in prose was cut, so "+
+					"the nesting rule is matching the string and not the construct:\ngot:  %q\n"+
+					"want: %q", got, source)
+			}
 
-	gotCollapsed, err := content.OmitSecrets().Redact(collapsed, false)
-	if err != nil {
-		t.Fatalf("Redact() error = %v, want nil", err)
-	}
+			document := renderForViewer(t, source, false)
 
-	if gotCollapsed != "A.\n\n\nB.\n" {
-		t.Errorf("a nested callout inside a collapsed one left text behind:\n%q", gotCollapsed)
+			if !strings.Contains(document, `data-secret="revealed"`) {
+				t.Errorf("the revealed callout is not in the response at all:\n%s", document)
+			}
+
+			if !strings.Contains(document, "Revealed.") {
+				t.Errorf("the revealed callout's own body is missing:\n%s", document)
+			}
+		})
 	}
 }
 
