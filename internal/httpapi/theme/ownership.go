@@ -48,15 +48,46 @@ import (
 // not have been allowed is an unreadable UI for every reader of that campaign,
 // with no gate able to see it across every campaign.
 
-// The two names of the brand pair, §4.12.1's only overridable colours.
+// The three names §4.12.1's left column holds, and the two font slots beside
+// them.
 //
 // Constants rather than string literals at the use sites because they appear in
 // the vocabulary, in the pair rule and in the refusal messages, and a spelling
 // that differs by one character between those is a manifest that validates
 // against a different name than the one the error reports.
+//
+// `brandImage` is the third of the table's left column and the only one whose
+// value is not a colour, which is why it has no partner and why the generator
+// treats it as a path. It joins the vocabulary because `theme.css` declares it
+// — `TestEveryCampaignTokenIsDeclaredByTheProduct` is what noticed the absence
+// and is the reason a token nothing declared is not offered to a GM.
 const (
 	brandAccent = "--brand-accent"
 	brandInk    = "--brand-accent-ink"
+	brandImage  = "--brand-header-image"
+)
+
+// The two font slots §4.12.1's left column names: "`--font-prose` /
+// `--font-ui` via `@font-face` (system stack always retained as fallback)".
+//
+// **These are not vocabulary entries, and the reason is the sentence in
+// parentheses.** A campaign sets a font by naming a file in the manifest's
+// `fonts:` section; the server writes the `@font-face` and composes the
+// declaration itself, so that the product's system stack is *always* the tail of
+// the family list. A campaign naming `--font-ui` under `tokens:` is refused
+// with `reasonFontSection` rather than accepted, because accepting it would mean
+// either honouring a stack with no fallback (a font that fails to load is then a
+// broken UI, which §4.12.3's whole direction forbids) or honouring it and
+// silently appending the stack behind the GM's back.
+//
+// `--font-mono` is a third case and is **protected**: §5.2 marks it not
+// overridable because code and dice expressions must stay monospaced, so
+// `--font-mono` is in the right-hand column even though the record's table does
+// not print it there.
+const (
+	fontProse = "--font-prose"
+	fontUI    = "--font-ui"
+	fontMono  = "--font-mono"
 )
 
 // owner is which side of §4.12.1's table a token name falls on.
@@ -95,19 +126,32 @@ func (o owner) String() string {
 //
 // A map rather than a slice because the lookup is the enforcement: a name's
 // presence *is* the permission, so a slice would need a membership test beside it
-// and the two could disagree. The values are the partner name, which is how §6.2's
-// "the pair" is encoded — see `Manifest.brand`.
+// and the two could disagree. The values are the partner name, which is how §4.12.3's
+// "the pair" is encoded — see `document.theme`.
 //
-// Two entries, and §4.12.1 names exactly two overridable colours. `--brand-header-image`
-// is the third name in that table's left column and it is **absent on purpose**:
-// nothing in the product declares it, so a manifest setting it would emit a
-// declaration no rule reads — a theme that appears to work and does nothing. It
-// joins the vocabulary when tokens.css declares it, and
-// `TestEveryCampaignTokenIsDeclaredByTheProduct` is what notices the difference.
+// **An empty partner means "no partner"**, and the both-or-neither rule reads
+// that as the absence of a rule rather than as a rule about the empty string.
+// Two of the three names have partners and one does not: `--brand-accent` and
+// `--brand-accent-ink` are a pair whose halves are measured together, and
+// `--brand-header-image` is a path with nothing to be measured against. Encoding
+// that as an empty string rather than as a second map keeps one lookup.
 var campaignVocabulary = map[string]string{
 	brandAccent: brandInk,
 	brandInk:    brandAccent,
+	brandImage:  "",
 }
+
+// fontPrefix is the family §4.12.1's left column makes overridable "via
+// `@font-face`", and it is **not** protected — which is the interesting entry in
+// this table, because the generated sheet does emit these names.
+//
+// The protected list is a promise about what the *generator* never emits, and a
+// generator that emits `--font-prose` would violate it. So `--font-prose` and
+// `--font-ui` are not on either side of §4.12.1's table: they are overridable,
+// through a channel this package owns, and a manifest that names one directly is
+// refused with the reason that points at that channel. That is a third answer
+// rather than a second, and `fontOverride` is where it lives.
+const fontPrefix = "--font-"
 
 // protectedPrefixes is §4.12.1's right-hand column: the tokens no campaign may
 // ever set, because a stylesheet that could set them would break 1.4.11, 1.4.3
@@ -126,13 +170,11 @@ var campaignVocabulary = map[string]string{
 // direction for an accessibility contract — it refuses a name nobody has — while
 // under-protection is the expensive one.
 //
-// `--font-prose` and `--font-ui` are here because §4.12.1's left column makes
-// fonts overridable *through* the generator, and this work item does not generate
-// them: the product declares both as a system stack in shell.css and there is no
-// `--brand-font-*` token for an override to land in, so a campaign setting
-// `--font-ui` is refused rather than accepted and dropped. See the work item's
-// report — the hook the record asks for is a shell.css change, and the
-// vocabulary should not claim a token whose override has nowhere to go.
+// `--font-mono` is here rather than under `fontPrefix`'s cousins because §5.2
+// marks it not overridable: code and dice expressions must stay monospaced. It
+// is the one `--font-*` name in the right-hand column, and it is the reason the
+// font family is a *rule* rather than "everything starting `--font-` is
+// overridable".
 //
 // `--brand-*` is deliberately **not** a protected prefix. The brand names are the
 // campaign's, and protecting them would invert the table; the check that keeps the
@@ -144,7 +186,7 @@ var protectedPrefixes = []string{
 	"--callout-",
 	"--dur-",
 	"--radius-",
-	"--font-",
+	fontMono,
 	"--type-scale",
 	"--space-scale",
 	"--target-min",
@@ -173,6 +215,24 @@ func protected(name string) bool {
 	return slices.ContainsFunc(protectedPrefixes, func(prefix string) bool {
 		return strings.HasPrefix(name, prefix)
 	})
+}
+
+// fontOverride reports whether name is in §4.12.1's left column's font row, and
+// therefore reachable only through the manifest's `fonts:` section.
+//
+// **Its own predicate rather than a slice, because the set is a family and the
+// family is a prefix.** Three answers rather than two, and the middle one is
+// `reasonFontSection`: a campaign that wrote `--font-ui` under `tokens:` meant to
+// set a font, the record says that is allowed, and telling them the token is
+// semiplane's own would be a true sentence that sends them to the wrong file.
+//
+// `--font-mono` returns false here and true in `protected`, which is §5.2's
+// exception and the reason the two functions are separate: a reader checking
+// "is this overridable?" and a reader checking "is this protected?" get opposite
+// answers for it, and the order `claimToken` asks them in is the difference
+// between the two messages a GM could receive.
+func fontOverride(name string) bool {
+	return name != fontMono && strings.HasPrefix(name, fontPrefix)
 }
 
 // CampaignTokens returns every name a campaign manifest may set, sorted.

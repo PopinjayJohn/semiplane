@@ -71,7 +71,7 @@ func builtCSS(t *testing.T) string {
 func goodSheet(t *testing.T) string {
 	t.Helper()
 
-	parsed, err := theme.Parse([]byte(manifest(fixtureAccent, fixtureInk)))
+	parsed, err := theme.Parse([]byte(manifest(fixtureAccent, fixtureInk)), nil, testSlug)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -79,22 +79,39 @@ func goodSheet(t *testing.T) string {
 	return parsed.Sheet()
 }
 
+// fontTokenNames are the two tokens the generator composes rather than looks up.
+//
+// They are §4.12.1's left column's font row and deliberately *not* campaign
+// vocabulary entries — a manifest naming them under `tokens:` is refused with the
+// reason that points at `fonts:` — so the shape claim below has to allow them
+// without allowing a second name a campaign could reach. Named here as literals
+// for the same reason `brandAccent` is: the spelling under test is the CSS one.
+var fontTokenNames = []string{"--font-prose", "--font-ui"}
+
 // TestTheGeneratedStylesheetDeclaresNothingButTheBrandPair is the shape claim: the
-// generated sheet is the vocabulary and nothing else.
+// generated sheet is the vocabulary, the two font tokens, and nothing else.
 //
-// Three assertions, and each catches a different way the generator could go wrong.
-// The *names* must equal the vocabulary exactly — a name in the sheet that is not in
-// the vocabulary is a token the campaign was never permitted to set, whatever the
-// code believes. The *values* must match the declaration pattern, so a generator
-// that passed a raw manifest value through would fail here even if the value were
-// harmless today. And the sheet must contain no at-rule and no `url()`, because
-// those are the two things that could carry something from outside this process —
-// the whole reason §4.12.2's promise is that a campaign ships data.
+// Four assertions, and each catches a different way the generator could go wrong.
+// The *names* must come from a closed set — a name in the sheet that is in neither
+// list is a token the campaign was never permitted to set, whatever the code
+// believes. The *values* must match the declaration pattern, so a generator that
+// passed a raw manifest value through would fail here even if the value were
+// harmless today. The image must be **absent** for a manifest that did not set it,
+// because `--brand-header-image: none` lives in theme.css and a generator that
+// wrote one from an empty value would overwrite it with a URL for a file nobody
+// named. And the sheet must contain no at-rule and no `url()`, because those are
+// the two things that could carry something from outside this process — the whole
+// reason §4.12.2's promise is that a campaign ships data.
 //
-// **Mutation:** making `generate` write `branded.tokens[name].String()` raw without
-// the pattern (i.e. emitting any string a colour's String method could return)
-// fails the value assertion; adding a `--brand-header-image` declaration without
-// adding it to the vocabulary fails the name assertion.
+// The at-rule claim is scoped to *this* sheet rather than to every sheet: a
+// manifest that names a font is supposed to produce a `@font-face`, and
+// `TestAFaceLandsInTheTokenItsOwnSlotNames` covers that half.
+//
+// **Mutation:** making `generate` write `branded.tokens[name].String()` raw
+// without the pattern (i.e. emitting any string a colour's String method could
+// return) fails the value assertion; adding a name to `campaignVocabulary` that
+// no manifest fixture sets fails the presence assertion; and writing the image
+// declaration when `themed.image` is empty fails the absence assertion.
 func TestTheGeneratedStylesheetDeclaresNothingButTheBrandPair(t *testing.T) {
 	t.Parallel()
 
@@ -106,25 +123,41 @@ func TestTheGeneratedStylesheetDeclaresNothingButTheBrandPair(t *testing.T) {
 		declared[match[1]] = match[2]
 	}
 
-	want := theme.CampaignTokens()
-
-	if len(declared) != len(want) {
-		t.Errorf("the generated sheet declares %d tokens, want the campaign "+
-			"vocabulary's %d:\n%s", len(declared), len(want), sheet)
+	allowed := map[string]bool{}
+	for _, name := range append(theme.CampaignTokens(), fontTokenNames...) {
+		allowed[name] = true
 	}
 
-	for _, name := range want {
-		value, ok := declared[name]
-		if !ok {
-			t.Errorf("the generated sheet does not declare %s:\n%s", name, sheet)
+	if len(declared) == 0 {
+		t.Fatalf("the generated sheet declares nothing at all:\n%s\nA walk that "+
+			"finds no declaration passes every assertion below for the wrong reason",
+			sheet)
+	}
 
-			continue
+	for name, value := range declared {
+		if !allowed[name] {
+			t.Errorf("the generated sheet declares %s, which is in neither the "+
+				"campaign vocabulary nor the font row of §4.12.1's left column:\n%s",
+				name, sheet)
 		}
 
 		if value != fixtureAccent && value != fixtureInk {
 			t.Errorf("the generated sheet declares %s as %s, which is neither "+
 				"colour the manifest named", name, value)
 		}
+	}
+
+	for _, name := range []string{brandAccent, brandInk} {
+		if _, ok := declared[name]; !ok {
+			t.Errorf("the generated sheet does not declare %s:\n%s", name, sheet)
+		}
+	}
+
+	if _, image := declared["--brand-header-image"]; image {
+		t.Errorf("the generated sheet declares --brand-header-image for a manifest "+
+			"that named none; the product's `none` default lives in theme.css, so "+
+			"writing an empty one here would put a URL over a default the campaign "+
+			"never asked to change:\n%s", sheet)
 	}
 
 	if strings.ContainsAny(sheet, "@") {
@@ -160,7 +193,7 @@ func TestTheGeneratorEmitsOnlyTheNamesItWasGiven(t *testing.T) {
 		t.Fatalf("ParseColour: %v", err)
 	}
 
-	sheet := theme.Generator(true, map[string]theme.Colour{brandAccent: accent})
+	sheet := theme.Generator(map[string]theme.Colour{brandAccent: accent}, "", nil)
 
 	if strings.Contains(sheet, brandInk) {
 		t.Errorf("the generator emitted %s for a manifest that did not name it:\n%s",
@@ -305,8 +338,17 @@ func protectedNames(t *testing.T) map[string]bool {
 // `make a11y` measures contrast from `static/dist/app.css`. If the brand pair were
 // declared only in a source file the build drops, the contrast gate would pass on a
 // stylesheet that never carried the token — and this route's generated sheet would
-// be setting two custom properties that nothing reads, for every campaign, with
-// every gate green.
+// be setting custom properties that nothing reads, for every campaign, with every
+// gate green.
+//
+// **Which tokens are required is read from `app.css`'s own `@import` lines**, and
+// that is the part that keeps this test true rather than hopeful. `--brand-header-image`
+// is declared in theme.css and tokens.css declares the pair; a build importing only
+// two of the three sheets serves a stylesheet carrying two of the three, and a test
+// that demanded all three would be asserting a claim about a file rather than about
+// the bytes — it would fail forever, or pass because somebody weakened it. Deriving
+// the set from the imports makes the test answer "what does this build actually
+// serve?", so adding the theme.css import widens the requirement with no edit here.
 //
 // The second half is the part that is easy to miss: the built declarations must be
 // inside a `[data-theme=…]` rule. Declared on `:root` instead, they would be
@@ -316,31 +358,85 @@ func protectedNames(t *testing.T) map[string]bool {
 //
 // **Mutation:** removing the `--brand-accent` declaration from tokens.css's light
 // rule and rebuilding fails this test. Moving both declarations out of the theme
-// rules onto `:root` fails the second half.
+// rules onto `:root` fails the second half. Adding `@import "./theme.css";` to
+// app.css without declaring `--brand-header-image` in it fails the first.
 func TestTheBrandTokensAreInTheBuiltStylesheet(t *testing.T) {
 	t.Parallel()
 
 	css := builtCSS(t)
 
-	for _, name := range theme.CampaignTokens() {
+	required := requiredBrandTokens(t)
+	if len(required) == 0 {
+		t.Fatal("no campaign token is declared by any sheet app.css imports; the " +
+			"walk over the @import lines finds nothing, so every assertion below " +
+			"passes for the wrong reason")
+	}
+
+	for _, name := range required {
 		if !strings.Contains(css, name+":") {
 			t.Errorf("the built stylesheet declares no %s, so the generated sheet "+
 				"would set a custom property the browser never reads. Run `make css` "+
-				"if the build is stale; if the token is genuinely gone from "+
-				"tokens.css then the campaign vocabulary is naming a token that no "+
-				"longer exists", name)
+				"if the build is stale; if the token is genuinely gone from the "+
+				"sheet that declares it then the campaign vocabulary is naming a "+
+				"token that no longer exists", name)
 		}
 	}
 
 	for _, selector := range themeSelectors(t) {
-		for _, name := range theme.CampaignTokens() {
-			if !strings.Contains(blockOf(t, css, selector), name+":") {
+		block := blocksOf(t, css, selector)
+
+		for _, name := range required {
+			if !strings.Contains(block, name+":") {
 				t.Errorf("the built stylesheet's %s rule declares no %s, so the "+
 					"product's default for it lives somewhere else and this package's "+
 					"specificity argument does not apply", selector, name)
 			}
 		}
 	}
+}
+
+// importPattern is one `@import "./name.css";` line in app.css.
+var importPattern = regexp.MustCompile(`@import\s+"\./([^"]+\.css)"`)
+
+// requiredBrandTokens is every campaign token the built stylesheet is committed to
+// carrying: the ones declared by a sheet `app.css` imports.
+//
+// Derived rather than listed, for the reason `TestTheBrandTokensAreInTheBuiltStylesheet`
+// gives — the set has to move when the import list does, and a hard-coded list of
+// three is a claim about the source rather than about the artefact. Sheets that are
+// not imported contribute nothing, because a sheet the build never reads is not in
+// the bytes this test is about.
+func requiredBrandTokens(t *testing.T) []string {
+	t.Helper()
+
+	app := readSheet(t, "app.css")
+
+	imported := map[string]bool{}
+	for _, match := range importPattern.FindAllStringSubmatch(app, -1) {
+		imported[match[1]] = true
+	}
+
+	if len(imported) == 0 {
+		t.Fatalf("app.css names no @import of a hand-written sheet; the walk is "+
+			"broken, and no token would then be required:\n%s", app)
+	}
+
+	required := map[string]bool{}
+
+	for _, sheetName := range sourceSheets {
+		if !imported[sheetName] {
+			continue
+		}
+
+		for _, match := range declarationPattern.FindAllStringSubmatch(readSheet(t, sheetName), -1) {
+			name := match[1]
+			if slices.Contains(theme.CampaignTokens(), name) {
+				required[name] = true
+			}
+		}
+	}
+
+	return slices.Sorted(maps.Keys(required))
 }
 
 // TestTheGeneratedSelectorOutranksEveryThemeBlockInTheBuiltStylesheet is why the
@@ -428,23 +524,46 @@ func ruleSelectors(css string) []string {
 	return selectors
 }
 
-// blockOf returns the body of the first rule in css with the given selector.
-func blockOf(t *testing.T, css, selector string) string {
+// blocksOf returns the concatenated bodies of **every** rule in css with the
+// given selector.
+//
+// Every rule rather than the first, and the reason is that `app.css` may import
+// more than one sheet declaring a `[data-theme=…]` block: theme.css declares
+// `--brand-header-image` in its own two, and a reader that stopped at the first
+// match would report the built stylesheet as missing a token two rules further
+// on — a wrong failure, which is worse than none because the next real one gets
+// ignored. Later rules win in CSS, so the concatenation is also the right order
+// to search a declaration in.
+func blocksOf(t *testing.T, css, selector string) string {
 	t.Helper()
 
-	from := strings.Index(css, selector+"{")
-	if from < 0 {
+	var bodies strings.Builder
+
+	for from := 0; ; {
+		at := strings.Index(css[from:], selector+"{")
+		if at < 0 {
+			break
+		}
+
+		at += from
+		open := at + len(selector)
+
+		body, closed := braceBody(css, open)
+		if !closed {
+			t.Fatalf("the %s rule's body is never closed", selector)
+		}
+
+		bodies.WriteString(body)
+		bodies.WriteString("\n")
+
+		from = open + 1
+	}
+
+	if bodies.Len() == 0 {
 		t.Fatalf("the built stylesheet has no %s rule", selector)
 	}
 
-	open := from + len(selector)
-
-	body, closed := braceBody(css, open)
-	if !closed {
-		t.Fatalf("the %s rule's body is never closed", selector)
-	}
-
-	return body
+	return bodies.String()
 }
 
 // selectorOf reads the selector the generator wrote.

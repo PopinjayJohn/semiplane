@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
 	"github.com/semiplane/semiplane/internal/httpapi/theme"
+	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/store"
 )
 
@@ -250,7 +252,18 @@ func (h *harness) route() *theme.Handler {
 	return h.handler
 }
 
-// serve builds the whole chain, in the order `router.go` assembles it.
+// serve is the route under test, shared across this harness's requests.
+func (h *harness) serve() http.Handler {
+	return h.serveHandler(h.route())
+}
+
+// serveHandler is `serve` for an arbitrary handler, including nil.
+//
+// The chain is assembled once here rather than twice, because the one test that
+// mounts **no** handler (`TestTheRouteIsNotMountedWithoutAHandler`) has to be a
+// control over the very same chain: a 404 from a different assembly would be a
+// claim about the assembly, and a nil handler that panics in one chain while the
+// other never reaches it would read as a pass.
 //
 // The outer pattern is `/c/{slug}/` and not `/c/`, and that is the one place this
 // harness is not a copy of what is in `router.go`: `campaigns.Resolve` reads the
@@ -258,9 +271,9 @@ func (h *harness) route() *theme.Handler {
 // mux whose *pattern* matched. Mounted at `/c/`, no wildcard is named, Resolve
 // resolves nothing, the tier stays TierNone and RequireRead answers 404 for every
 // request under `/c/`.
-func (h *harness) serve() http.Handler {
+func (h *harness) serveHandler(handler *theme.Handler) http.Handler {
 	campaignMux := http.NewServeMux()
-	theme.Mount(campaignMux, h.route())
+	theme.Mount(campaignMux, handler)
 
 	outer := http.NewServeMux()
 	outer.Handle("/c/{slug}/",
@@ -822,11 +835,11 @@ func TestARefusalIsLoggedAtErrorLevelWithTheCampaign(t *testing.T) {
 
 // invalidEventName is §4.12.3's event name, as this route logs it.
 //
-// Spelled here rather than read from the package because the name is not yet in
-// `observability.AllEventNames()`; see the package clause in theme.go. When the
-// integrator adds the constant, this becomes `string(observability.EventThemeBrandInvalid)`
-// and the assertion below is the evidence the two agree.
-const invalidEventName = "theme.brand_invalid"
+// Read through `observability.EventName` rather than spelled as a literal, so the
+// name this route logs and the name `AllEventNames()` lists are one string by
+// construction — and `TestTheEventNameIsTheOneTheListHolds` is the test that says
+// so, for a name added beyond the architecture record's §13.2 table under ADR 0054.
+const invalidEventName = string(observability.EventThemeBrandInvalid)
 
 // TestTheRouteIsBehindTheReadGate: a private campaign's theme is a 404 to a
 // stranger, for the same reason its pages are.
@@ -1072,6 +1085,350 @@ func TestTheManifestReadIsBoundedAndNotTheFilesSize(t *testing.T) {
 			"is bounded by io.LimitReader and nothing else, so a campaign's file "+
 			"size is a request's memory cost without it",
 			allocated, fileSize)
+	}
+}
+
+// TestTheEventNameIsTheOneTheListHolds is the name, checked from both ends.
+//
+// `theme.brand_invalid` is the fifth signal beyond the architecture record's §13.2
+// table, recorded in ADR 0054 rather than added quietly — and a name recorded in
+// one place and logged from another is a dashboard that never matches, which is
+// the failure this test is about. So both directions are asserted: the constant is
+// in `AllEventNames()`, **and** the line this route actually wrote is a name the
+// list holds. The second is the one that catches a mismatch, because it does not
+// care which of the two spellings is wrong.
+//
+// **Mutation:** changing `invalidEvent` in theme.go back to a literal
+// (`"theme.brand_branded"`) fails the second assertion, and the failure names the
+// line the route logged.
+func TestTheEventNameIsTheOneTheListHolds(t *testing.T) {
+	t.Parallel()
+
+	if !slices.Contains(observability.AllEventNames(),
+		observability.EventThemeBrandInvalid) {
+		t.Fatalf("AllEventNames() does not hold %q, so a dashboard matching on it "+
+			"never fires; ADR 0054 records the name, and the record and the list "+
+			"must be one string (§13.2)", observability.EventThemeBrandInvalid)
+	}
+
+	// A pair that fails the dark page floor, so the refusal below is real.
+	served := newHarness(t)
+	served.write(manifest("#0f6f6a", fixtureInk))
+
+	served.get(themePath, gmRequestor())
+
+	line, found := served.logs.find(invalidEventName)
+	if !found {
+		t.Fatalf("no %q line was logged; without it there is no line to compare "+
+			"against the event list\nlogged: %s", invalidEventName, served.logs.text())
+	}
+
+	if !slices.Contains(observability.AllEventNames(),
+		observability.EventName(line.message)) {
+		t.Errorf("the route logged %q, which is not in observability.AllEventNames()"+
+			"\nlisted: %v\nThe name in the record, the name in the list and the name "+
+			"in the log are three copies of one string, and only two of them can be "+
+			"checked without the third", line.message, observability.AllEventNames())
+	}
+}
+
+// TestTheRouteIsNotMountedWithoutAHandler is what makes `Mount`'s nil branch a
+// property rather than a courtesy.
+//
+// `router.go` builds every campaign route's handler as a field, and a field can be
+// nil in a read-only wiring. Returning early is what lets the mount list stay a
+// list of *calls* rather than a list of `if handler != nil` guards — and a mount
+// list somebody has to remember to edit is a mount list somebody forgets. So the
+// claim is precise: with nil, the URL space contains no theme route at all (404
+// from the mux); with a handler, the very same chain reaches it (200). A nil
+// handler that was *registered* would answer 500 rather than panic only because
+// the handler's own nil checks would have to be written too, which is a second
+// mechanism for one rule.
+//
+// **Mutation:** deleting the `if handler == nil { return }` guard fails the second
+// row, with a panic rather than a status — which is the point of the control.
+func TestTheRouteIsNotMountedWithoutAHandler(t *testing.T) {
+	t.Parallel()
+
+	served := newHarness(t)
+	served.write(manifest(fixtureAccent, fixtureInk))
+
+	build := func(handler *theme.Handler) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+			themePath, http.NoBody)
+		req = req.WithContext(identity.WithRequestor(req.Context(), gmRequestor()))
+
+		recorder := httptest.NewRecorder()
+		served.serveHandler(handler).ServeHTTP(recorder, req)
+
+		return recorder
+	}
+
+	control := build(served.route())
+	if control.Code != http.StatusOK {
+		t.Fatalf("control: status = %d, want 200: the chain has to reach the route "+
+			"before the nil branch means anything", control.Code)
+	}
+
+	mounted := build(nil)
+	if mounted.Code != http.StatusNotFound {
+		t.Errorf("status = %d with a nil handler, want 404: the pattern is "+
+			"registered and a request reaches a handler that was never built. "+
+			"Mount's nil branch exists so the mount list can be a list of calls "+
+			"without a guard at every one", mounted.Code)
+	}
+}
+
+// TestTheRefusalAndTheSheetItSupersedesAreOneRecord holds `heldTheme`'s two fields
+// together, which is the state §4.12.3's notice is read from.
+//
+// The sequence is the argument, because every row is a transition the pair has to
+// survive together: a good manifest (sheet, no notice), a refused one (same sheet,
+// notice standing), a fixed one (new sheet, notice gone — a GM who edits their
+// colour should stop being told about it on the very next request), and a deleted
+// one (core sheet, no notice — a notice that outlives the file is a brand that
+// follows a GM forever).
+//
+// Two maps keyed the same way would let one be forgotten while the other survived,
+// and the state that produces is a campaign told its theme is broken while serving
+// a theme it does not have. Only the transitions can see that; the four
+// single-state tests in this file all pass with the fields split.
+//
+// **Mutation:** making `remember` write only `sheet` (leaving `refusal` set) fails
+// the third row; making `refuse` clear the sheet fails the first.
+func TestTheRefusalAndTheSheetItSupersedesAreOneRecord(t *testing.T) {
+	t.Parallel()
+
+	served := newHarness(t)
+
+	notice := func(campaignID int64) (theme.Notice, bool) {
+		t.Helper()
+
+		return served.route().Notice(campaignID)
+	}
+
+	// 1. A good manifest: a sheet, and nothing to say about it.
+	served.write(manifest(fixtureAccent, fixtureInk))
+
+	branded := served.get(themePath, gmRequestor())
+	if branded.Code != http.StatusOK || !strings.Contains(branded.Body.String(), fixtureAccent) {
+		t.Fatalf("status = %d and the sheet does not carry the brand:\n%s",
+			branded.Code, branded.Body)
+	}
+
+	if _, standing := notice(testCampID); standing {
+		t.Error("a validated manifest left a notice standing")
+	}
+
+	// 2. A refused one: the sheet it superseded, and the notice that names why.
+	served.write(manifest(fixtureAccent, "#0b1220"))
+
+	refused := served.get(themePath, gmRequestor())
+	if refused.Body.String() != branded.Body.String() {
+		t.Fatalf("the refused manifest changed the sheet:\n--- before\n%s\n--- after\n%s",
+			branded.Body, refused.Body)
+	}
+
+	shown, standing := notice(testCampID)
+	if !standing {
+		t.Fatal("a refused manifest left no notice: §4.12.3's third requirement is " +
+			"the campaign overview showing a GM what was rejected, and a process " +
+			"that cannot answer the question cannot show it")
+	}
+
+	if shown.Token != brandInk {
+		t.Errorf("the notice names %q, want %q: it has to point at the token the GM "+
+			"has to change", shown.Token, brandInk)
+	}
+
+	// 3. A fixed one: a *different* good brand, and the notice gone with the old
+	//    record. It has to differ from the first, or the assertion below could not
+	//    tell "the GM's fix landed" from "the sheet never changed" — the same
+	//    manifest written twice produces the same bytes by construction, and a
+	//    test that compared those would be asserting the generator's determinism
+	//    in the middle of a test about refusal state.
+	served.write(manifest(otherAccent, fixtureInk))
+
+	fixed := served.get(themePath, gmRequestor())
+	if fixed.Body.String() == branded.Body.String() {
+		t.Error("the fixed manifest produced the same bytes as the brand it replaced: " +
+			"the new sheet has not landed, so the row is measuring nothing")
+	}
+
+	if !strings.Contains(fixed.Body.String(), otherAccent) {
+		t.Errorf("the fixed manifest's accent is absent from the sheet:\n%s",
+			fixed.Body)
+	}
+
+	if _, standing := notice(testCampID); standing {
+		t.Error("the notice outlived the manifest that caused it; a GM who fixed " +
+			"their colour is being told about a refusal that no longer stands")
+	}
+
+	// 4. A deleted one: the core sheet, and still nothing to say.
+	served.remove()
+
+	withdrawn := served.get(themePath, gmRequestor())
+	if withdrawn.Body.String() != theme.CoreSheet() {
+		t.Errorf("a withdrawn theme served %q, want the core sheet", withdrawn.Body)
+	}
+
+	if _, standing := notice(testCampID); standing {
+		t.Error("the notice outlived the manifest itself; there is no longer a " +
+			"theme to complain about")
+	}
+}
+
+// TestAnUnreadableManifestIsAFaultNotAnAbsentTheme is the branch §4.12.3 does not
+// cover, because it is not a decision about the manifest: our own read failed.
+//
+// The distinction is the whole response. A manifest that will not apply keeps the
+// last good theme and answers 200 — the campaign looks like itself. A manifest we
+// could not read answers **500**, because the file may be perfectly good and
+// answering "no theme" would be a lie served to every reader of the campaign, for
+// as long as the fault lasts. The same reasoning as `TestACampaignWithoutARootIs
+// AFaultNotAnAbsentTheme`, one step deeper: that one fails to find the root, this
+// one finds it and cannot open the file through it.
+//
+// The fixture is a content root whose handle has been released while the registry
+// still retains it, which is the shape a shutdown or a leaked descriptor produces
+// and the one `ErrUnreadableManifest` exists to name. A permissions-based fixture
+// would not do: these tests run as an account that reads anything it is shown, so
+// `chmod 000` proves nothing at all.
+//
+// It is also the fixture that needed `rootIsLive`: `content.classify` has two
+// answers, `ErrNotExist` and `ErrOutsideRoot`, and a dead handle is neither — so
+// it arrives as `ErrOutsideRoot`, which `classifyManifestRead` would otherwise
+// read as a confinement refusal and answer with the campaign's last good theme.
+// The symptom was measured, not hypothesised: without the probe this test answers
+// **200** with `text/css` and the core sheet, for as long as the handle stays
+// closed.
+//
+// **Mutation:** making `rootIsLive` return `true` unconditionally fails this test
+// with exactly the three assertions above — status, `Cache-Control` and
+// `Content-Type` — which is the whole response going wrong together rather than
+// one header at a time.
+func TestAnUnreadableManifestIsAFaultNotAnAbsentTheme(t *testing.T) {
+	t.Parallel()
+
+	registry := content.NewRegistry(content.RefuseSymlinks)
+	t.Cleanup(func() {
+		// The root is already closed — that *is* the fixture — so the registry's
+		// own close reports it, and the error is the thing under test rather than
+		// a defect in this test.
+		_ = registry.Close()
+	})
+
+	dir := t.TempDir()
+	if _, err := registry.Open(testSlug, dir); err != nil {
+		t.Fatalf("open a content root: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, theme.ManifestFileName),
+		[]byte(manifest(fixtureAccent, fixtureInk)), 0o600); err != nil {
+		t.Fatalf("write the manifest: %v", err)
+	}
+
+	root, err := registry.Get(testSlug)
+	if err != nil {
+		t.Fatalf("get the content root: %v", err)
+	}
+
+	if err := root.Close(); err != nil {
+		t.Fatalf("close the content root: %v", err)
+	}
+
+	recorder := serveWithoutRoot(t, &theme.Handler{Roots: registry})
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d for a manifest we could not read, want 500: answering "+
+			"\"no theme\" for our own failure would tell every reader of the "+
+			"campaign that its theme is gone", recorder.Code)
+	}
+
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q on a failure, want no-store", got)
+	}
+
+	if !strings.HasPrefix(recorder.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("Content-Type = %q on a failure, want plain text: a stylesheet is a "+
+			"subresource, and one returning an HTML document is a parse error "+
+			"nobody sees", recorder.Header().Get("Content-Type"))
+	}
+
+	if strings.Contains(recorder.Body.String(), fixtureAccent) {
+		t.Errorf("the failure body carries the campaign's brand:\n%s", recorder.Body)
+	}
+}
+
+// TestTheGeneratedSheetNeverNamesAStylesheetInTheVault is §4.12.2's other half:
+// a campaign may *have* a `.css` file, and nothing may link it.
+//
+// Obsidian sync writes whatever the author's other tools produce, so a content root
+// full of `.css` is an ordinary vault rather than an attack — and the assets route
+// serves those files, because a page may embed one. What must never happen is a
+// link or an `@import` reaching a browser from this route, because that would put
+// a campaign's own stylesheet into the cascade with every protected token in it.
+//
+// Every sheet this route can produce is checked, not only the happy one: the core
+// sheet a campaign with no manifest gets, a branded one, one carrying a font and an
+// image (the two `url()` paths), and the fallback a refused manifest leaves behind.
+// The claim is about the *route's* output; the shell's own `<link>` list is a
+// template's business and is reported to the integrator alongside the import this
+// package needs from it.
+//
+// **Mutation:** making `generate` emit `@import url(...)` for a file found in the
+// content root fails every row.
+func TestTheGeneratedSheetNeverNamesAStylesheetInTheVault(t *testing.T) {
+	t.Parallel()
+
+	served := newHarness(t)
+	writeFile(t, served, "styles/theme.css")
+	writeFile(t, served, "art/banner.png")
+	writeFile(t, served, "fonts/sans.woff2")
+
+	// A manifest that exercises both `url()` paths, so the assertion cannot pass
+	// on a sheet with no URL in it at all.
+	branded := "tokens:\n  " + brandImage + ": \"art/banner.png\"\n" +
+		fontManifest("ui", "Campaign Sans", "fonts/sans.woff2")
+
+	sheets := map[string]string{
+		"the core sheet": theme.CoreSheet(),
+		"the font and image sheet": func() string {
+			parsed, err := theme.Parse([]byte(branded), rootFor(t, served), testSlug)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+
+			return parsed.Sheet()
+		}(),
+	}
+
+	// And the fallback: a refused manifest leaves the campaign serving what it
+	// had, which for a campaign with nothing remembered is the core sheet again —
+	// asserted here so that the refusal path cannot grow a link of its own.
+	served.write(manifest(fixtureAccent, fixtureInk) + "  --target-min: 20px\n")
+	refused := served.get(themePath, gmRequestor())
+	if refused.Code != http.StatusOK {
+		t.Fatalf("status = %d for a refused manifest, want 200", refused.Code)
+	}
+	sheets["the refused fallback"] = refused.Body.String()
+
+	for label, sheet := range sheets {
+		if strings.Contains(sheet, "@import") {
+			t.Errorf("%s carries an @import:\n%s", label, sheet)
+		}
+
+		if strings.Contains(sheet, ".css") {
+			t.Errorf("%s names a stylesheet file:\n%s\nNothing in a campaign's "+
+				"content root is a stylesheet this route may link (§4.12.2)", label,
+				sheet)
+		}
+
+		if strings.Contains(sheet, "@media") {
+			t.Errorf("%s carries a media query:\n%s", label, sheet)
+		}
 	}
 }
 

@@ -2103,15 +2103,20 @@ func TestSetPausedAdvancesTheRevisionButNoVersion(t *testing.T) {
 //
 // `state.write_ms` is already in `observability.AllEventNames()`, so this work
 // item's outcome is reported through the `WriteRecorder` seam rather than a new
-// name. The count is 24 and the assertion in `internal/observability` owns it;
-// restating it here is a tripwire for the next person who reaches for a new event
-// name rather than a seam, because the cost of finding that out is a failing test
+// name. The count and the assertion in `internal/observability` own it; restating
+// it here is a tripwire for the next person who reaches for a new event name
+// rather than a seam, because the cost of finding that out is a failing test
 // in another package that says nothing about this one.
+//
+// 24 became 25 when phase 9's theme layer added `theme.brand_invalid`, recorded in
+// ADR 0054 — the tripwire firing exactly as its message asks, in the adding work
+// item's own commit. `spec.md` needed no change: S-12.1 and S-12.3 govern how a
+// signal is emitted and what it may carry, and neither enumerates names.
 func TestEveryEventNameIsUnchanged(t *testing.T) {
-	if got := len(observability.AllEventNames()); got != 24 {
-		t.Errorf("observability.AllEventNames() has %d entries, want 24; this work item added "+
+	if got := len(observability.AllEventNames()); got != 25 {
+		t.Errorf("observability.AllEventNames() has %d entries, want 25; this work item added "+
 			"no event name (state.write_ms already exists), so any change is another work "+
-			"item's and belongs in its own commit with spec.md", got)
+			"item's and belongs in its own commit with spec.md — as ADR 0054 was", got)
 	}
 
 	var found bool

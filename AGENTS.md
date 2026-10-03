@@ -554,11 +554,14 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   `[!secret]` callout body in a log aggregator, which is the one thing S-12.3 forbids. Errors
   are classified by `errorClass`, never passed through: a Markdown or YAML parser quotes the line
   it choked on, and on a wiki page that line is routinely a callout body.
-- **Six event names beyond the architecture record's §13.2 list**, recorded in
-  [0032](docs/content/en/decisions/0032-index-signals-beyond-the-architecture-list.md) rather than
-  added quietly: four `index.*`, `content.settle_failed`, and the uncounted `index.renamed`.
-  `observability.AllEventNames()` is 24 where §13.2 lists 18, and its test asserts the count —
-  so a seventh addition without a record fails the build.
+- **Seven event names beyond the architecture record's §13.2 list**, recorded rather than
+  added quietly: six in
+  [0032](docs/content/en/decisions/0032-index-signals-beyond-the-architecture-list.md) — four
+  `index.*`, `content.settle_failed`, and the uncounted `index.renamed` — and the seventh,
+  `theme.brand_invalid`, in
+  [0054](docs/content/en/decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet.md).
+  `observability.AllEventNames()` is 25 where §13.2 lists 18, and its test asserts the count —
+  so an eighth addition without a record fails the build.
 
 ## Accessibility invariants
 

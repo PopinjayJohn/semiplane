@@ -1,6 +1,7 @@
 package theme_test
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,9 +25,9 @@ import (
 
 // cssDir is the product's hand-written stylesheets, relative to this package.
 //
-// The three files `app.css` imports, and only those: `app.css` itself holds the
+// Every file under that directory except `app.css`: `app.css` itself holds the
 // `@import` lines and the `@source` globs, so a declaration walk over it finds
-// nothing that is not in one of the three.
+// nothing that is not in one of the others.
 //
 // Read from **source** rather than from the built file, for the reason
 // `tokens_contrast_test.go` gives and it is the only correct answer here: the
@@ -35,9 +36,16 @@ import (
 // check that read it would report the stylesheet as missing a token it has.
 const cssDir = "../../web/static/css"
 
-// sourceSheets are the files that declare tokens, in the order `app.css` imports
-// them. Load order is irrelevant to a name walk and named for the reader.
-var sourceSheets = []string{"tokens.css", "shell.css", "tv.css"}
+// sourceSheets are the files that declare tokens, in the order `app.css`
+// imports them. Load order is irrelevant to a name walk and named for the
+// reader.
+//
+// `theme.css` is in this list although `app.css` does not import it yet — that
+// one line is outside this package's ownership and is reported to the
+// integrator, and ADR 0054 records the consequence. Leaving it out would make
+// every test below read the product as owning two brand tokens when it owns
+// three, which is exactly the drift they exist to catch.
+var sourceSheets = []string{"tokens.css", "shell.css", "theme.css", "tv.css"}
 
 // brandPrefix is the namespace §4.12.1's overridable column lives in.
 //
@@ -69,10 +77,11 @@ var commentPattern = regexp.MustCompile(`(?s)/\*.*?\*/`)
 //
 // Not optional. tokens.css is more comment than code, and its second block of
 // comments is §4.12.1's own protected-variable table, which names every token in
-// the repository — including `--brand-header-image`, which no rule declares. A
-// walk that read comments would report that token as declared, and
-// `TestEveryCampaignTokenIsDeclaredByTheProduct` would then pass for the wrong
-// reason.
+// the repository — including `--brand-header-image`, whose only declarations are
+// theme.css's two `none` defaults. A walk that read comments would report that
+// token as declared on the strength of tokens.css alone, and
+// `TestEveryCampaignTokenIsDeclaredByTheProduct` would then pass with theme.css's
+// declarations deleted — the mutation that test exists to catch.
 func stripComments(sheet string) string {
 	return commentPattern.ReplaceAllString(sheet, "")
 }
@@ -110,34 +119,59 @@ func declaredTokens(t *testing.T) map[string]bool {
 	return declared
 }
 
-// tokensInThemeBlock reads the tokens one `[data-theme="…"]` rule declares, as
+// tokensInThemeBlock reads the tokens every `[data-theme="…"]` rule declares, as
 // name to declared value.
 //
 // Brace-matched rather than split on the theme names, because the two rules are
 // separated by a comment and by a whole other rule, and a naive split would hand
 // back tokens belonging to whichever rule came next.
+//
+// **Every** sheet and **every** rule naming the theme is merged, not only the
+// first one in tokens.css: theme.css declares `--brand-header-image` in its own
+// two blocks, and a reader that stopped at the first match would report the
+// product as not declaring a token that two rules below declare — a wrong
+// failure, which is worse than none because the next real one gets ignored.
+// Later sheets win, which is also what CSS does: the merge is in `sourceSheets`
+// order and the last declaration of a name inside one block wins as well.
 func tokensInThemeBlock(t *testing.T, themeName string) map[string]string {
 	t.Helper()
 
-	sheet := readSheet(t, "tokens.css")
 	selector := `[data-theme="` + themeName + `"]`
+	merged := map[string]string{}
 
-	from := strings.Index(sheet, selector)
-	if from < 0 {
-		t.Fatalf("tokens.css declares no %s rule", selector)
+	for _, sheetName := range sourceSheets {
+		sheet := readSheet(t, sheetName)
+
+		for from := 0; ; {
+			at := strings.Index(sheet[from:], selector)
+			if at < 0 {
+				break
+			}
+
+			at += from
+			open := strings.Index(sheet[at:], "{")
+			if open < 0 {
+				t.Fatalf("%s: the %s rule has no body", sheetName, selector)
+			}
+
+			body, closed := braceBody(sheet, at+open)
+			if !closed {
+				t.Fatalf("%s: the %s rule's body is never closed", sheetName, selector)
+			}
+
+			maps.Copy(merged, declarationsIn(body))
+
+			from = at + open + 1
+		}
 	}
 
-	open := strings.Index(sheet[from:], "{")
-	if open < 0 {
-		t.Fatalf("the %s rule has no body", selector)
+	if len(merged) == 0 {
+		t.Fatalf("no %s rule was found in %v; the walk is broken, and a walk "+
+			"that finds nothing passes every test below for the wrong reason",
+			selector, sourceSheets)
 	}
 
-	body, closed := braceBody(sheet, from+open)
-	if !closed {
-		t.Fatalf("the %s rule's body is never closed", selector)
-	}
-
-	return declarationsIn(body)
+	return merged
 }
 
 // braceBody returns the text between the brace at open and the one that closes it.
@@ -163,7 +197,7 @@ func braceBody(sheet string, open int) (string, bool) {
 // declarationsIn collects a block's custom properties as name to declared value.
 //
 // A map, so a token declared twice inside one rule (light and dark each declare
-// `--dur-fast` once, and the `forced-colors` block re-declares several) keeps the
+// `--dur-fast` once, and the forced-colours block re-declares several) keeps the
 // **last** value — which is the one that wins in CSS, and therefore the one any
 // comparison against has to use.
 func declarationsIn(block string) map[string]string {
@@ -216,17 +250,21 @@ func TestEveryBrandTokenTheProductDeclaresIsInTheCampaignVocabulary(t *testing.T
 // the one that catches a vocabulary entry nobody wired up.
 //
 // `--brand-header-image` is the case this exists for: §4.12.1 lists it as
-// overridable, tokens.css's own table names it, and **no rule declares it** — so a
-// manifest setting it would emit a declaration that changes nothing, and the GM
-// would have no way to tell that from a browser bug. Rather than shipping a token
-// whose override has nowhere to land, the vocabulary omits it and this test keeps
-// the omission honest: if a future change declares it, this fails and the next
-// author finds out they can now add it.
+// overridable, tokens.css's own table names it, and no rule in tokens.css
+// declares it — so a manifest setting it would emit a declaration that changes
+// nothing, and the GM would have no way to tell that from a browser bug. The
+// vocabulary therefore keeps it **only** because `theme.css` declares the
+// product's default (`none`, once per theme): `claimToken` refuses it as a
+// colour and `headerImage` reads it out of the parsed tokens, so the declaration
+// is what makes the token's permission real rather than nominal. Drop the two
+// declarations in theme.css and this test fails, which is the direction that
+// matters — a vocabulary entry whose override has nowhere to land.
 //
-// **Mutation:** deleting the `--brand-accent: var(--accent);` declaration from
-// tokens.css fails this test. Adding the vocabulary entry for
-// `--brand-header-image` without declaring it fails it too, which is the property
-// that makes the vocabulary safe to extend.
+// **Mutation:** deleting `--brand-accent: var(--accent);` from
+// tokens.css fails this test. So does deleting theme.css's two
+// `--brand-header-image: none;` declarations, or adding a vocabulary entry for a
+// name nothing declares, which is the property that makes the vocabulary safe to
+// extend.
 func TestEveryCampaignTokenIsDeclaredByTheProduct(t *testing.T) {
 	t.Parallel()
 

@@ -20,11 +20,12 @@ import (
 // notice — that a refusal never carries the campaign's own bytes, and that which
 // token a refusal names does not depend on Go's map order.
 
-// brandAccent and brandInk are §4.12.1's two overridable names, spelled here so a
-// test's manifest reads like the file a GM would write.
+// brandAccent, brandInk and brandImage are §4.12.1's three overridable names,
+// spelled here so a test's manifest reads like the file a GM would write.
 const (
 	brandAccent = "--brand-accent"
 	brandInk    = "--brand-accent-ink"
+	brandImage  = "--brand-header-image"
 )
 
 // The fixture pair, and why these two values.
@@ -67,7 +68,7 @@ func manifest(accent, ink string) string {
 func TestAPermittedOverrideLands(t *testing.T) {
 	t.Parallel()
 
-	parsed, err := theme.Parse([]byte(manifest("#0E7C7B", fixtureInk)))
+	parsed, err := theme.Parse([]byte(manifest("#0E7C7B", fixtureInk)), nil, testSlug)
 	if err != nil {
 		t.Fatalf("Parse refused a valid brand pair: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestAForbiddenOverrideIsRefusedAndNothingElseIsApplied(t *testing.T) {
 
 	forbidden := manifest(fixtureAccent, fixtureInk) + "  --target-min: 20px\n"
 
-	parsed, err := theme.Parse([]byte(forbidden))
+	parsed, err := theme.Parse([]byte(forbidden), nil, testSlug)
 
 	refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 	if !isRefusal {
@@ -143,7 +144,7 @@ func TestTheRefusalReasonDistinguishesTheContractFromTheOrdinary(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := theme.Parse([]byte("tokens:\n  " + name + ": \"#000000\"\n"))
+			_, err := theme.Parse([]byte("tokens:\n  "+name+": \"#000000\"\n"), nil, testSlug)
 
 			refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 			if !isRefusal {
@@ -179,7 +180,7 @@ func TestTheRefusalReasonDistinguishesTheContractFromTheOrdinary(t *testing.T) {
 func refusalFor(t *testing.T, token string) string {
 	t.Helper()
 
-	_, err := theme.Parse([]byte("tokens:\n  " + token + ": \"#000000\"\n"))
+	_, err := theme.Parse([]byte("tokens:\n  "+token+": \"#000000\"\n"), nil, testSlug)
 
 	refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 	if !isRefusal {
@@ -198,7 +199,11 @@ func refusalFor(t *testing.T, token string) string {
 func TestAnUnknownTokenIsRefused(t *testing.T) {
 	t.Parallel()
 
-	parsed, err := theme.Parse([]byte("tokens:\n  --brand-accent-colour: \"#0e7c7b\"\n"))
+	parsed, err := theme.Parse(
+		[]byte("tokens:\n  --brand-accent-colour: \"#0e7c7b\"\n"),
+		nil,
+		testSlug,
+	)
 
 	refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 	if !isRefusal {
@@ -231,7 +236,7 @@ func TestAnUnknownKeyIsRefused(t *testing.T) {
 		"fonts:\n  --font-ui: \"Some Face\"\n",
 		"version: 1\ntokens:\n  " + brandAccent + ": \"#0e7c7b\"\n",
 	} {
-		_, err := theme.Parse([]byte(body))
+		_, err := theme.Parse([]byte(body), nil, testSlug)
 
 		if !errors.Is(err, theme.ErrMalformedManifest) {
 			t.Errorf("Parse(%q) returned %v, want ErrMalformedManifest", body, err)
@@ -256,12 +261,12 @@ func TestTheManifestIsCappedAtItsOwnLimit(t *testing.T) {
 		t.Fatalf("the fixture is %d bytes, want exactly %d", len(atCap), theme.MaxManifestBytes)
 	}
 
-	_, err := theme.Parse([]byte(atCap))
+	_, err := theme.Parse([]byte(atCap), nil, testSlug)
 	if errors.Is(err, theme.ErrManifestTooLarge) {
 		t.Errorf("Parse refused a manifest of exactly the %d-byte limit", theme.MaxManifestBytes)
 	}
 
-	_, err = theme.Parse([]byte(atCap + "p"))
+	_, err = theme.Parse([]byte(atCap+"p"), nil, testSlug)
 	if !errors.Is(err, theme.ErrManifestTooLarge) {
 		t.Errorf("Parse returned %v for a manifest one byte over the limit, want "+
 			"ErrManifestTooLarge", err)
@@ -285,7 +290,7 @@ func TestAnAliasBombIsRefused(t *testing.T) {
 			len(bomb), theme.MaxManifestBytes)
 	}
 
-	_, err := theme.Parse([]byte(bomb))
+	_, err := theme.Parse([]byte(bomb), nil, testSlug)
 	if err == nil {
 		t.Fatal("Parse accepted an alias bomb; the parser's expansion limit is either " +
 			"absent or not enforced")
@@ -344,7 +349,7 @@ func TestTheBrandPairIsBothOrNeither(t *testing.T) {
 		"tokens:\n  " + brandAccent + ": \"" + fixtureAccent + "\"\n",
 		"tokens:\n  " + brandInk + ": \"" + fixtureInk + "\"\n",
 	} {
-		_, err := theme.Parse([]byte(body))
+		_, err := theme.Parse([]byte(body), nil, testSlug)
 
 		refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 		if !isRefusal {
@@ -403,7 +408,7 @@ func TestTheTwoContrastFloorsRefuseAPairThatMissesThem(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			parsed, err := theme.Parse([]byte(manifest(tc.accent, tc.ink)))
+			parsed, err := theme.Parse([]byte(manifest(tc.accent, tc.ink)), nil, testSlug)
 
 			refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 			if !isRefusal {
@@ -441,7 +446,7 @@ func TestAnUnquotedColourIsRefusedWithTheReasonThatFits(t *testing.T) {
 		"tokens:\n  " + brandAccent + ": #0e7c7b\n  " + brandInk + ": \"#ffffff\"\n",
 		"tokens:\n  " + brandAccent + ": #fff\n  " + brandInk + ": #fff\n",
 	} {
-		_, err := theme.Parse([]byte(body))
+		_, err := theme.Parse([]byte(body), nil, testSlug)
 
 		refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 		if !isRefusal {
@@ -464,18 +469,55 @@ func TestAnUnquotedColourIsRefusedWithTheReasonThatFits(t *testing.T) {
 // format the int as hex, join the list — that would silently produce a *different*
 // colour from the one the author believed they wrote. Refusing is the only answer
 // that cannot be wrong in that direction.
+//
+// Two assertions beyond "it returned an error", and both are about what the
+// refusal is *made of*:
+//
+//   - **It names the token, not the value.** `refusal.Token` is the name the GM
+//     has to change and `refusal.Reason` is a fixed sentence. `0x0e7c7b` is a
+//     colour to a human, so it is exactly the kind of value a message reaches
+//     for — and it came out of a content root an Obsidian sync client writes, so
+//     echoing it puts campaign bytes in a log aggregator (S-12.3).
+//   - **Nothing is applied.** A coercion that half-worked — an int formatted as
+//     `#123456`, which happens to clear every floor — would be worse than the
+//     coercion it replaced, because the theme would apply and the GM would never
+//     learn their file was wrong.
+//
+// **Mutation:** making `claimToken` fall back to `fmt.Sprint(raw)` and hand it
+// to `parseColour` fails the value half; making `refused` echo the raw value
+// fails the echo half; removing the `parsed.Sheet() != ""` return from the
+// refusal branches fails the second.
 func TestANonStringColourIsRefused(t *testing.T) {
 	t.Parallel()
 
 	for _, value := range []string{"123456", "[\"#0e7c7b\"]", "0x0e7c7b", "true"} {
 		body := "tokens:\n  " + brandAccent + ": " + value + "\n"
 
-		_, err := theme.Parse([]byte(body))
+		parsed, err := theme.Parse([]byte(body), nil, testSlug)
 
 		refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 		if !isRefusal {
 			t.Errorf("Parse(%s) returned %v, want a *theme.RefusalError: a value of the "+
 				"wrong shape must be refused rather than coerced", value, err)
+
+			continue
+		}
+
+		if refusal.Token != brandAccent {
+			t.Errorf("the refusal for %s names %q, want %q: the refusal has to name the "+
+				"token the GM has to change", value, refusal.Token, brandAccent)
+		}
+
+		if strings.Contains(refusal.Error(), value) {
+			t.Errorf("the refusal for %s reads %q, which quotes the campaign's own "+
+				"value back at it; a refusal is a log line and the manifest is "+
+				"attacker-reachable input (S-12.3)", value, refusal.Error())
+		}
+
+		if parsed.Sheet() != "" {
+			t.Errorf("Parse(%s) returned a sheet:\n%s\nA value of the wrong shape must "+
+				"apply nothing at all — a coercion that half-worked would be worse "+
+				"than the coercion it replaced", value, parsed.Sheet())
 		}
 	}
 }
@@ -502,7 +544,7 @@ func TestARefusalNeverEchoesTheManifest(t *testing.T) {
 	hostile := "tokens:\n" +
 		"  \"--brand-accent\\nFatal: injected\": \"\\\\000e7c7b\"\n"
 
-	_, err := theme.Parse([]byte(hostile))
+	_, err := theme.Parse([]byte(hostile), nil, testSlug)
 
 	refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 	if !isRefusal {
@@ -535,13 +577,13 @@ func TestTheSameManifestAlwaysProducesTheSameSheet(t *testing.T) {
 
 	// The same pair, written in both orders. YAML mappings are unordered, so
 	// these two documents are the same manifest.
-	first, err := theme.Parse([]byte(manifest(fixtureAccent, fixtureInk)))
+	first, err := theme.Parse([]byte(manifest(fixtureAccent, fixtureInk)), nil, testSlug)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 
-	permuted, err := theme.Parse([]byte("tokens:\n  " + brandInk + ": \"" + fixtureInk +
-		"\"\n  " + brandAccent + ": \"" + fixtureAccent + "\"\n"))
+	permuted, err := theme.Parse([]byte("tokens:\n  "+brandInk+": \""+fixtureInk+
+		"\"\n  "+brandAccent+": \""+fixtureAccent+"\"\n"), nil, testSlug)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -556,7 +598,7 @@ func TestTheSameManifestAlwaysProducesTheSameSheet(t *testing.T) {
 	twoBad := manifest(fixtureAccent, fixtureInk) + "  --dur-base: 1s\n  --radius-md: 9px\n"
 
 	for attempt := range 20 {
-		_, err := theme.Parse([]byte(twoBad))
+		_, err := theme.Parse([]byte(twoBad), nil, testSlug)
 
 		refusal, isRefusal := errors.AsType[*theme.RefusalError](err)
 		if !isRefusal {
@@ -585,7 +627,7 @@ func TestAnEmptyManifestIsNotATheme(t *testing.T) {
 	t.Parallel()
 
 	for _, body := range []string{"", "# the colours go here\n", "tokens:\n"} {
-		parsed, err := theme.Parse([]byte(body))
+		parsed, err := theme.Parse([]byte(body), nil, testSlug)
 		if err != nil {
 			t.Errorf("Parse(%q) returned %v, want no error: an empty manifest is a "+
 				"campaign with no theme, not a fault", body, err)
