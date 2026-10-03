@@ -22,7 +22,7 @@ The product model, the data model, the content pipeline, editing and conflict
 resolution, the realtime protocol, access control, the plugin system, the
 security boundaries, and the build order.
 
-Source: `.kilo/plans/1790774477695-semiplane-architecture-overview.md`
+Source: `.opencode/plans/1790774477695-semiplane-architecture-overview.md`
 
 ### [Responsive UI/UX specification]({{ "design/ui-ux/" | relURL }})
 
@@ -30,7 +30,7 @@ The five structural components, five width tiers plus a television mode, the
 three-layer token system with both palettes, the accessibility contract, and the
 validation strategy.
 
-Source: `.kilo/plans/1790778908232-responsive-ui-ux-design-spec.md`
+Source: `.opencode/plans/1790778908232-responsive-ui-ux-design-spec.md`
 
 ## Why verbatim
 
@@ -102,6 +102,16 @@ record — they are listed here:
   has state behind it. The twelfth, "game ended", is deliberately absent — there
   is no domain state for it, and §4.9 says of exactly this case to flag it
   rather than invent a client-side flag. See the states package's header.
+- **The records name `.kilo/plans/` and `kilo.json`, neither of which exists.**
+  The repository has moved to OpenCode as its only agent: the design records now
+  live under `.opencode/plans/` and `kilo.json` has been deleted in favour of
+  `.opencode/opencode.jsonc`. The records are published here verbatim, so they
+  still print the old paths — the file names, `make site-plans`'s source and the
+  "Source of this page" links are all correct, and the prose inside the two
+  records is not. This is the intended outcome rather than an oversight: editing
+  a dated record to agree with the present would destroy the reason for keeping
+  it. See
+  [0051]({{ "decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/" | relURL }}).
 - Diagrams render as code blocks. They are readable as source, which is how they
   were written.
 

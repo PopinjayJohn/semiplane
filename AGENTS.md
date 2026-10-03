@@ -24,8 +24,8 @@ configuration change. Do not add clustering, leader election, sticky-session req
 |---|---|
 | [`docs/content/en/contributing/spec.md`](docs/content/en/contributing/spec.md) | **Requirements**, numbered `S-n.n`. Cite the ID; do not restate the rule. |
 | [`docs/content/en/decisions/`](docs/content/en/decisions/) | **Decisions and their costs.** Check before choosing a library or a structure. |
-| `.kilo/plans/1790774477695-semiplane-architecture-overview.md` | Domain semantics, data model, protocol. A dated record. |
-| `.kilo/plans/1790778908232-responsive-ui-ux-design-spec.md` | Interface contract. A dated record. |
+| `.opencode/plans/1790774477695-semiplane-architecture-overview.md` | Domain semantics, data model, protocol. A dated record. |
+| `.opencode/plans/1790778908232-responsive-ui-ux-design-spec.md` | Interface contract. A dated record. |
 
 The design records are **immutable**. They contain open questions that have since been answered
 and sections describing behaviour the code does not have yet. When one is wrong, the correction
@@ -57,7 +57,7 @@ it for you) or run `. /etc/profile.d/go.sh` first.
 | Tool | Version | Notes |
 | --- | --- | --- |
 | Go | 1.27.1 | `/usr/local/go`, sourced by `/etc/profile.d/go.sh` |
-| gopls | v0.23.0 | `/root/go/bin/gopls`; Kilo discovers it as the Go LSP |
+| gopls | v0.23.0 | `/root/go/bin/gopls`; OpenCode discovers it as the Go LSP |
 | golangci-lint | v2.14.0 | `/root/go/bin/golangci-lint`; **v2 config schema** |
 | actionlint | v1.7.7 | lints `.github/workflows/` |
 | yq | v4.47.2 | reads `.github/labels.yml` |
@@ -196,7 +196,7 @@ make labels-check    # the repo's labels and .github/labels.yml agree
 ## Build phases
 
 Thirteen phases, each on its own branch. The plan is
-`.kilo/plans/1790796797509-phased-delivery-plan.md`.
+`.opencode/plans/1790796797509-phased-delivery-plan.md`.
 
 | # | Phase | Branch | Lands |
 |---|---|---|---|
@@ -638,8 +638,10 @@ deliberately omits.
 
 ## MCP servers
 
-Configured in `kilo.json`, and mirrored for OpenCode in `.opencode/opencode.jsonc`.
-Both point at the committed `.kilo/skills`, so the skills have one source of truth.
+Configured in `.opencode/opencode.jsonc`, which is the repo's only agent config.
+It points at the committed `.opencode/skills`, which is OpenCode's own project
+skill location, so a checkout resolves its own skills with no second agent's
+directory and no symlink.
 
 - **playwright** — 25 `browser_*` tools, Chromium, `--isolated`. Diagnostic
   use; anything that must persist belongs in a committed test.
@@ -647,7 +649,7 @@ Both point at the committed `.kilo/skills`, so the skills have one source of tru
   third-party API signatures from memory.
 
 `browser_evaluate` and `browser_run_code_unsafe` require approval. There is no
-Go-specific MCP: gopls already provides diagnostics, and Kilo consumes it
+Go-specific MCP: gopls already provides diagnostics, and OpenCode consumes it
 natively through its `lsp` tool.
 
 ## GitHub plumbing
@@ -665,7 +667,7 @@ that, the triage query stops meaning anything.
 
 The docs site is deployed from `main` by `.github/workflows/pages.yml`. Its
 workflow has **no `paths:` filter** on purpose: the site renders the design
-records from `.kilo/plans/` at build time, so a filter covering only `docs/**`
+records from `.opencode/plans/` at build time, so a filter covering only `docs/**`
 would silently stop deploying when a record changes. Do not add one.
 
 `main` is protected: no direct pushes, pull requests required, head branches

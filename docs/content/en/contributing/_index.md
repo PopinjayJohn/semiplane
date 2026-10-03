@@ -66,9 +66,9 @@ from the project.
 
 This repository is developed with AI agents and the `AGENTS.md` file is the
 operational contract they read: toolchain, the gate, the layout, and the
-conventions. There are three skills under `.kilo/skills/` carrying the detail
-`AGENTS.md` deliberately omits — the quality gate, Go conventions, and browser
-end-to-end work.
+conventions. There are three skills under `.opencode/skills/` carrying the
+detail `AGENTS.md` deliberately omits — the quality gate, Go conventions, and
+browser end-to-end work.
 
 The pull request template asks whether an agent produced a change and which
 instructions it followed. That is not ceremony: an agent-authored change that

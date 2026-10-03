@@ -10,7 +10,7 @@
 # Every string value is quoted. `name: type: bug` unquoted is not valid YAML
 # (a colon-space inside a plain scalar), and the manifest is read with yq.
 #
-# AXES (see .kilo/plans/1790788534875-github-repo-layout-plan.md §4.2)
+# AXES (see .opencode/plans/1790788534875-github-repo-layout-plan.md §4.2)
 #   type:    exactly one per issue; applied automatically by the issue forms
 #   area:    at most one; the product surface the reporter was touching
 #   status:  at most one; the lifecycle. Clear it when the issue closes

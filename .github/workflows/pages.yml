@@ -2,7 +2,7 @@ name: Deploy docs to Pages
 
 on:
   # Deliberately NO paths filter. The site renders the committed design records
-  # from .kilo/plans/ at build time, so a filter covering only docs/** would
+  # from .opencode/plans/ at build time, so a filter covering only docs/** would
   # silently skip the deploy when a design record changes -- and the site would
   # keep serving a stale copy of a document that already moved. A Hugo build over
   # this site is ~100ms; correctness is worth the seconds.

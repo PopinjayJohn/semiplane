@@ -5,8 +5,8 @@ description: Use when verifying that a semiplane web change actually works in a 
 
 # Browser Verification with Playwright MCP
 
-The `playwright` MCP server is configured in `kilo.json` and pinned to
-`@playwright/mcp` 0.0.83 with a pre-installed Chromium. It exposes 25
+The `playwright` MCP server is configured in `.opencode/opencode.jsonc` and
+pinned to `@playwright/mcp` 0.0.83 with a pre-installed Chromium. It exposes 25
 `browser_*` tools. Use it to confirm a change end to end instead of assuming
 the handler works.
 
@@ -57,11 +57,11 @@ Chromium will not launch as root without `--no-sandbox`. The error is
 `Running as root without --no-sandbox is not supported`, and it surfaces through
 the MCP as the unhelpful `Target page, context or browser has been closed`.
 
-That is why `kilo.json` passes `--no-sandbox`. It is a real security tradeoff:
-it is correct for a disposable root-owned dev container, and it should be
-**removed** for a rootless deployment or any host where browser isolation
-matters. System libraries are already present; `ldd` on the Chromium binary
-reports nothing missing.
+That is why `.opencode/opencode.jsonc` passes `--no-sandbox`. It is a real
+security tradeoff: it is correct for a disposable root-owned dev container, and
+it should be **removed** for a rootless deployment or any host where browser
+isolation matters. System libraries are already present; `ldd` on the Chromium
+binary reports nothing missing.
 
 Verify the browser works before debugging application code:
 

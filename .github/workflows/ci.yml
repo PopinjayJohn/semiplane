@@ -88,7 +88,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The site needs the committed design records under .kilo/plans/, which
+      # The site needs the committed design records under .opencode/plans/, which
       # the design-record shortcode reads at build time. A missing record has to
       # fail the build rather than render an empty page, so this job exists.
       - name: Install Hugo

@@ -1,17 +1,19 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
-  // Adoption of this repo's Kilo setup (kilo.json + .kilo/skills) for OpenCode.
+  // The repo's agent config. The skills and design records it points at are
+  // committed beside it under .opencode/, so a checkout is self-contained: no
+  // second agent's directory, and no symlink standing in for one.
   //
-  // - .kilo/skills are loaded from their committed location, so the records stay
-  //   the single source of truth for both agents.
-  // - kilo.json's `permission` map becomes an ordered `permissions` array: the
-  //   last matching rule wins, so specific allowances come first and the broad
-  //   fallbacks come last.
-  // - kilo.json's `mcp` block becomes `mcp.servers`. `enabled: true` is the
-  //   default here, and `enabled: false` is expressed as `disabled: true`.
+  // `.opencode/skills` is OpenCode's own project skill location, so the
+  // `skills` array below is redundant with discovery and is kept only as an
+  // explicit statement of what this repo ships.
+  //
+  // `permissions` is an ordered array rather than a map because the last
+  // matching rule wins: specific allowances come first and the broad fallbacks
+  // come last.
 
-  "skills": ["./.kilo/skills"],
+  "skills": ["./.opencode/skills"],
 
   "lsp": {
     "go": {
@@ -81,8 +83,8 @@
     { "action": "edit", "resource": "**/secrets/**", "effect": "deny" },
     { "action": "edit", "resource": "*", "effect": "allow" },
 
-    // Shell: the toolchain and the read-only Git verbs from kilo.json. The gate
-    // is `make check`, so every one of these must be runnable unattended.
+    // Shell: the toolchain and the read-only Git verbs. The gate is
+    // `make check`, so every one of these must be runnable unattended.
     { "action": "shell", "resource": "go version*", "effect": "allow" },
     { "action": "shell", "resource": "go env*", "effect": "allow" },
     { "action": "shell", "resource": "go build*", "effect": "allow" },
