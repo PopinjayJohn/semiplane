@@ -69,6 +69,20 @@
  * would be in the built file, and the tabletop would render unstyled. */
 @import "./play.css";
 
+/* `secret.css` last, after `play.css`, and last for the same reason `play.css`
+ * is: every rule in it overrides a rule an earlier sheet already set, at equal
+ * specificity. Specifically it overrides `shell.css`'s `.page-body` typography —
+ * `.page-body p` and `.page-body h1..h4` — because a `[!secret]` callout is a
+ * `div` holding `p`s and a heading, and a rule that lost would render the
+ * callout's title as body copy.
+ *
+ * **The import is the whole of the wiring and it is not checkable by the
+ * compiler**, which is why `internal/web/components/secret/css_test.go` carries
+ * the sentinel test with the two-armed disjunction `play`'s has. A sheet nobody
+ * imports is a product that renders unstyled while every §10.2 and §10.6 gate
+ * passes. */
+@import "./secret.css";
+
 /* templ renders server-side, so a class name lives in Go source, not in a
  * template file the scanner would find. Pointing the scanner at both roots is
  * what keeps a `data-testid`-adjacent utility from silently vanishing from the
