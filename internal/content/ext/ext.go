@@ -307,9 +307,15 @@ func (e extender) Extend(markdown goldmark.Markdown) {
 		parsers = append(parsers, atPriority(newParser(trigger, defs)))
 	}
 
+	transform, blockWriter := SecretBlockExtension()
+
 	markdown.Parser().AddOptions(parser.WithInlineParsers(parsers...))
+	markdown.Parser().AddOptions(parser.WithASTTransformers(
+		atPriority(transform),
+	))
 	markdown.Renderer().AddOptions(renderer.WithNodeRenderers(
 		atPriority(&nodeRenderer{writers: writers}),
+		atPriority(blockWriter),
 	))
 }
 

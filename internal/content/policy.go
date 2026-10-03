@@ -211,6 +211,40 @@ var (
 	// either silently change the other.
 	extensionNames = regexp.MustCompile(`^(wikilink|embed|statblock|dice)$`)
 
+	// divClasses is every `class` value allowed on a `div`, which is goldmark's
+	// footnote container and this package's `[!secret]` callout.
+	//
+	// # Two facts about bluemonday, and both of them are the whole reason this
+	// variable exists rather than two `AllowAttrs` calls
+	//
+	// **The pattern is matched against the attribute's whole value, not per
+	// token.** `sanitizeAttrs` does `ap.regexp.MatchString(attr.Val)` on the
+	// string as it stands, so a `class` of `secret secret--collapsed` has to be
+	// matched *as that string*. Every other `class` in this policy is a single
+	// token and every one of them is anchored at both ends, which hides the point
+	// -- an anchored alternation of single tokens silently drops every multi-token
+	// class in the pipeline. It does not error, and it does not strip the element;
+	// it produces a callout with no class, which renders unstyled.
+	//
+	// **First rule wins, so two rules for one attribute are not a union.** The
+	// `class` rules are per-element lists, `validAttr` returns on the first hit,
+	// and so whichever rule was declared first owned `div`'s class entirely.
+	// Declaring the callout's class as its own rule therefore did nothing at all,
+	// while reading in the source exactly like the feature working.
+	//
+	// So the set is enumerated here, whole, as one pattern. The three values are
+	// the three the renderer emits; nothing else is permitted, which is the point
+	// of an allowlist and the reason an author cannot mint
+	// `<span class="secret">` and pick up the callout's styling on a link.
+	divClasses = regexp.MustCompile(`^(footnotes|footnote-backref|` +
+		`secret|secret secret--collapsed|secret secret--revealed)$`)
+
+	// secretStates is the set of values `data-secret` may carry, and it is the same
+	// set as the state half of `secretClasses` for the same reason: the attribute is
+	// what a live layer keys on to tell a GM's callout from a player's, so a
+	// third value is a third answer to "who may see this".
+	secretStates = regexp.MustCompile(`^(collapsed|revealed)$`)
+
 	// footnoteClasses is the set of class values goldmark's footnote extension
 	// emits on its link, backlink and container elements.
 	footnoteClasses = regexp.MustCompile(`^(footnote-ref|footnote-backref|footnotes)$`)
@@ -411,14 +445,15 @@ func newPolicy() *bluemonday.Policy {
 // is no second copy of these rules anywhere.
 func applyAttributePolicy(policy *bluemonday.Policy) {
 	policy.AllowAttrs("class").Matching(extensionClasses).OnElements("a", "span")
-	policy.AllowAttrs("class").Matching(footnoteClasses).OnElements("a", "div")
+	policy.AllowAttrs("class").Matching(footnoteClasses).OnElements("a")
+	policy.AllowAttrs("class").Matching(divClasses).OnElements("div")
 	policy.AllowAttrs("class").Matching(languageClass).OnElements("code")
 
 	policy.AllowAttrs("role").Matching(footnoteRoles).Globally()
 
 	policy.AllowAttrs("align").Matching(bluemonday.CellAlign).OnElements("th", "td")
 
-	// The extensions' `data-` attributes, and only those four.
+	// The extensions' `data-` attributes, and only those five.
 	//
 	// `AllowDataAttributes()` is deliberately *not* called. It is one call, and it
 	// allows every `data-*` attribute on every element — a much wider door than it
@@ -428,6 +463,8 @@ func applyAttributePolicy(policy *bluemonday.Policy) {
 	// attributes the renderer actually writes makes adding a fifth a change to
 	// this file, in review, rather than a consequence of a library default.
 	policy.AllowAttrs("data-ext").Matching(extensionNames).OnElements("a", "span")
+	policy.AllowAttrs("data-ext").Matching(regexp.MustCompile(`^secret$`)).OnElements("div")
+	policy.AllowAttrs("data-secret").Matching(secretStates).OnElements("div")
 	policy.AllowAttrs("data-ref-index").Matching(digits).OnElements("a", "span")
 	policy.AllowAttrs("data-arg").OnElements("span")
 
