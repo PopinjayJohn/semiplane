@@ -428,3 +428,67 @@ func TestTheBlockIDWinsOverTheDerivedAnchor(t *testing.T) {
 			"would make the drift path unreachable")
 	}
 }
+
+// TestASourceWhoseLastLineHasNoNewlineIsScanned is a crash this file was missing,
+// and it is here because the panic it describes was live on the request path.
+//
+// `scanSecrets` computed the end of the final line as `len(source)` rather than
+// `len(source) - offset`, so for every line after the first in a file with no
+// trailing newline it sliced past the end of the string. `"Before.\nHello"` panicked
+// with a slice-bounds error; a single-line file survived, which is why no fixture
+// in this file found it.
+//
+// Four callers reach it, and the first two are on a live path: `SetMarker` (S6's
+// reveal write), `Reassociate` (S7's reconciliation) and `cutSpans` (S5's
+// redactor, which every non-GM page render now goes through). Whether a vault's
+// pages end with a newline is the author's editor's decision, not semiplane's, so
+// "well-formed authors do" is not an answer for a wiki that reads whatever is on
+// disk — and neither is Obsidian Sync, which rewrites files.
+//
+// The assertion is that no input panics, over the shapes that take the
+// unterminated branch, and that the answers are still right rather than merely
+// non-crashing: a callout on the final line with no newline after it is still a
+// callout, with the right offsets.
+func TestASourceWhoseLastLineHasNoNewlineIsScanned(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct {
+		source string
+		want   int
+	}{
+		"a single unterminated line":     {source: "Hello", want: 0},
+		"an unterminated line after one": {source: "Before.\nHello", want: 0},
+		"the same, CRLF throughout":      {source: "Before.\r\nHello", want: 0},
+		"a callout on the final line":    {source: "Before.\n\n> [!secret]-\n> Hello.", want: 1},
+		"a callout, final body unterminated": {
+			source: "Before.\n\n> [!secret]-\n> One.\n> Two.",
+			want:   1,
+		},
+		"an unterminated fence":          {source: "Before.\n```\ncode", want: 0},
+		"unterminated, blank final line": {source: "Before.\n> [!secret]-\n> Hello.\n", want: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			found := content.ScanSecrets(fixture.source)
+			if len(found) != fixture.want {
+				t.Errorf("ScanSecrets() found %d callout(s), want %d, for:\n%q",
+					len(found), fixture.want, fixture.source)
+			}
+		})
+	}
+
+	// And the write path, because a scanner that survives is not the same claim as
+	// a one-byte splice that survives: `SetMarker` re-scans rather than reusing the
+	// caller's offsets, so it walks the same loop on the same kind of source.
+	const source = "Before.\n\n> [!secret]-\n> Hello.\n\nAfter"
+
+	got, err := content.SetMarker(source, 0, content.SecretRevealed)
+	if err != nil {
+		t.Fatalf("SetMarker() error = %v, want nil", err)
+	}
+
+	if want := "Before.\n\n> [!secret]+\n> Hello.\n\nAfter"; got != want {
+		t.Errorf("SetMarker() = %q, want %q", got, want)
+	}
+}

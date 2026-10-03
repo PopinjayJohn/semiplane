@@ -170,7 +170,19 @@ func scanSecrets(source string) []Secret {
 	for offset < len(source) {
 		lineEnd := strings.IndexByte(source[offset:], '\n')
 		if lineEnd < 0 {
-			lineEnd = len(source)
+			// **The rest of the source, not the length of the source.** A file
+			// whose last line has no trailing newline takes this branch, and
+			// `len(source)` here made `offset+lineEnd` run past the end of the
+			// string for every line after the first — so `ScanSecrets` panicked
+			// with a slice-bounds error on `"Before.\nHello"`, and so did
+			// `SetMarker`, `Reassociate`, and S5's redactor, which is what found
+			// it. Only a file that is a single unterminated line survived, because
+			// there `offset` is zero.
+			//
+			// The body's own loop below already spells this the right way, which is
+			// the reason this was easy to miss: the two lines read as a pair, and
+			// one of the pair is wrong.
+			lineEnd = len(source) - offset
 		} else {
 			lineEnd += 1 // keep the newline
 		}
