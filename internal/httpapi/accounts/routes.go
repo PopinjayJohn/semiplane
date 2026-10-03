@@ -60,6 +60,24 @@ type Reader interface {
 	MembershipsForUser(ctx context.Context, userID int64) ([]domain.Membership, error)
 }
 
+// ThemeNotices is the narrow seam between the campaign overview and the theme
+// route's refusal memory.
+//
+// One method, returning a **view-model** type rather than the route's own, and
+// that is deliberate: the overview renders it, so what crosses is what is
+// rendered. A seam that returned `theme.Notice` would make `accounts` depend on
+// a type whose every field it would then have to know is safe to print -- which
+// is a promise about a field this package does not own.
+type ThemeNotices interface {
+	// ThemeNotice returns the refusal standing for one campaign, or false.
+	//
+	// **It is called per campaign, for a reader who may be any of them, so an
+	// implementation must not have side effects and must not gate.** The caller
+	// decides who may see it; a lookup that refused would put authorisation in a
+	// function that has no request to authorise.
+	ThemeNotice(campaignID int64) (components.CampaignNotice, bool)
+}
+
 // Router holds what the two routes need.
 //
 // A struct rather than package functions so the store is a field the composition
@@ -85,6 +103,18 @@ type Router struct {
 	// Logger receives the sign-in lines. Nil is allowed and discards them; a
 	// test should not have to construct a logger to serve a request.
 	Logger *slog.Logger
+	// Theme reports a campaign's standing theme refusal, for UI §4.12.3's GM
+	// notice. Nil means no campaign has one, which is the ordinary case and the
+	// one a test instance is always in.
+	//
+	// **A one-method interface, and the types do not have to match.** `theme`
+	// returns its own `theme.Notice`, and this needs a `components.CampaignNotice`;
+	// making them identical would mean `theme` imports `components` to build a
+	// view model it does not render, or `components` imports `theme` for two
+	// strings. Instead the composition root writes the adapter, which is where
+	// AGENTS.md says both types meeting belongs -- the same reason `kindRegistry`
+	// is in `cmd/server` and not beside either registry.
+	Theme ThemeNotices
 	// Secure is cfg.IsProduction() and decides the session cookie's Secure
 	// attribute. Passed in rather than read from config so this package has no
 	// config dependency and a test can exercise both values.
@@ -175,11 +205,27 @@ func (r *Router) campaignList(w http.ResponseWriter, req *http.Request) {
 
 	// Indexed rather than ranged: domain.Campaign is 128 bytes, and ranging by
 	// value copies it once per campaign to read two fields from it.
-	for i := range campaigns {
-		view.Campaigns = append(
-			view.Campaigns,
-			components.NewCampaignCard(campaigns[i], roles[campaigns[i].ID]),
-		)
+	for index := range campaigns {
+		campaign := &campaigns[index]
+		card := components.NewCampaignCard(*campaign, roles[campaign.ID])
+
+		// §4.12.3's GM notice, filled here and **only for a GM**. The card's
+		// template guards on the same condition, and both checks exist because
+		// this is the half a route gets wrong: a `Theme` wired and a card filled
+		// unconditionally puts a campaign's rejected brand in front of every
+		// player on the instance.
+		//
+		// The membership map is read rather than re-queried, because it was
+		// built one line above and the role is already in hand -- a second lookup
+		// per campaign to learn something already known is a second answer to
+		// the same question, and this is a gate.
+		if r.Theme != nil && roles[campaign.ID] == domain.RoleGM {
+			if notice, ok := r.Theme.ThemeNotice(campaign.ID); ok {
+				card.ThemeNotice = &notice
+			}
+		}
+
+		view.Campaigns = append(view.Campaigns, card)
 	}
 
 	r.render(req.Context(), w, http.StatusOK, components.CampaignListPage(view))

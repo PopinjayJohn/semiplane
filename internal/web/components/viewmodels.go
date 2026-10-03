@@ -280,7 +280,65 @@ type CampaignCard struct {
 	// because a reader with several campaigns on one instance has to tell a
 	// public one from a private one without opening both.
 	Visibility string
+	// ThemeNotice is the standing theme refusal for this campaign, or nil.
+	//
+	// UI §4.12.3's third bullet: a brand pair that fails its contrast floor must
+	// reach the GM as something they can act on, and the campaign overview is
+	// where they land. A `theme.brand_invalid` line in a log is not that — an
+	// operator reads logs, and the person who can fix the manifest is the GM.
+	//
+	// **GM-only, and the gate is here rather than in the route.** The notice
+	// names a token and the rule it broke; neither is secret, but §4.12.3 says
+	// "a GM notice" and a player seeing a campaign's rejected brand is a
+	// question this product should not raise. So the field is filled by the
+	// caller **only for a GM**, and `roleIsGM` is what decides — the same
+	// one-line gate the role label already needs, and putting it here means a
+	// route that forgets cannot leak it by omission.
+	ThemeNotice *CampaignNotice
 }
+
+// CampaignNotice is one thing wrong with a campaign that the GM can fix.
+//
+// Two fields and no third, and the shape is the theme package's decision
+// reaching this one unchanged: the token that was refused (or `fonts:`, or
+// empty for a whole-document refusal) and a fixed sentence naming the rule. Both
+// are safe to print, which is what keeps a notice on a page from becoming the
+// log leak S-12.3 forbids — a notice built from manifest bytes would be exactly
+// the `[!secret]`-in-a-log-line failure wearing a different hat.
+type CampaignNotice struct {
+	// Token is the custom property name, `fonts:`, or empty.
+	Token string
+	// Reason is the fixed sentence. Never a manifest byte.
+	Reason string
+}
+
+// Label is the notice's own short heading: "Theme".
+//
+// Not "Brand" and not "Warning". §1.2's label table gives the interface one word
+// for the campaign's appearance, and the thing being reported is a *refusal of a
+// theme file*, which the GM calls a theme.
+func (notice CampaignNotice) Label() string { return "Theme" }
+
+// Sentence is the notice as a reader reads it: the token, then the reason.
+//
+// The token leads because it is the actionable half — the GM edits
+// `theme.yaml` and needs to know which line — and it is rendered as code by the
+// template rather than interpolated into the sentence, so a token that somehow
+// carried markup is escaped rather than interpreted.
+func (notice CampaignNotice) Sentence() string {
+	if notice.Token == "" {
+		return notice.Reason
+	}
+
+	return notice.Token + ": " + notice.Reason
+}
+
+// roleIsGM reports whether this card's reader is the campaign's GM.
+//
+// Exported because the route fills `ThemeNotice` and the template guards on it,
+// and a predicate that is true in one place and re-derived in the other is the
+// shape of bug where a notice reaches a player. Both call this.
+func (card CampaignCard) roleIsGM() bool { return card.Role == roleLabel(domain.RoleGM) }
 
 // NewCampaignCard builds a card from the two domain rows that describe it.
 //

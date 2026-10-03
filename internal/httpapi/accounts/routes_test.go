@@ -164,8 +164,6 @@ func (f *fakeStore) MembershipsForUser(
 //
 // A second account arrives with the second-user test, and widening the
 // signature then is cheaper than a suppression nobody removes.
-//
-//nolint:unparam // Every caller signs in as the single account the fake holds.
 func signedInCookie(t *testing.T, st *fakeStore, userID int64) *http.Cookie {
 	t.Helper()
 

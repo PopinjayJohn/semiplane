@@ -570,23 +570,32 @@
 
 
 /* ==========================================================================
-   A NOTE THE INTEGRATOR OWNS
+   WHY THIS FILE IS IN THE BUILD, AND WHY THAT IS NOT OBVIOUS
    --------------------------------------------------------------------------
-   **This file is not in the build until `app.css` imports it.** `internal/web`
-   embeds `static/dist/`, and `make css` builds that from `app.css`'s import list
-   alone, so a sheet nobody imports is a sheet that does not exist as far as the
-   binary is concerned — and no §10.1 or §10.2 audit can see the difference,
-   because the *markup* would be correct and only the *bytes* would be missing.
-   That is the same failure `TestTheBuiltStylesheetCarriesTheTokensAndTheGrid`
-   exists for.
+   `internal/web` embeds `static/dist/`, and `make css` builds that from
+   `app.css`'s import list alone. So a sheet nobody imports is a sheet that does
+   not exist as far as the binary is concerned, and **no §10.1 or §10.2 audit
+   can see the difference** — the markup would be correct and only the bytes
+   would be missing. That is the failure
+   `TestTheBuiltStylesheetCarriesTheTokensAndTheGrid` exists for, and its
+   `Phase9Sheets` subtest names `.live-dice-breakdown` as this sheet's sentinel:
+   a declaration nothing else declares, so a missing import is red rather than
+   silent.
 
-   The required line, after the `tv.css` import:
+   This sheet therefore arrived with a note saying it was *not* imported, and
+   that note is now gone because the import landed. It is recorded here rather
+   than simply deleted, because the next sheet somebody writes will arrive the
+   same way and the sequence is the thing worth knowing:
 
-       @import "./live.css";
+     1. the work item writes the sheet and says so in its own header;
+     2. the integrator adds the `@import` in `app.css`, which is the only place
+        the stylesheet is assembled;
+     3. the sheet's note is removed, because a note that outlives the fact it
+        describes is a comment that is now false.
 
-   And `internal/web/components/live` should be named in an `@source` directive if
-   any Tailwind utility is ever wanted from this package's templates; every rule in
-   this sheet spells its own selectors, so nothing depends on that glob today.
+   No `@source` directive is needed for this package: every rule here spells its
+   own selectors, and `app.css`'s `../../components/**/*.templ` already scans
+   `components/live/` for any Tailwind utility its templates might use.
    ========================================================================== */
 
 /* ==========================================================================
@@ -637,7 +646,7 @@
 /* ==========================================================================
    A NOTE THE INTEGRATOR OWNS
    --------------------------------------------------------------------------
-   **This file is not in the build until `app.css` imports it.** `internal/web`
+   **This file IS in the build: `app.css` imports it after `tv.css`.** `internal/web`
    embeds `static/dist/`, and `make css` builds that from `app.css`'s import list
    alone, so a sheet nobody imports is a sheet that does not exist as far as the
    binary is concerned — and no §10.1 or §10.2 audit can see the difference,

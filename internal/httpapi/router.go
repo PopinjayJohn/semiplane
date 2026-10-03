@@ -15,6 +15,7 @@ import (
 	playroutes "github.com/semiplane/semiplane/internal/httpapi/play"
 	pluginroutes "github.com/semiplane/semiplane/internal/httpapi/plugins"
 	searchroutes "github.com/semiplane/semiplane/internal/httpapi/search"
+	themeroutes "github.com/semiplane/semiplane/internal/httpapi/theme"
 	wikiroutes "github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/web"
@@ -111,6 +112,7 @@ func NewRouter(
 	eventsRoute *eventroutes.Handler,
 	playRoute *playroutes.Handler,
 	pluginRoute *pluginroutes.Handler,
+	themeRoute *themeroutes.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
@@ -151,7 +153,7 @@ func NewRouter(
 	mountCampaignRoutes(
 		campaignMux,
 		wikiRoute, assetRoute, searchRoute, editRoute, eventsRoute, playRoute,
-		pluginRoute,
+		pluginRoute, themeRoute,
 	)
 
 	if backing != nil {
@@ -245,6 +247,7 @@ func mountCampaignRoutes(
 	eventsRoute *eventroutes.Handler,
 	playRoute *playroutes.Handler,
 	pluginRoute *pluginroutes.Handler,
+	themeRoute *themeroutes.Handler,
 ) {
 	if wikiRoute != nil {
 		wikiroutes.Mount(mux, wikiRoute)
@@ -272,5 +275,24 @@ func mountCampaignRoutes(
 
 	if pluginRoute != nil {
 		pluginroutes.Mount(mux, pluginRoute)
+	}
+
+	// Last, and the order is documentation rather than behaviour — `net/http`'s
+	// mux resolves overlapping patterns by specificity, so moving this line
+	// cannot change which handler answers a path. It is last because it is the
+	// only campaign route that serves **no HTML a reader navigates to**: it is a
+	// stylesheet the shell links, so a reader meets it through `<link>` rather
+	// than through a URL, and putting it after the pages a reader reaches reads
+	// the way a reader meets the surfaces.
+	//
+	// `theme.Mount` puts `RequireRead` on it itself. That matters more here than
+	// on any other route in this list for a reason specific to a stylesheet: a
+	// reader who cannot read the campaign gets a 404 from a `<link>`, which the
+	// browser reports as nothing at all — no broken-image icon, no error in the
+	// page, and the campaign silently rendering in the core theme. So the gate
+	// has to be here rather than in the handler, and the handler's own refusals
+	// are for a *direct* request, where they can be words.
+	if themeRoute != nil {
+		themeroutes.Mount(mux, themeRoute)
 	}
 }
