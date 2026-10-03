@@ -588,15 +588,8 @@ func readSecretReveal(
 ) (domain.SecretReveal, bool, error) {
 	what := "read secret reveal at " + path
 
-	var reveal domain.SecretReveal
-
-	err := tx.QueryRowContext(ctx, selectAnySecretRevealForPath, campaignID, path).Scan(
-		&reveal.CampaignID,
-		&reveal.Path,
-		&reveal.Anchor,
-		&reveal.RevealedBy,
-		&reveal.RevealedAt,
-		&reveal.RevertedCount,
+	reveal, err := scanSecretRevealFields(
+		tx.QueryRowContext(ctx, selectAnySecretRevealForPath, campaignID, path),
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
