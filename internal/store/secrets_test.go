@@ -36,7 +36,15 @@ func TestRevealSecretWritesTheLedgerRow(t *testing.T) {
 	user := seedUser(t, db, "gm-ledger")
 	seedRevealer(t, db, campaign.ID, user.ID)
 
-	reveal, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID)
+	reveal, err := db.RevealSecret(
+		t.Context(),
+		campaign.ID,
+		"lore/traitor",
+		"traitor",
+		user.ID,
+		0,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -77,12 +85,28 @@ func TestRevealSecretIsIdempotentOnThePrimaryKey(t *testing.T) {
 	user := seedUser(t, db, "gm-idempotent")
 	seedRevealer(t, db, campaign.ID, user.ID)
 
-	first, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID)
+	first, err := db.RevealSecret(
+		t.Context(),
+		campaign.ID,
+		"lore/traitor",
+		"traitor",
+		user.ID,
+		0,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("first RevealSecret() error = %v, want nil", err)
 	}
 
-	second, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID)
+	second, err := db.RevealSecret(
+		t.Context(),
+		campaign.ID,
+		"lore/traitor",
+		"traitor",
+		user.ID,
+		0,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("second RevealSecret() error = %v, want nil; a re-reveal is not an error", err)
 	}
@@ -133,6 +157,8 @@ func TestRevealSecretWritesTheAuditRow(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -171,7 +197,7 @@ func TestRevealSecretRefusesANonMember(t *testing.T) {
 		t.Fatalf("DeleteMembership() error = %v, want nil", err)
 	}
 
-	_, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID)
+	_, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID, 0, true)
 	if !errors.Is(err, store.ErrNotGM) {
 		t.Errorf("RevealSecret() by a non-member error = %v, want ErrNotGM", err)
 	}
@@ -197,7 +223,7 @@ func TestRevealSecretRefusesAPlayer(t *testing.T) {
 	user := seedUser(t, db, "player-reveal")
 	seedMembership(t, db, campaign.ID, user.ID, domain.RolePlayer)
 
-	_, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID)
+	_, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID, 0, true)
 	if !errors.Is(err, store.ErrNotGM) {
 		t.Errorf("RevealSecret() by a player error = %v, want ErrNotGM", err)
 	}
@@ -213,7 +239,7 @@ func TestRevealSecretRefusesAnEmptyAnchor(t *testing.T) {
 	user := seedUser(t, db, "gm-emptyanchor")
 	seedRevealer(t, db, campaign.ID, user.ID)
 
-	_, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "", user.ID)
+	_, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "", user.ID, 0, true)
 	if !errors.Is(err, store.ErrInvalidSecretAnchor) {
 		t.Errorf("RevealSecret() with empty anchor error = %v, want ErrInvalidSecretAnchor", err)
 	}
@@ -234,6 +260,8 @@ func TestUnrevealSecretRemovesTheLedgerRowAndWritesTheAuditRow(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -310,6 +338,8 @@ func TestMarkSecretRevertedIncrementsTheCounter(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -350,6 +380,8 @@ func TestMarkSecretRevertedSaturates(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -409,6 +441,8 @@ func TestRenameSecretRevealsReKeysTheRow(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -483,6 +517,8 @@ func TestRenameSecretRevealsANoOpIsANoOp(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -520,6 +556,8 @@ func TestRenameSecretRevealsRefusesADestinationConflict(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() at source error = %v, want nil", err)
 	}
@@ -531,6 +569,8 @@ func TestRenameSecretRevealsRefusesADestinationConflict(t *testing.T) {
 		"lore/aldric",
 		"aldric",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() at destination error = %v, want nil", err)
 	}
@@ -574,6 +614,8 @@ func TestRevealSecretConcurrently(t *testing.T) {
 				"lore/traitor",
 				"traitor",
 				user.ID,
+				0,
+				true,
 			)
 			if err != nil {
 				failures.Add(1)
@@ -642,6 +684,8 @@ func TestRevealSecretWritesNoSecretContent(t *testing.T) {
 		"lore/traitor",
 		"traitor",
 		user.ID,
+		0,
+		true,
 	); err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}
@@ -693,6 +737,8 @@ func TestSecretsRevealedForPageAndCampaignAreConsistent(t *testing.T) {
 			path,
 			anchors[i],
 			user.ID,
+			0,
+			true,
 		); err != nil {
 			t.Fatalf("RevealSecret(%q) error = %v, want nil", path, err)
 		}
@@ -736,7 +782,15 @@ func TestSecretRevealRoundTripsTheStoredTime(t *testing.T) {
 	user := seedUser(t, db, "gm-roundtrip")
 	seedRevealer(t, db, campaign.ID, user.ID)
 
-	revealed, err := db.RevealSecret(t.Context(), campaign.ID, "lore/traitor", "traitor", user.ID)
+	revealed, err := db.RevealSecret(
+		t.Context(),
+		campaign.ID,
+		"lore/traitor",
+		"traitor",
+		user.ID,
+		0,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("RevealSecret() error = %v, want nil", err)
 	}

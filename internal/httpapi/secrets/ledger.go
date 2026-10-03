@@ -48,6 +48,8 @@ type Ledger interface {
 		campaignID int64,
 		path, anchor string,
 		userID int64,
+		ordinal int,
+		ordinalKnown bool,
 	) (domain.SecretReveal, error)
 
 	// UnrevealSecret removes the ledger row for (campaignID, path, anchor) and

@@ -17,7 +17,7 @@ const (
 	// secretRevealColumns is the row as the read side wants it. The same list
 	// for every statement here, because every one of them reads the whole row:
 	// a ledger entry is six columns and no query wants a subset of them.
-	secretRevealColumns = "campaign_id, path, anchor, revealed_by, revealed_at, reverted_count"
+	secretRevealColumns = "campaign_id, path, anchor, revealed_by, revealed_at, reverted_count, ordinal"
 
 	// The insert is idempotent on the primary key, and that is the whole of the
 	// concurrency strategy. Two concurrent reveals of one anchor are a real
@@ -27,9 +27,20 @@ const (
 	// caller who did nothing wrong. The caller learns whether it was the
 	// writer from RowsAffects and reads the row back either way, so both
 	// racers observe the same ledger entry.
+	//
+	// `ordinal` is written on insert and **never updated**, which is the whole
+	// contract of the column (migration 0012): it records where the secret sat when
+	// the disclosure was made, and §5.6.3's repair reads it to re-associate a row
+	// whose derived anchor has since moved. It is not corrected when the callout is
+	// edited or reordered, because correcting it would mean trusting a position that
+	// only the repair pass is entitled to reason about -- and a repair that trusted
+	// its own output would never detect drift.
+	//
+	// A conflict leaves the existing row untouched, ordinal included, so a
+	// re-reveal does not move the recorded position.
 	insertSecretReveal = `INSERT INTO secrets_revealed
-		(campaign_id, path, anchor, revealed_by, revealed_at)
-		VALUES (?, ?, ?, ?, ?)
+		(campaign_id, path, anchor, revealed_by, revealed_at, ordinal)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (campaign_id, path, anchor) DO NOTHING`
 
 	deleteSecretReveal = `DELETE FROM secrets_revealed
@@ -146,6 +157,8 @@ func (s *Store) RevealSecret(
 	campaignID int64,
 	path, anchor string,
 	userID int64,
+	ordinal int,
+	ordinalKnown bool,
 ) (domain.SecretReveal, error) {
 	if path == "" {
 		return domain.SecretReveal{}, fmt.Errorf("%w: reveal secret", ErrInvalidPagePath)
@@ -180,8 +193,17 @@ func (s *Store) RevealSecret(
 
 		revealedAt := storedTime(nowFunc())
 
+		// `nil` rather than 0 for "not recorded". The column is nullable and the
+		// distinction is load-bearing (migration 0012), so it has to survive the
+		// driver rather than being reconstructed from a zero: `0` is a position.
+		var ordinalArg any
+
+		if ordinalKnown {
+			ordinalArg = ordinal
+		}
+
 		result, err := tx.ExecContext(ctx, insertSecretReveal,
-			campaignID, path, anchor, userID, unixSeconds(revealedAt),
+			campaignID, path, anchor, userID, unixSeconds(revealedAt), ordinalArg,
 		)
 		if err != nil {
 			return translateWrite(err, what)
@@ -625,6 +647,15 @@ func scanSecretRevealFields(row rowScanner) (domain.SecretReveal, error) {
 		revealedAt int64
 	)
 
+	// `ordinal` is scanned through a `sql.NullInt64` and not into the struct's own
+	// field, because **NULL and 0 are different facts**: NULL means the row was
+	// written before migration 0012 or its position was never recorded, and 0 means
+	// the secret was the first on its page. Scanning NULL into an int would land on
+	// 0 and silently assert the second about a row that only knows the first -- which
+	// is how §5.6.3's repair re-points a GM's disclosure onto whichever callout now
+	// holds position 0.
+	var ordinal sql.NullInt64
+
 	if err := row.Scan(
 		&reveal.CampaignID,
 		&reveal.Path,
@@ -632,11 +663,13 @@ func scanSecretRevealFields(row rowScanner) (domain.SecretReveal, error) {
 		&reveal.RevealedBy,
 		&revealedAt,
 		&reveal.RevertedCount,
+		&ordinal,
 	); err != nil {
 		return domain.SecretReveal{}, fmt.Errorf("scan secret reveal row: %w", err)
 	}
 
 	reveal.RevealedAt = unixTime(revealedAt)
+	reveal.Ordinal, reveal.OrdinalKnown = int(ordinal.Int64), ordinal.Valid
 
 	return reveal, nil
 }

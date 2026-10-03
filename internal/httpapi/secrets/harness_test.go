@@ -313,7 +313,7 @@ type refusingLedger struct {
 }
 
 func (l refusingLedger) RevealSecret(
-	_ context.Context, _ int64, _, _ string, _ int64,
+	_ context.Context, _ int64, _, _ string, _ int64, _ int, _ bool,
 ) (domain.SecretReveal, error) {
 	return domain.SecretReveal{}, l.cause
 }

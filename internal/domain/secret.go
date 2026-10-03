@@ -41,6 +41,25 @@ type SecretReveal struct {
 	// computes one or the other. Storing the block id without its `^` keeps
 	// the value the id rather than the Obsidian syntax that marks it.
 	Anchor string
+	// Ordinal is the callout's position among the secrets on the page, as last
+	// observed, and it is what §5.6.3's repair re-associates by.
+	//
+	// **Zero is not "unknown".** A `NULL` in the column becomes `OrdinalKnown:
+	// false` with `Ordinal: 0`, and the two are different facts: 0 means the secret
+	// was the first on its page, and not-known means the row predates migration 0012
+	// or the position was never recorded. Collapsing them would let the repair pass
+	// re-point a historical row onto whatever callout now holds position 0 — which
+	// is one GM's disclosure moving onto a different secret.
+	//
+	// A derived anchor cannot give this back: it is a truncated sha256 over
+	// (campaign, path, ordinal, first line), so the ordinal is inside the hash and
+	// there is no inverse. Hence the column, and hence the flag.
+	Ordinal int
+
+	// OrdinalKnown reports whether `Ordinal` was recorded. Not a sentinel, because
+	// the row crosses a SQL boundary where NULL is not a Go zero value.
+	OrdinalKnown bool
+
 	// RevealedBy is the account that performed the reveal. NOT NULL and
 	// deliberately not a foreign key to `users`, for the reason `audit_log
 	// .actor_id` is not (migration 0009): the row must still name the account

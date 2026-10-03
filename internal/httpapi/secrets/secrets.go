@@ -382,6 +382,7 @@ func (h *Handler) reveal(
 		access.Campaign.ID,
 		pagePath,
 		found.anchor,
+		found.ordinal,
 		wanted.Revealed,
 	); err != nil {
 		h.log(ctx, slog.LevelError, "secrets.ledger_failed",
@@ -420,11 +421,18 @@ func (h *Handler) record(
 	ctx context.Context,
 	campaignID int64,
 	pagePath, anchor string,
+	ordinal int,
 	revealed bool,
 ) error {
 	if revealed {
+		// **The ordinal goes with the row**, always known, because this route
+		// resolved the callout against the page in this request and so knows its
+		// position without approximation. Migration 0012's nullable column exists for
+		// rows written by callers that cannot know; this is not one of them, and
+		// writing `NULL` here would throw away the one repair hint §5.6.3 has.
 		if _, err := h.Ledger.RevealSecret(
 			ctx, campaignID, pagePath, anchor, campaigns.Requestor(ctx).UserID,
+			ordinal, true,
 		); err != nil {
 			return fmt.Errorf("record the reveal: %w", err)
 		}
