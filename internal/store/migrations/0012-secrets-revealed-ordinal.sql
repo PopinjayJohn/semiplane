@@ -1,0 +1,63 @@
+-- Migration 0012: the ledger records where a secret sat.
+--
+-- # Why this column exists, which is the whole migration
+--
+-- §5.6.3 gives a secret two possible names. An Obsidian block id is stable across
+-- any edit. The derived anchor —
+-- `sha256(campaign_id, path, ordinal, first-line-of-body)[:12]` — is stable across
+-- body edits *below* the first line and across nothing else, and §5.6.3 says so and
+-- calls the fallback "best-effort and self-healing".
+--
+-- "Self-healing" is the part that needed a column. §5.6.3's sentence for it is:
+--
+--   when the watcher finds a ledger row whose anchor no longer resolves, it
+--   re-associates by `ordinal`, carries the revealed state across, and logs
+--   `secret_anchor_drift`.
+--
+-- **A truncated sha256 cannot give back the ordinal.** Truncation is what makes a
+-- 12-character hash a plausible key, and it is also what makes the ordinal
+-- unrecoverable — there is no inverse to run. So without this column the repair path
+-- has nothing to re-associate *by*, and the honest outcome for every drifted row is
+-- `OutcomeUnresolved`.
+--
+-- Which is survivable, and worth being precise about why. The exact-match path
+-- covers every edit below a secret's first line, and that is the overwhelmingly
+-- common edit — a GM adds a sentence to the body of a secret and the anchor holds.
+-- What the column buys is the edit the feature was built to survive: a GM
+-- **rewrites the first line** of a revealed secret, and without this column that
+-- reveal becomes a row naming something that is no longer there, which §5.6.3's next
+-- sync reversion will not re-apply. The reveal is not lost from the ledger; it is
+-- lost from the *file*, quietly, by a client the GM has never heard of.
+--
+-- # Nullable, and deliberately never backfilled
+--
+-- `INTEGER` with no `NOT NULL` and no `DEFAULT`. A `NULL` here means **"this row
+-- predates the column, or its position was never recorded"**, and `NULL` is the
+-- honest value for that: backfilling `0` would assert that every historical secret
+-- sat at the top of its page, which is false for all but the first, and would make
+-- `content.Reassociate` re-point those rows onto whatever callout now holds
+-- position 0. A GM's disclosure would move to a different secret.
+--
+-- So a `NULL` row is reported as drift and never repaired by position, which is what
+-- `content.LedgerRow.OrdinalKnown` exists to express. The cost is that the repair
+-- path does not help rows written before this migration, and the benefit is that it
+-- never helps them *wrongly* — and the second is the property S-5.10 rests on.
+--
+-- # Not in the primary key
+--
+-- The key stays `(campaign_id, path, anchor)`. The ordinal is a *repair hint*, not
+-- an identity: adding it to the key would make the same reveal insertable twice
+-- under two positions for one secret, and a ledger that can hold two rows for one
+-- disclosure is a ledger whose row count means nothing.
+
+ALTER TABLE secrets_revealed ADD COLUMN ordinal INTEGER;
+
+-- The index that makes the repair query cheap.
+--
+-- §5.6.3's repair reads every row for one page, and without this the lookup is a
+-- full scan of the ledger on every changed page — a table that grows with every
+-- reveal a campaign has ever had. Partial, because the repair never needs a row
+-- whose ordinal was never recorded: those are reported, not repaired.
+CREATE INDEX secrets_revealed_by_page
+    ON secrets_revealed (campaign_id, path, ordinal)
+    WHERE ordinal IS NOT NULL;
