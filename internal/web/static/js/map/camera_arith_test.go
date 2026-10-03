@@ -1,4 +1,4 @@
-// Package map_test holds the gates for the map client's shipped JavaScript.
+// Package mapjs_test holds the gates for the map client's shipped JavaScript.
 //
 // There is no Node in this repository's toolchain — deliberately, per the note in
 // `Makefile`'s `a11y` target: CI must not come to depend on a browser toolchain.
@@ -35,7 +35,7 @@
 // prove what a WebGL context did with it. UI §3.7's §10.3–§10.7 sweeps stay
 // agent-assisted for that reason, and every finding from them becomes a committed
 // test here rather than a comment.
-package map_test
+package mapjs_test
 
 import (
 	"errors"

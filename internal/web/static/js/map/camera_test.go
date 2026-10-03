@@ -22,7 +22,7 @@
 //     `base * --type-scale` screen pixels at every scale. Both are proved by
 //     projecting the length the camera asks for and measuring what lands.
 
-package map_test
+package mapjs_test
 
 import (
 	"fmt"

@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -45,6 +46,8 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/semiplane/semiplane/internal/web/components/play"
+	"github.com/semiplane/semiplane/internal/web/static/js/live"
+	mapjs "github.com/semiplane/semiplane/internal/web/static/js/map"
 	"github.com/semiplane/semiplane/internal/web/static/js/tokens"
 )
 
@@ -364,10 +367,20 @@ func TestTheClientNamesNoTierSoTheDocumentOwnsTheRule(t *testing.T) {
 
 // TestThePageCarriesItsClientScriptsInOrder is the delivery claim.
 //
-// One `<script>` element per module, in the order `tokens.Order` gives, because the
-// order is a dependency: `tokens.js` calls `spFocusStep`, which `step.js` defines,
-// and two classic scripts written the other way round throw `ReferenceError` on the
-// first keypress.
+// One `<script>` element per module, in the order each tree's `Order()` gives,
+// because the order is a dependency: `tokens.js` calls `spFocusStep`, which
+// `step.js` defines, and two classic scripts written the other way round throw
+// `ReferenceError` on the first keypress. The same holds for `live/` and `map/`,
+// where `chrome.js` imports `gap.js` and `table.js` imports the other three.
+//
+// **The count is now every tree, not just `tokens`.** This test used to assert
+// three elements for three modules, which was true because there was one module
+// tree — and it stayed true, and green, while `client.go` served `tokens` and
+// nothing else. The live chrome and the map canvas were embedded, audited and
+// never referenced. So the number was an artefact of the arrangement rather than
+// the claim, and a test that encodes an artefact is a test that cannot notice the
+// thing changing. `internal/web/e2e` now asserts the same claim over the served
+// document, where a tree that nothing references is visible.
 func TestThePageCarriesItsClientScriptsInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -375,16 +388,65 @@ func TestThePageCarriesItsClientScriptsInOrder(t *testing.T) {
 
 	parsed := render(t, play.ClientScripts())
 
-	if got := len(scriptsOf(t, parsed)); got != len(tokens.Order()) {
-		t.Errorf("ClientScripts() renders %d script element(s) for %d modules; one "+
-			"per module is the whole arrangement, and a module rendered as two or "+
-			"not at all is either half a script or a reference to something that "+
-			"was never sent", got, len(tokens.Order()))
+	trees := []struct {
+		name    string
+		modules int
+	}{
+		{"tokens", len(tokens.Order())},
+		{"live", len(live.Order())},
+		{"map", len(mapjs.Order())},
+	}
+
+	total := 0
+	for _, tree := range trees {
+		total += tree.modules
+	}
+
+	if got := len(scriptsOf(t, parsed)); got != total {
+		names := make([]string, 0, len(trees))
+		for _, tree := range trees {
+			names = append(names, tree.name+"/"+strconv.Itoa(tree.modules))
+		}
+
+		t.Errorf("ClientScripts() renders %d script element(s) for %d modules (%v); "+
+			"one per module is the whole arrangement, and a module rendered as two "+
+			"or not at all is either half a script or a reference to something that "+
+			"was never sent", got, total, names)
 	}
 
 	for _, name := range tokens.Order() {
 		if !strings.Contains(rendered, tokens.Source(name)) {
-			t.Errorf("ClientScripts() omits %s", name)
+			t.Errorf("ClientScripts() omits the inline module %s", name)
+		}
+	}
+
+	// The two ES-module trees are referenced rather than inlined, and the
+	// difference is not a preference: `import` and `export` are a syntax error in
+	// a classic inline script, so inlining `chrome.js` produces a script element
+	// the browser refuses to parse -- a page that looks fine and does nothing.
+	for _, tree := range []struct {
+		kind string
+		href func(string) string
+		mod  []string
+	}{
+		{"live", live.Href, live.Order()},
+		{"map", mapjs.Href, mapjs.Order()},
+	} {
+		for _, name := range tree.mod {
+			href := tree.href(name)
+
+			if !strings.Contains(rendered, href) {
+				t.Errorf("ClientScripts() omits the %s module %s. A module that "+
+					"is embedded, audited and never referenced is a feature that "+
+					"does not work, and nothing else in the tree notices", tree.kind, name)
+			}
+
+			if !strings.Contains(rendered, `type="module"`) {
+				t.Errorf("ClientScripts() emits the %s module without "+
+					"type=\"module\". An ES module written into a classic script is "+
+					"a parse error, so the script element is ignored and the "+
+					"behaviour is absent", tree.kind)
+			}
 		}
 	}
 

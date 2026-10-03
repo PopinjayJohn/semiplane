@@ -295,9 +295,10 @@ func (h *Handler) documentView(
 			// Search — at 320px the banner is 3.5rem tall and one control wide.
 			Theme: chrome.ThemeAuto,
 		},
-		Nav:    h.navigation(ctx, access),
-		Footer: h.footer(access),
-		Scene:  webplay.SceneView{},
+		Campaign: campaign,
+		Nav:      h.navigation(ctx, access),
+		Footer:   h.footer(access),
+		Scene:    webplay.SceneView{},
 		Actions: webplay.ActionBarView{
 			Roll: h.rollView(ctx, access.Campaign.ID),
 		},

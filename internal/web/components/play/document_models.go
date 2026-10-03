@@ -143,6 +143,16 @@ type DocumentView struct {
 	// never renders a "Primary" navigation landmark.
 	Footer chrome.FooterView
 
+	// Campaign is the campaign this document is about, and it exists here for the
+	// brand sheet's href alone — §4.12.4's "per-campaign, not per-user", which is
+	// what keeps the document free of `Vary: Cookie` under §3.7.
+	//
+	// A field rather than a derived string because the href is a **URL**, and a
+	// URL assembled from a slug held in two places is a second place to get the
+	// escaping wrong. `chrome.CampaignRef.ThemeStylesheet()` is the one function
+	// that knows how to build it.
+	Campaign chrome.CampaignRef
+
 	// Heading is the document's `<h1>`, and it is the campaign's name.
 	Heading string
 
