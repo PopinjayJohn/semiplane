@@ -60,6 +60,15 @@
 @import "./theme.css";
 @import "./live.css";
 
+/* `play.css` last, and last for the same reason `tv.css` is: every rule in it
+ * overrides one an earlier sheet set, at equal specificity. It pins the compact
+ * action bar to the physical bottom edge, anchors the rail's sheet above that bar
+ * by reading `--action-bar-h`, and switches both to a side rail and a floating
+ * control at `[data-ui="tv"]`. Imported before `shell.css` it would lose all
+ * three, and nothing would fail -- the sheet would be in the build, its sentinel
+ * would be in the built file, and the tabletop would render unstyled. */
+@import "./play.css";
+
 /* templ renders server-side, so a class name lives in Go source, not in a
  * template file the scanner would find. Pointing the scanner at both roots is
  * what keeps a `data-testid`-adjacent utility from silently vanishing from the
