@@ -50,6 +50,7 @@ import (
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
 	"github.com/semiplane/semiplane/internal/web/components/edit"
+	"github.com/semiplane/semiplane/internal/web/components/live"
 )
 
 // The intervals, and both are constants rather than configuration.
@@ -110,12 +111,52 @@ const (
 	// somewhere other than where the editor put it, and would destroy any state the
 	// client had attached to that element.
 	patchModeInner = "inner"
-	// noticeSelector is the editor's notice container, and the only element any
-	// patch may name. It is the container `edit.EditorRail` renders, and the test
-	// that holds the focus rule asserts that this id is in the editor document, that
-	// the element is not focusable, and that it holds nothing focusable.
+	// noticeSelector is the editor's notice container, and the only element the
+	// editor's patch may name. It is the container `edit.EditorRail` renders, and
+	// the test that holds the focus rule asserts that this id is in the editor
+	// document, that the element is not focusable, and that it holds nothing
+	// focusable.
 	noticeSelector = "#editor-change-notice"
 )
+
+// dataPrefix is the event-stream field name Datastar reads its attributes from,
+// and **the correction this work item made to phase 7's frames**.
+//
+// ## Measured, not assumed
+//
+// Phase 7 wrote `selector …`, `mode …` and `elements …` as bare field lines, with
+// no `data:` prefix, and its own test parsed the frame with a reader that accepted
+// bare lines — so the test asserted the encoder against itself and passed while
+// the product received nothing. The event-stream grammar ends a field at the first
+// colon and treats a line without one as a field name with an empty value, so a
+// bare `selector #x` line is not a field a client can read at all. Datastar's own
+// parser is narrower still: it switches on the field name and handles `data`,
+// `event`, `id` and `retry`, ignoring every other name without complaint.
+//
+// Two frames were pushed through a real Chromium against
+// `internal/web/static/vendor/star.js` at the pinned version, the only difference
+// being the prefix, each at `mode: inner` and again at `mode: append` with three
+// `elements` lines:
+//
+//   - `data: selector #target`, `data: mode inner`, `data: elements <p>…</p>`
+//     → the target's contents became the fragment, and the three-line append landed
+//     as three siblings;
+//   - `selector #target`, `mode inner`, `elements <p>…</p>`
+//     → the target was **byte-identical afterwards**, and the console reported
+//     nothing.
+//
+// The silent half is why this needed a browser. A handler that throws on a bad
+// frame is a frame a reader sees missing and a GM reports as a bug; a handler that
+// writes a frame nothing reads is a feature that never arrives, and the only
+// symptom is a page that works. `TestTheFrameIsWrittenTheWayTheVendoredModuleReadsIt`
+// is what keeps it fixed, by asserting the exact bytes rather than re-parsing them
+// with a reader this repository also wrote.
+//
+// `event:` and `id:` are **not** prefixed, and that is not an oversight: they are
+// standard event-stream fields with standard meanings, Datastar's parser handles
+// both by name, and the event name is what selects the watcher. Prefixing them
+// would put Datastar's attributes where the grammar's own fields belong.
+const dataPrefix = "data: "
 
 // Handler serves the event stream.
 //
@@ -132,34 +173,63 @@ type Handler struct {
 	// Logger receives this route's lines. Nil is allowed and discards them, so a
 	// test does not have to construct a logger to open a stream.
 	Logger *slog.Logger
+
+	// Chrome renders the sidebar fragments a `Kind` change patches in, or nil for a
+	// stream that carries only the editor's notice.
+	//
+	// **A function and not a field**, and that is the load-bearing shape: what a
+	// sidebar change renders is a function of the campaign's live state *and* of
+	// which reader this connection is — a player's chat and a GM's differ, because
+	// the decision to omit a secret line happens before any view model exists. This
+	// package therefore holds no gameplay and no state knowledge, exactly as
+	// `internal/httpapi/play`'s own header says of itself: it is the transport, the
+	// authorisation boundary and the queue discipline.
+	//
+	// Nil is the editor-only configuration and is what phase 7 shipped, so a build
+	// that wires nothing new keeps working and a build that does gets fragments.
+	Chrome ChromeRenderer
+
+	// KeepAlive overrides `keepAliveAfter`. Zero means the shipped value.
+	//
+	// **A field and not a knob**, for the reason `internal/httpapi/play` gives for
+	// its two: it is not configuration, it is the one duration a test has to be able
+	// to make fire inside a test's lifetime. Interleaving keep-alives with
+	// insertions is one of §7.5's four prohibitions' evidence, and a 15-second
+	// keep-alive would put that test at half a minute of wall clock. Nothing reads
+	// it but this package and its tests — no environment variable, no flag.
+	KeepAlive time.Duration
 }
 
-// Mount registers the stream on mux, behind the edit gate.
+// Mount registers the stream on mux, behind the play gate.
 //
-// **The gate is mounted here and not left to the caller**, for the reason
-// `edit.Mount` gives: ADR 0024 says authorisation is a gate a route mounts and never
-// a check inside a handler, and the strongest form of that is a route that mounts its
-// own. A stream carries the editor's external-change notice, which is a GM's surface
-// (S-6.5) — a player has no buffer to be warned about — and a caller who had to
-// remember the gate would eventually register the route without it.
+// **The gate is the play gate, and that is a change from phase 7's edit gate** —
+// and the reason it had to change is that UI §7.5's resolution table puts two
+// different payloads on this one URL. The stream carries the editor's
+// external-change notice *and* the play surface's sidebar fragments, and a player
+// needs the second and must not have the first. One path cannot sit behind two
+// gates, so the gate is the lower one and the *payload* is filtered by tier inside
+// the handler: the editor's notice carries a page path, and a page path is the
+// campaign's own directory structure, so it is emitted only for a reader whose tier
+// can edit. `TestAPlayerIsServedTheSidebarAndNeverTheEditorsPagePaths` is what
+// holds that, and it is the same line the wiki route draws for redaction.
 //
-// The consequence worth stating: the *stream* itself carries no campaign's content, so
-// the gate is not protecting content here. It is protecting the fact that a
-// campaign exists and is being edited. An unauthorised reader told "no content" would
-// still learn that somebody is working in that campaign, and a page path is the
-// campaign's own directory structure — which is why the gate answers 404 for a
-// campaign the reader cannot see rather than 403.
+// This is not ADR 0024 being bent. That record says authorisation is a gate a route
+// mounts rather than a check inside a handler, and it is honoured: the gate decides
+// whether this reader may see the campaign's **table** at all, before the handler
+// runs and without consulting the handler. Filtering *which fragments* an entitled
+// reader is told about is the same job `internal/httpapi/wiki` does with secrets,
+// and it is a different question from whether the reader may look.
 //
-// One method, `GET`, and the reason is the same as the editor's: an `EventSource` is
-// a `GET`, and a `POST` to this URL is a method that exists nowhere in the design, so
-// `net/http`'s 405 is the honest answer.
+// One method, `GET`, and the reason is the same as the editor's: an `EventSource`
+// is a `GET`, and a `POST` to this URL is a method that exists nowhere in the
+// design, so `net/http`'s 405 is the honest answer.
 //
 // The campaign's id is read from the context rather than from the URL, for the same
 // reason the editor reads it there: the gate resolved it, and reading the slug again
 // would be a second lookup that could answer a different campaign if the row had
 // changed in between.
 func Mount(mux *http.ServeMux, handler *Handler) {
-	mux.Handle("GET /c/{slug}/events", campaigns.RequireEdit(handler))
+	mux.Handle("GET /c/{slug}/events", campaigns.RequirePlay(handler))
 }
 
 // ServeHTTP opens the stream and holds it until the connection or the hub ends it.
@@ -219,10 +289,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Int("subscribers", h.Hub.Stats().Subscribers),
 	)
 
-	h.stream(ctx, w, access.Campaign.Slug, subscription)
+	h.stream(ctx, w, access.Campaign.Slug, access, subscription)
 }
 
-// stream is the connection's loop: notice in, one patch a second out.
+// keepAliveInterval is this handler's keep-alive, defaulted.
+//
+// A method and not a second constant so that a test can shorten it: see `KeepAlive`'s
+// own comment, which is the argument for the field existing at all.
+func (h *Handler) keepAliveInterval() time.Duration {
+	if h.KeepAlive > 0 {
+		return h.KeepAlive
+	}
+
+	return keepAliveAfter
+}
+
+// stream is the connection's loop: changes in, one insertion a second out.
 //
 // ## The request context is not the loop's lifetime
 //
@@ -246,17 +328,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // the client reconnects, which is a reconnect loop rather than a stream.
 //
 // This is a property of the *chain*, not of this file, and phase 7's WebSocket
-// upgrade will need the same two decisions for the same two reasons.
+// upgrade needs the same two decisions for the same two reasons — and takes them,
+// in `internal/httpapi/play`.
+//
+// ## One ticker, one budget, and both kinds of change
+//
+// There is **one** `noticeInterval` ticker and it gates every insertion, whatever
+// produced it. That is §7.5's rule and §7.10's prohibition read together: "a live
+// region firing more than once per second" is a property of the *region*, not of the
+// event that happened to fill it, so a chat line and a page edit compete for the
+// same budget rather than each getting their own.
+//
+// Two slots, because two delivery policies meet here. `pending` is the coalescing
+// slot — the newest replaces what was waiting, because three page edits in a second
+// are one fact ("the disk moved") and §7.5's table is explicit that a reader is told
+// the fact rather than the count. `queued` is the FIFO slot for chat and dice lines,
+// because three messages in a second are three messages and coalescing them would
+// leave the reader with a transcript with holes in it. The hub makes the same split
+// for the same reason; see `noticeBuffer` and `lineBuffer`.
+//
+// **The coalescing slot is drained first**, and the order is §7.5's own row order
+// rather than an arbitrary preference: a turn change and a chat line in the same
+// second produce the turn change now and the line a second later, because the turn
+// is the fact the reader was waiting on and the line is a thing they will still get.
 func (h *Handler) stream(
 	ctx context.Context,
 	w http.ResponseWriter,
 	slug string,
+	access campaigns.Access,
 	subscription *Subscription,
 ) {
 	notices := time.NewTicker(noticeInterval)
 	defer notices.Stop()
 
-	keepAlive := time.NewTicker(keepAliveAfter)
+	keepAlive := time.NewTicker(h.keepAliveInterval())
 	defer keepAlive.Stop()
 
 	// The event id, monotonic per connection. Datastar uses it to resume, and it is
@@ -265,46 +370,69 @@ func (h *Handler) stream(
 	// notice looks identical to a stream that had nothing to say.
 	var (
 		eventID int64
-		// pending is the notice waiting for the next tick. Nil when there is
-		// nothing to say, and holding it rather than writing immediately is what
+		// pending is the coalescing change waiting for the next tick. Nil when there
+		// is nothing to say, and holding it rather than writing immediately is what
 		// makes the interval a floor rather than a target.
 		pending *Notice
+		// queued are the chat and dice lines waiting behind the coalescing slot. The
+		// hub already holds a queue in `Subscription.Lines`; this one is the drain, and
+		// it exists because the loop must choose *one* change per tick and the choice
+		// is a policy rather than a channel receive.
+		queued []Notice
 	)
 
 	for {
 		select {
 		case notice, open := <-subscription.Notices():
 			if !open {
-				// The hub closed: shutdown, or a test's teardown. The stream ends
-				// here and returns, which is the whole of the clean-shutdown story.
-				h.log(ctx, slog.LevelDebug, "events.stream_closed",
-					slog.String("campaign", slug),
-				)
+				h.ended(ctx, slug)
 
 				return
 			}
 
-			// Replaced rather than queued. The hub's channel holds one and this
-			// holds one, and between them a burst of five changes in a second
-			// becomes one patch — which is §7.5's throttle arriving by the other
-			// road, and is why a reader is told the disk moved rather than how many
-			// times it moved.
+			// Replaced rather than queued, and the hub's buffer of one is why: a burst
+			// of five page edits in a second becomes one patch, which is §7.5's throttle
+			// arriving by the other road and is why a reader is told the disk moved
+			// rather than how many times it moved. `Kind.Queues` kinds never arrive
+			// here - the hub routes those to `Lines` - so this slot cannot swallow a
+			// chat line.
 			current := notice
 			pending = &current
 
-		case <-notices.C:
-			if pending == nil {
-				continue
-			}
+		case notice, open := <-subscription.Lines():
+			if !open {
+				h.ended(ctx, slug)
 
-			if !h.patch(ctx, w, slug, *pending, eventID) {
 				return
 			}
 
+			// A queued kind behind a pending coalescing one. It waits its turn rather
+			// than replacing it, because a chat line is an event that happened and the
+			// coalescing slot holds the newest statement of a fact about the present.
+			queued = append(queued, notice)
+
+		case <-notices.C:
+			next, ok := nextChange(&pending, &queued)
+			if !ok {
+				continue
+			}
+
+			if !h.patch(ctx, w, slug, access, next, eventID) {
+				return
+			}
+
+			// The id advances even when the patch was refused. An event id has to be
+			// monotonic or a resuming client's `last-event-id` means nothing, and a
+			// refused patch is an event that was sent and consumed.
 			eventID++
-			pending = nil
 
 		case <-keepAlive.C:
+			// **The keep-alive is a comment and the throttle does not apply to it** -
+			// see the file header. It writes no fields, inserts nothing, and is
+			// invisible to the announcement machinery: this branch touches neither
+			// `pending` nor `queued`, and the test that proves it interleaves a
+			// keep-alive every few milliseconds and measures the gap between two
+			// announced insertions.
 			if !h.comment(w, "keep-alive") || !h.flush(ctx, w) {
 				return
 			}
@@ -312,35 +440,83 @@ func (h *Handler) stream(
 	}
 }
 
-// patch writes one notice as a Datastar element patch, and reports whether the
+// ended records that the hub closed and the stream is finishing.
+//
+// One line rather than an inline `slog.DebugContext`, because it is now reached
+// from two branches - either channel closing means the hub is going away - and a
+// log line written twice is a log line two places to keep in step.
+func (h *Handler) ended(ctx context.Context, slug string) {
+	// The hub closed: shutdown, or a test's teardown. The stream returns here, which
+	// is the whole of the clean-shutdown story.
+	h.log(ctx, slog.LevelDebug, "events.stream_closed",
+		slog.String("campaign", slug),
+	)
+}
+
+// nextChange takes the change this tick will emit, and removes it from whichever
+// slot held it.
+//
+// The coalescing slot first, and `pending` is cleared before the patch is written
+// rather than after: a change that arrives while a slow write is in progress must
+// not be swallowed by the write it was waiting behind, because the reader's own
+// next change is the one they are waiting for.
+func nextChange(pending **Notice, queued *[]Notice) (Notice, bool) {
+	if *pending != nil {
+		next := **pending
+		*pending = nil
+
+		return next, true
+	}
+
+	if len(*queued) == 0 {
+		return Notice{}, false
+	}
+
+	next := (*queued)[0]
+	*queued = (*queued)[1:]
+
+	return next, true
+}
+
+// patch writes one change as a Datastar element patch, and reports whether the
 // connection is still usable.
 //
-// The fragment is rendered through the same templ component the editor ships, into
-// a buffer, and only then split into `elements` lines — so what crosses the wire is
-// markup the server produced, and the escaping is `templ`'s rather than this
-// function's. S-12.3 is satisfied by what the fragment contains (a path and a
-// button) rather than by a filter: there is no page content anywhere near this
-// value.
+// Two egress representations meet here and the choice between them is one switch on
+// the change's `Kind`: a `KindChange` is the editor's external-change notice, and
+// every other kind is a sidebar fragment rendered by `Chrome`. Both go out as a
+// rendered DOM fragment — §7.5 forbids a client renderer on this route — and the
+// only difference is which component produced the markup and which selector it
+// names.
+//
+// Every fragment is offered to `live.Decide` before it is written, so §7.5's "a
+// fragment cannot be rendered into the wrong region" and "patches must never touch
+// the focused element" are decisions this process makes about what it emits rather
+// than properties a client is trusted to have. A refusal is logged with its reason
+// and the connection continues: the next change may be fine, and dropping a GM's
+// stream over one bad fragment turns a bug into an outage.
 func (h *Handler) patch(
 	ctx context.Context,
 	w http.ResponseWriter,
 	slug string,
+	access campaigns.Access,
 	notice Notice,
 	eventID int64,
 ) bool {
-	fragment, err := renderNotice(ctx, slug, notice)
-	if err != nil {
-		// A fragment that would not render is a wiring fault, and the honest answer
-		// is to log it and keep the connection: the next notice may render, and
-		// dropping a GM's stream over one bad fragment turns a bug into an outage.
-		h.log(ctx, slog.LevelError, "events.notice_render_failed",
-			slog.String("campaign", slug),
-			slog.String("path", notice.Path),
-			slog.String("error", err.Error()),
-		)
-
+	fragment, ok := h.fragment(ctx, slug, access, notice)
+	if !ok {
 		return true
 	}
+
+	// One debug line per insertion, and it is what makes `Kind` observable to an
+	// operator at all: a sidebar that updates silently and a sidebar that has stopped
+	// are the same observation from every angle except this one.
+	h.log(ctx, slog.LevelDebug, "events.fragment_sent",
+		slog.String("campaign", slug),
+		slog.String("kind", notice.Kind.String()),
+		slog.String("target", fragment.Target.Name),
+	)
+
+	selector, mode := patchTargetFor(fragment)
 
 	var frame strings.Builder
 
@@ -352,20 +528,28 @@ func (h *Handler) patch(
 	frame.WriteString(strconv.FormatInt(eventID, 10))
 	frame.WriteByte('\n')
 
+	frame.WriteString(dataPrefix)
 	frame.WriteString("selector ")
-	frame.WriteString(noticeSelector)
+	frame.WriteString(selector)
 	frame.WriteByte('\n')
 
+	frame.WriteString(dataPrefix)
 	frame.WriteString("mode ")
-	frame.WriteString(patchModeInner)
+	frame.WriteString(mode)
 	frame.WriteByte('\n')
 
 	// One `elements` line per line of the fragment, and *not* one line with
 	// embedded newlines: the event-stream grammar terminates a field at the first
 	// newline, so a multi-line fragment in a single field is a truncated patch. The
-	// repeated field is Datastar's own encoding for a multi-line value, and the
-	// client rejoins them.
-	for line := range strings.SplitSeq(fragment, "\n") {
+	// repeated field is Datastar's own encoding for a multi-line value — its parser
+	// joins every `data:` payload with a newline before splitting the result into
+	// `name value` pairs — and the client rejoins them.
+	//
+	// **Measured**, against the vendored module in a real browser: three `data:
+	// elements` lines carrying three sibling `<li>`s arrive as three siblings, and
+	// the same three lines without the prefix arrive as nothing at all.
+	for line := range strings.SplitSeq(fragment.Markup, "\n") {
+		frame.WriteString(dataPrefix)
 		frame.WriteString("elements ")
 		frame.WriteString(line)
 		frame.WriteByte('\n')
@@ -382,6 +566,27 @@ func (h *Handler) patch(
 	}
 
 	return h.flush(ctx, w)
+}
+
+// patchTargetFor is the selector and mode a fragment goes out with.
+//
+// For a sidebar fragment, the two come from the target `live.Targets` declares —
+// which is what makes "a fragment cannot be rendered into the wrong region" a
+// property of the type rather than of a call site. For the editor's notice, they
+// are this package's own two constants, and the notice is not one of `live`'s
+// targets because it is not the play surface's: it is a GM's right rail, rendered by
+// `internal/web/components/edit`, and it already carries its own `role="status"`.
+//
+// The editor's region is `RegionStatus` and its mode `ModeInner` in both cases, so
+// it goes through the same `Decide` as everything else — the editor's notice holds a
+// `<button>`, which is a focus stop, which means `Decide` refuses it. **That is
+// correct and it is why the refusal is scoped**: see `fragment`.
+func patchTargetFor(fragment live.Fragment) (string, string) {
+	if fragment.Target.Name == "" {
+		return noticeSelector, patchModeInner
+	}
+
+	return fragment.Target.Selector, fragment.Target.Mode
 }
 
 // renderNotice renders the notice fragment for one change.

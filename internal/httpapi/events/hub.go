@@ -57,8 +57,11 @@ import (
 // subscriber re-deriving it. `Slug` is carried too, for the same reason
 // `content.Change` carries it — a log line, never an authorisation input.
 //
-// Two fields, and no more. A path is a name; anything else would be content, and
-// S-12.3 forbids an event carrying any.
+// Four fields, and none of them is content. A path is a name and a kind is a
+// label; anything else would be content, and S-12.3 forbids an event carrying
+// any. In particular there is **no field a chat body or a dice result could be
+// passed through**, which is the whole enforcement behind that rule — the type
+// is the gate, and a `slog.Any("detail", roll)` has nowhere to go.
 type Notice struct {
 	// CampaignID is the campaign whose root the path is relative to. The filter
 	// every subscription is keyed on, and the reason a hub shared by ten campaigns
@@ -67,12 +70,23 @@ type Notice struct {
 	// Path is the page's path after the change, root-relative to that campaign's
 	// content root. Not the absolute path and never a directory: the vault's layout
 	// on the host is not something a browser is told.
+	//
+	// **Empty for every `Kind` but `KindChange`**, and that emptiness is the shape
+	// of the two-egress decision: the sidebar's fragments carry no path at all,
+	// because a path is the editor's business and the sidebar's announcements are
+	// about the table.
 	Path string
-	// Op is what happened, and the copy the notice states depends on it.
+	// Op is what happened, and the copy the notice states depends on it. It is a
+	// `content.Op` and only meaningful for `KindChange`.
 	Op content.Op
+	// Kind is which of the two egress representations this change is for. Zero is
+	// `KindChange`, the filesystem notice phase 7 shipped, so every existing
+	// publisher and every existing test is unchanged by this field's arrival.
+	Kind Kind
 }
 
-// noticeBuffer is how many undelivered notices one subscriber may hold.
+// noticeBuffer is how many undelivered coalescing notices one subscriber may
+// hold.
 //
 // One, and that number is the policy rather than a tuning choice. A notice is a
 // hint that the disk moved; the newest supersedes the oldest because both are true
@@ -80,7 +94,27 @@ type Notice struct {
 // would let a burst of changes replay into a live region one per second — which is
 // §7.5's throttling arriving by a different road and is the failure the throttle
 // exists to prevent.
+//
+// **It counts coalescing kinds only.** A chat line and a roll are not hints: they
+// are the table's content, and a reader who saw three of four messages has a
+// transcript with a hole in it. Those queue instead — see `lineBuffer` — and the
+// split is the hub's whole contribution to UI §7.5's replay rule.
 const noticeBuffer = 1
+
+// lineBuffer is how many chat and dice lines one subscriber may fall behind by.
+//
+// Sixty-four, and it is a floor on the reader's backlog rather than a promise to
+// keep it: a table that has run for six hours produces far more than this and a
+// browser tab that has been suspended produces them in a burst. When the queue is
+// full the **oldest** line goes, not the newest, because the reader's next line is
+// the one they are waiting for and the oldest is the one most likely to have been
+// read already.
+//
+// The cost is stated rather than hidden: a line dropped here is a line the reader
+// never heard, and the only trace is `Stats.Dropped`. That is why the counter is
+// hub-wide and reported in the route's log line rather than being per-subscriber:
+// a dropped line is an operator-visible fact, not a per-connection metric.
+const lineBuffer = 64
 
 // Hub is the process's broker between the content watcher and the browsers
 // watching a campaign's editor.
@@ -109,6 +143,14 @@ type Hub struct {
 	published atomic.Int64
 	dropped   atomic.Int64
 	delivered atomic.Int64
+
+	// rejected counts sidebar publishes refused for carrying the wrong `Kind`.
+	//
+	// **A counter rather than a log line, because the caller is in-process code and
+	// a log line from the hub would put an event name the route did not choose into
+	// the operator's stream.** One per mistake, so it is a loud enough signal that
+	// nobody looks at it twice — which is the intent.
+	rejected atomic.Int64
 }
 
 // NewHub returns an empty hub.
@@ -130,6 +172,11 @@ func NewHub() *Hub {
 // A send that cannot proceed replaces the subscriber's undelivered notice with this
 // one. Two notices for the same second are one fact, and the newest names the page
 // the GM is most likely to be looking at.
+//
+// **`KindChange` and nothing else**, so the only publisher phase 7 wired — the
+// content watcher's sink — cannot accidentally reach a sidebar path. The sidebar's
+// changes go through `PublishSidebar`, whose argument is a `Kind` and a `Notice`
+// and therefore cannot name a page path at all.
 func (h *Hub) Publish(change content.Change) {
 	h.published.Add(1)
 
@@ -148,6 +195,44 @@ func (h *Hub) Publish(change content.Change) {
 		}
 
 		h.deliver(subscription, notice)
+	}
+}
+
+// PublishSidebar delivers one sidebar change to every subscriber of its campaign.
+//
+// The second egress's entry point, and the split from `Publish` is the reason the
+// hub is the right place for it: a chat line and a page edit are different kinds
+// of thing with different delivery semantics (see `noticeBuffer` and
+// `lineBuffer`), and a publisher that chose its own would have to know the
+// subscriber's buffer policy — which is the hub's, because the hub owns the
+// buffers.
+//
+// `KindChange` is **refused** rather than delivered, and that refusal is the point
+// of a separate method: it is the one value for which coalescing and queueing are
+// both wrong, and a caller reaching for this method with a filesystem change has
+// made a mistake a counter should record rather than a slot should fill.
+func (h *Hub) PublishSidebar(notice Notice) {
+	if notice.Kind == KindChange {
+		h.rejected.Add(1)
+
+		return
+	}
+
+	h.published.Add(1)
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.closed {
+		return
+	}
+
+	for _, subscription := range h.subs {
+		if subscription.campaignID != notice.CampaignID {
+			continue
+		}
+
+		h.deliverSidebar(subscription, notice)
 	}
 }
 
@@ -181,10 +266,11 @@ func (h *Hub) Subscribe(campaignID int64) *Subscription {
 		campaignID: campaignID,
 		hub:        h,
 		notices:    make(chan Notice, noticeBuffer),
+		lines:      make(chan Notice, lineBuffer),
 	}
 
 	if h.closed {
-		close(subscription.notices)
+		subscription.closeChannels()
 
 		return subscription
 	}
@@ -220,7 +306,7 @@ func (h *Hub) Close() error {
 		// through `Subscription.Close` — which would take the same lock again and
 		// deadlock, because `sync.Mutex` is not reentrant. The `closeOnce` still
 		// guards it, so a subscriber that closes itself concurrently closes once.
-		subscription.closeOnce.Do(func() { close(subscription.notices) })
+		subscription.closeChannels()
 
 		delete(h.subs, id)
 	}
@@ -266,11 +352,15 @@ func (h *Hub) Stats() Stats {
 }
 
 // Subscription is one stream's view of one campaign's notices.
+//
+// Two channels and the split is the hub's contribution to §7.5's replay rule; see
+// `noticeBuffer` and `lineBuffer`.
 type Subscription struct {
 	id         int64
 	campaignID int64
 	hub        *Hub
 	notices    chan Notice
+	lines      chan Notice
 
 	// closeOnce guards the channel close, which happens from two directions: the
 	// subscriber giving up, and the hub shutting down. A double `close` of a
@@ -279,15 +369,28 @@ type Subscription struct {
 	closeOnce sync.Once
 }
 
-// Notices is the channel the stream reads.
+// Notices is the coalescing channel the stream reads.
 //
 // Closed when the subscription is closed or the hub is, and receiving from a
-// closed channel yields `false` — which is the stream's signal to end, so the
-// handler's loop is a `for … range` over this channel with no other teardown
-// condition. The channel is exported as receive-only because a send would be a
-// writer pretending to be a reader, and the hub is the only writer.
+// closed channel yields `false` — which is the stream's signal to end. The channel
+// is exported as receive-only because a send would be a writer pretending to be a
+// reader, and the hub is the only writer.
+//
+// **Closed only together with `Lines`.** A publisher that could see one closed and
+// the other open would send on a closed channel and panic in the watcher goroutine,
+// where nothing recovers it; closing both under the hub's lock is what makes the
+// pair atomic from every sender's point of view.
 func (s *Subscription) Notices() <-chan Notice {
 	return s.notices
+}
+
+// Lines is the queueing channel: chat lines and dice rolls, in order.
+//
+// Closed on the same conditions as `Notices` and for the same reason. A stream that
+// reads both has to handle either closing first, which is why the route treats a
+// closed channel as "the hub is going away" and returns.
+func (s *Subscription) Lines() <-chan Notice {
+	return s.lines
 }
 
 // CampaignID is the campaign this subscription is for.
@@ -305,11 +408,19 @@ func (s *Subscription) Close() {
 	s.detach()
 }
 
-// detach closes the channel once and drops the subscription from the hub.
+// detach drops the subscription from the hub and closes its channels.
+//
+// **The `closeOnce` is inside `remove`, under the hub's lock, and not wrapped around
+// this call** — and the reason is a deadlock rather than a style preference.
+// `sync.Once.Do` is not reentrant: a `Do` that fires another `Do` on the same `Once`
+// waits for a lock the outer call is holding. An earlier shape had `detach` wrap
+// `remove` in `closeOnce.Do` and `remove` close the channels through
+// `closeOnce.Do`, so every `defer subscription.Close()` hung forever on the hub's
+// mutex. One `Once`, entered from exactly one place, is the whole fix: both callers
+// hold `h.mu` before entering it, so no two goroutines can be inside it at once and
+// the second is a no-op.
 func (s *Subscription) detach() {
-	s.closeOnce.Do(func() {
-		s.hub.remove(s)
-	})
+	s.hub.remove(s)
 }
 
 // deliver puts a notice on one subscription's channel, replacing a stale one.
@@ -358,5 +469,71 @@ func (h *Hub) remove(subscription *Subscription) {
 
 	delete(h.subs, subscription.id)
 
-	close(subscription.notices)
+	subscription.closeChannels()
+}
+
+// closeChannels closes both of a subscription's channels, once.
+//
+// **Every caller holds the hub's lock**, which is the invariant that makes this
+// correct: it is why no two closers can be inside `closeOnce` at the same moment,
+// and it is why a subscriber closing itself while the hub is shutting down cannot
+// double-close and panic on the shutdown path — the one panic a graceful stop cannot
+// survive. See `detach` for why the `Once` lives here and not one level out.
+func (s *Subscription) closeChannels() {
+	s.closeOnce.Do(func() {
+		close(s.notices)
+		close(s.lines)
+	})
+}
+
+// deliverSidebar puts a sidebar change on one subscription's channel, choosing the
+// channel from the kind's delivery policy.
+//
+// Every send is a non-blocking `select`, for the reason `deliver` gives: the watcher
+// must not be able to block behind a browser tab. The two failure policies differ,
+// and the difference is the interesting part:
+//
+//   - a **queuing** kind (chat, dice) that cannot proceed **drops itself**. The
+//     oldest is more valuable than the newest of the same kind, because the reader's
+//     next line is the one they are waiting for;
+//   - a **coalescing** kind that cannot proceed **replaces** what is waiting, for
+//     the reason `deliver` gives.
+//
+// Both count into `Dropped`, because a rising count means a client problem either
+// way and `Stats` reports it against `Published` so the ratio is the fact.
+func (h *Hub) deliverSidebar(subscription *Subscription, notice Notice) {
+	channel := subscription.notices
+
+	if notice.Kind.Queues() {
+		channel = subscription.lines
+	}
+
+	select {
+	case channel <- notice:
+		h.delivered.Add(1)
+
+		return
+	default:
+	}
+
+	if notice.Kind.Queues() {
+		// Full queue: make room by dropping the oldest, then try once more. The
+		// `default` on the second select is reachable - the stream may have drained
+		// the queue in between - and reaching it means this line is lost, which is
+		// the documented policy rather than a failure.
+		select {
+		case <-channel:
+			h.dropped.Add(1)
+		default:
+		}
+
+		select {
+		case channel <- notice:
+		default:
+		}
+
+		return
+	}
+
+	h.deliver(subscription, notice)
 }

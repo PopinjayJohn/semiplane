@@ -160,10 +160,41 @@ func backing() campaignStore {
 func serve(t *testing.T, hub *events.Hub) *httptest.Server {
 	t.Helper()
 
+	return serveWith(t, hub, nil, nil)
+}
+
+// serveWith is `serve` with the two things a sidebar test needs: a writer the route's
+// log goes to, and a mutator that runs after the defaults are set.
+//
+// **The mutator rather than two more `serve` variants**, because a second copy of this
+// function is a second copy of the chain — the timeout layer, the write deadline, the
+// `X-Test-Requestor` header and the cleanup ordering — and a drift between the two
+// would be a test passing against a chain the product does not have.
+func serveWith(
+	t *testing.T,
+	hub *events.Hub,
+	logs io.Writer,
+	mutate func(*events.Handler),
+) *httptest.Server {
+	t.Helper()
+
+	if logs == nil {
+		logs = testLog{t}
+	}
+
+	handler := &events.Handler{
+		Hub: hub,
+		Logger: slog.New(
+			slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		),
+	}
+
+	if mutate != nil {
+		mutate(handler)
+	}
+
 	campaignMux := http.NewServeMux()
-	events.Mount(campaignMux, &events.Handler{Hub: hub, Logger: slog.New(
-		slog.NewTextHandler(testLog{t}, &slog.HandlerOptions{Level: slog.LevelDebug}),
-	)})
+	events.Mount(campaignMux, handler)
 
 	outer := http.NewServeMux()
 	outer.Handle("/c/{slug}/", campaigns.Resolve(backing())(
@@ -360,6 +391,39 @@ func (s *stream) next(t *testing.T) []string {
 	}
 
 	return nil
+}
+
+// nextInsertion waits for the next record that is an insertion rather than a
+// comment.
+//
+// **The distinction §7.5 makes and the file header argues**: a keep-alive is an SSE
+// comment, which inserts nothing. A test that used `next` under a short keep-alive
+// would read the next comment and call it an announcement — so it would pass for the
+// wrong reason, having asserted that a comment arrived while the property under test
+// is that a comment's arrival is *not* an insertion.
+func (s *stream) nextInsertion(t *testing.T) sseFrame {
+	t.Helper()
+
+	// **512, and the number is arithmetic rather than a guess.** With the 5ms
+	// keep-alive the prohibition's own test sets, the shipped one-second budget is
+	// roughly two hundred records, so 512 reads a whole budget's worth of comments
+	// before calling it a fault. A lower cap would fail this test on a slow machine
+	// rather than on a broken stream, which is the failure mode a bound chosen by
+	// intuition always has.
+	const recordsPerBudget = 512
+
+	for range recordsPerBudget {
+		frame := sseFields(s.next(t))
+		if !frame.isComment() {
+			return frame
+		}
+	}
+
+	t.Fatalf("%d consecutive records were comments; at the keep-alive this test "+
+		"installs that is longer than the whole announcement budget, so the stream is "+
+		"sending keep-alives and nothing else", recordsPerBudget)
+
+	return sseFrame{}
 }
 
 // silentFor reports whether nothing at all arrives within within.
@@ -570,9 +634,41 @@ func (f sseFrame) isComment() bool {
 	return len(f.fields) == 0
 }
 
-// sseFields parses one record.
+// sseFields parses one record, the way the vendored module does.
+//
+// ## Why this reader had to be rewritten
+//
+// Phase 7's reader accepted a bare `selector #x` line. It was written to agree with
+// the handler, so it could not notice that the handler disagreed with the client —
+// and the handler did. The event-stream grammar ends a field at the first colon and
+// treats a colon-less line as a field name with an empty value; Datastar's parser is
+// narrower still and handles exactly four names (`data`, `event`, `id`, `retry`),
+// ignoring every other silently. So `selector #x` is not a field anything reads.
+//
+// This reader now implements the client's own rules, and
+// `TestTheFrameIsWrittenTheWayTheVendoredModuleReadsIt` pins the bytes so a future
+// relaxation here is a red build rather than a silent one.
+//
+// The two spellings that matter:
+//
+//   - `data: selector #x` is Datastar's own field: the name after the prefix, the
+//     value after the space. Repeated `data:` payloads are joined with a newline,
+//     which is how a multi-line fragment survives the field-per-line encoding.
+//   - `data: <payload>` with **no** name is the grammar's own data field, and it is
+//     kept under the name `data` so a test can tell "a plain data line" from
+//     "Datastar's `selector` field".
 func sseFields(frame []string) sseFrame {
 	fields := map[string]string{}
+
+	appendField := func(name, value string) {
+		if existing, present := fields[name]; present {
+			fields[name] = existing + "\n" + value
+
+			return
+		}
+
+		fields[name] = value
+	}
 
 	for _, line := range frame {
 		if strings.HasPrefix(line, ":") {
@@ -581,30 +677,45 @@ func sseFields(frame []string) sseFrame {
 			continue
 		}
 
-		// `field: value` carries the colon in the *name*: the grammar's field names
-		// are `event`, `data` and `id`, and the colon separates. Datastar's own
-		// fields — `selector`, `mode`, `elements` — are written without one, and
-		// this handler writes both forms as Datastar documents them. Trimming it here
-		// is what lets the assertions name fields the way the grammar names them.
-		name, value, found := strings.Cut(line, " ")
+		name, value, found := strings.Cut(line, ":")
 		if !found {
-			// A field with no value, which no field in this route has.
+			// A line with no colon. The grammar calls this a field name with an empty
+			// value, and Datastar's parser has no case for any name but the four it
+			// knows, so it is dropped there and dropped here. Dropping it rather than
+			// guessing is the point: a guess here would make this reader agree with a
+			// broken handler.
 			continue
 		}
 
-		name = strings.TrimSuffix(name, ":")
-
-		if existing, present := fields[name]; present {
-			fields[name] = existing + "\n" + value
+		if name != dataField {
+			// `event`, `id` and `retry` are the grammar's own fields, and Datastar's
+			// parser reads them by exactly these names.
+			appendField(name, strings.TrimPrefix(value, " "))
 
 			continue
 		}
 
-		fields[name] = value
+		payload := strings.TrimPrefix(value, " ")
+		fieldName, fieldValue, named := strings.Cut(payload, " ")
+		if !named {
+			// `data:` with nothing after it is the grammar's data field, empty.
+			appendField(dataField, payload)
+
+			continue
+		}
+
+		appendField(fieldName, fieldValue)
 	}
 
 	return sseFrame{fields: fields}
 }
+
+// dataField is the event-stream field name Datastar's attributes arrive under. It is
+// the handler's `dataPrefix` without the trailing space, and the test spells it
+// rather than deriving it so a change to the handler is a change to the reader —
+// which is the only way this reader can ever disagree with it, and therefore the only
+// way it can catch it.
+const dataField = "data"
 
 // TestInsertionsIntoTheLiveRegionAreThrottledToOnePerSecond is §7.5's throttle, and
 // it is asserted in both directions because either half alone is satisfied by a broken
@@ -762,14 +873,20 @@ func TestARemovedPageCarriesNoReviewAction(t *testing.T) {
 	}
 }
 
-// TestTheStreamIsMountedBehindTheEditGate is ADR 0024 for this route, and it is
+// TestTheStreamIsMountedBehindThePlayGate is ADR 0024 for this route, and it is
 // asserted on the statuses a player and an anonymous reader get.
 //
-// The stream itself carries no content, so the gate is not protecting content here —
-// it is protecting the fact that a campaign exists and is being edited, and a page
-// path is the campaign's own directory structure. A player gets 403 and an anonymous
-// reader 401, both from `campaigns.Guard`, before the handler runs at all.
-func TestTheStreamIsMountedBehindTheEditGate(t *testing.T) {
+// **The gate is the play gate, not the edit gate, and the change is this work
+// item's.** UI §7.5's resolution table puts the editor's external-change notice
+// *and* the play surface's sidebar fragments on this one URL, so one path cannot sit
+// behind two gates. The gate is the lower one — a player is entitled to the sidebar
+// — and the payload is filtered by tier inside the handler, which
+// `TestAPlayerIsServedTheSidebarAndNeverTheEditorsPagePaths` holds.
+//
+// The refusals themselves are unchanged in kind: an anonymous visitor gets 401
+// before the handler runs, and a reader with no membership gets 404 from the guard's
+// `TierNone` branch. Neither learns whether the campaign exists.
+func TestTheStreamIsMountedBehindThePlayGate(t *testing.T) {
 	t.Parallel()
 
 	hub := newHub(t)
@@ -780,7 +897,6 @@ func TestTheStreamIsMountedBehindTheEditGate(t *testing.T) {
 		requestor domain.Requestor
 		want      int
 	}{
-		{name: "a player", requestor: playerRequestor(), want: http.StatusForbidden},
 		{
 			name:      "an anonymous reader",
 			requestor: anonymousRequestor(),
@@ -800,7 +916,7 @@ func TestTheStreamIsMountedBehindTheEditGate(t *testing.T) {
 			if resp.StatusCode != testCase.want {
 				t.Errorf("status = %d, want %d; the gate answers before the handler "+
 					"runs, and a stream behind no gate would let any reader watch a "+
-					"campaign's directory structure change", resp.StatusCode, testCase.want)
+					"table they are not a member of", resp.StatusCode, testCase.want)
 			}
 		})
 	}

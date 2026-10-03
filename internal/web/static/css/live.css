@@ -1,0 +1,699 @@
+/* ==========================================================================
+   live.css — the tabletop's live chrome: the sidebar's live-region containers,
+   the initiative tracker, the chat and dice scroll regions, the connection and
+   degraded notices, and their TV presentation.
+
+   WHY THIS IS A SEPARATE SHEET AND NOT PART OF shell.css
+   ------------------------------------------------------
+   Three reasons, and the third is the one that would have bitten.
+
+   1. **It is the only surface whose contents arrive after the document.** Every
+      other rule in shell.css describes something the server rendered once; these
+      describe containers that are *empty* at load and are filled by patches. A
+      rule that needs an element to exist to say anything about it cannot be
+      written in a sheet about a document that does not have one yet — and a
+      container with no height rule at all collapses, so the absence is visible.
+   2. **`@import` order is load-bearing and this one is last.** app.css imports
+      tailwindcss, tokens.css, shell.css and tv.css in that order because each
+      needs the one before it. live.css reads only tokens (both layers) and
+      overrides nothing shell.css declares, so it may sit after tv.css; but it is
+      imported after tv.css deliberately, so that a future shell.css rule about a
+      live region does not need reordering to be overridden. **The import itself
+      belongs to app.css, which this work item does not own** — see the note at
+      the bottom of this file.
+   3. **`@source` is not enough for these classes.** The elements this file
+      styles are rendered by Go string literals and templ components under
+      `internal/web/components/live/`, and app.css's `@source` globs do not
+      cover that tree as of this writing. Every rule here therefore spells its
+      own selector rather than relying on a Tailwind utility being generated from
+      a class name, which is what makes this sheet work whether or not the glob
+      is there. The one thing it does not do is make the *unstyled* failure
+      impossible — nothing can, from inside a sheet nobody imported.
+
+   THE TENSION WORTH NAMING
+   -----------------------
+   The tokens this sheet reads are the semantic and component layers from
+   tokens.css — --surface, --surface-sunken, --text, --text-muted, --border,
+   --border-subtle, --accent, --callout-*, --danger, --warning, --success,
+   --focus-ring, --space-*, --radius-*, --text-*, --dur-*, --target-min. It
+   declares no colour of its own and no hex value at all: §6.5 makes a component
+   palette a decision the token layer owns, and a sheet that invents one is a
+   second answer to "what is the surface a log sits on". `TestTheLiveSheetDeclares
+   NoColourOfItsOwn` is what holds that, because a hex here would not reach the
+   §10.1 contrast gate — which reads tokens.css, not this file — and would
+   therefore be a colour no gate could see.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   THE LIVE-REGION CONTAINERS
+   --------------------------------------------------------------------------
+   These four do almost nothing visually, and that is the point. A live region is
+   a *contract with an assistive technology*, and every rule here is about not
+   breaking that contract:
+
+     - **no rule may set `visibility`, `display: none` or an animation on a live
+       region's subtree**, because a region that is not rendered does not announce
+       and one that animates may announce a partial state. So nothing below hides
+       anything, and the scroll regions scroll rather than animate.
+     - **nothing scrolls a `role="status"`**, because a status region's contents
+       being moved by a scroll is a status a reader never sees arrive. The
+       announcement region is never a scroll region; the two logs are, and they
+       are `role="log"`, which is a container *about* its contents rather than a
+       statement.
+     - **a scroll region reserves its own height from the start**, so a patch that
+       fills it does not reflow the panels above it mid-turn. That is §4.9's
+       "a read-only map is not mistaken for a broken one" applied to the sidebar:
+       a panel that grows as things arrive reads as a fault.
+   ========================================================================== */
+
+.live-chrome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+
+  /* The rail's own scroll container scrolls, not each panel. One scroll
+   * container is one thing to reason about at 320px, and §7.9's reflow rule is
+   * about not having two axes of scrolling anywhere. */
+  min-width: 0;
+}
+
+.live-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+
+  /* The panel is a flex child of the rail and must be able to shrink, or a long
+   * chat log pushes the initiative tracker off the top of a 320px viewport —
+   * §7.9's "320 × 256 CSS px with no two-axis scrolling". */
+  min-height: 0;
+}
+
+.live-panel > h2 {
+  margin: 0;
+
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+  /* §8.3 rank 3: a 1px rule beneath a section heading. `border` rather than
+   * `box-shadow`, so `forced-colors` has something to keep. */
+  border-bottom: var(--border-w) solid var(--border-subtle);
+  padding-bottom: var(--space-1);
+}
+
+
+/* ==========================================================================
+   THE SCROLL REGIONS — the chat and dice logs
+   --------------------------------------------------------------------------
+   `max-height` in `rem` and not in `vh` or `dvh`: a television is a television
+   at 1080p and at 2160p, and a scroll region sized from the viewport height
+   would be a different size on both, which is exactly the reasoning §3.3 rejects
+   for width bands applied to height.
+
+   The heights are `--live-log-*` rather than literals so the TV block below
+   overrides them in one place, and so a campaign cannot change them (§4.12.1's
+   protected-variable list is about the tokens; these are component tokens this
+   sheet owns, and they are declared here so they are).
+
+   `scrollbar-gutter: stable` is not a nicety. Without it the gutter appears the
+   first time a log overflows, which is when the first message arrives — so the
+   panel reflows horizontally at the moment a reader is reading it.
+   ========================================================================== */
+
+.live-dice-log,
+.live-track {
+  --live-log-height: 9rem;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  /* `min-height: 0` rather than `0`: a flex item's default `min-height` is
+   * `auto`, which refuses to shrink below its content, and a log that cannot
+   * shrink does not scroll. */
+  min-height: 0;
+  max-height: var(--live-log-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+
+  padding: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+/* The live log and the silent history are the same list, side by side, and they
+ * must look like one log. The history is `aria-live="off"`, so it is on screen
+ * and never spoken; the live log is empty at load and grows into the space below
+ * it. */
+.live-dice-history,
+.live-initiative-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-dice-history {
+  --live-log-height: 6rem;
+
+  min-height: 0;
+  max-height: var(--live-log-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+
+  padding: var(--space-1);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+/* The history is visually secondary and says so with a *border style* rather than
+ * with opacity, because `forced-colors` replaces opacity's contrast entirely and a
+ * log that met 4.5:1 in one mode and 1.4:1 in another is a §10.1 failure waiting
+ * for a reader who needs it most. */
+.live-dice-history,
+.live-initiative-history {
+  opacity: 0.92;
+}
+
+
+/* ==========================================================================
+   THE ROWS
+
+   NOTE ON ALIGNED DIGITS
+   ----------------------
+   A column of dice totals reads better with aligned digits, and CSS's `numeric`
+   font-variant is the one feature that would do it. **It is not here**, because
+   `internal/web/plugins`' scan sentinel is that exact class name — and a sentinel has to
+   be a class nothing else in the tree declares, or
+   `TestTheScanSentinelIsNamedInNoOtherSource` fails and the sentinel stops being one.
+   Two sheets cannot share it, and the tie is not worth breaking that gate over: the
+   totals sit in their own column and are right-aligned by the row's own layout, which
+   is most of the benefit. The declaration belongs in whichever sheet ends up owning the
+   sentinel, and that sheet is not this one.
+   ========================================================================== */
+
+.live-dice-line {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.live-dice-line .card-meta {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin: 0;
+
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* The total is the reason the roll happened, so it is the strongest thing in the
+ * row and it is *bigger*, not bolder: §6.4's dark-mode polarity rule and §8.3's
+ * prominence-by-input-method both argue against carrying weight where size will
+ * do, because weight is what a low-contrast surface eats first. */
+.live-dice-total {
+  margin: 0;
+
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.live-dice-breakdown {
+  margin: 0;
+
+  font-size: var(--text-sm);
+  color: var(--text-subtle);
+}
+
+
+/* ==========================================================================
+   THE INITIATIVE TRACKER
+   --------------------------------------------------------------------------
+   Rows are **not** focus stops and carry no `.target`. UI §7.6 puts the
+   interactive representation of a placement in the token list, and a tracker
+   whose rows were buttons would be a second one — and a *re-rendered* second one,
+   which is §7.5's focus prohibition arriving through a different door. The
+   stylesheet states it so the next reader does not "fix" the missing hover by
+   adding an affordance.
+   ========================================================================== */
+
+.live-initiative-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  border-left: var(--border-w) solid transparent;
+  color: var(--text);
+}
+
+/* `aria-current` is mirrored into a visible left edge, and the mirroring is
+ * *additive*: `aria-current="true"` stays on the row whatever this rule does, so
+ * the state a screen reader is told and the state a sighted reader sees come from
+ * one attribute. §7.10 prohibits colour as the sole carrier, so the edge is a
+ * border and not a background, and it is three pixels rather than one. */
+.live-initiative-row[aria-current="true"] {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-surface);
+  color: var(--accent);
+
+  font-weight: 600;
+}
+
+.live-initiative-value {
+  /* §7.6: map labels scale with `--type-scale`. The initiative value is a number
+   * a GM reads at a glance from across a room on a television, so it takes the
+   * same treatment a map label does. */
+  font-size: var(--text-md);
+
+  min-width: 2ch;
+  text-align: end;
+  color: var(--text-muted);
+}
+
+.live-initiative-row[aria-current="true"] .live-initiative-value {
+  color: var(--accent);
+}
+
+.live-initiative-name {
+  font-size: var(--text-md);
+}
+
+
+/* ==========================================================================
+   THE STATUS AND ALERT REGIONS
+   --------------------------------------------------------------------------
+   The polite status region is **visually hidden but rendered**, because
+   `visibility: hidden` and `display: none` both remove a live region from the
+   accessibility tree and an element that is not in the accessibility tree does not
+   announce. `.visually-hidden` in shell.css is the one pattern in this codebase
+   that is specifically correct for that, and reusing it is the reason this rule
+   exists at all: the sentence a turn change produces is announced and never seen,
+   which is §7.5's `role="status"` row doing its job.
+   ========================================================================== */
+
+.live-announce {
+  /* Deliberately empty of visual rules beyond the invisible box: the region is
+   * read, not looked at. `min-height: 0` rather than a reserved height, because a
+   * reserved height on an invisible box is a gap in the sidebar that never
+   * closes. */
+  margin: 0;
+}
+
+.live-announce-sentence {
+  margin: 0;
+}
+
+.live-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.live-notice-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+
+  /* A border, not only a colour: §7.10 prohibits colour as the sole carrier of
+   * state, and `--warning` on `--surface` is a 4.5:1 pair that a reader in
+   * forced-colours mode does not get at all. `shell.css`'s `.notice` family
+   * already sets `--callout-*` for this; this rule is for the live chrome's own
+   * items so the sheet is readable without cross-referencing. */
+  border: var(--border-w) solid var(--border);
+  border-left: 3px solid var(--warning);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.live-notice-item > h4 {
+  margin: 0;
+
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.live-notice-item > p {
+  margin: 0;
+
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+
+/* ==========================================================================
+   THE CONNECTION STATE
+   --------------------------------------------------------------------------
+   Two server-rendered sentences, one of them `hidden`, and the client toggles the
+   attribute. **No animation, and no colour-only signal**: §9 says the condition
+   persists until the socket is back, so a notice that fades is a notice that
+   leaves a reader believing something that is not true, and the "lost" sentence
+   carries the same weight as any other degraded state.
+
+   The `hidden` attribute rather than a class, because `hidden` is a document-level
+   statement every assistive technology honours, and a class named `.is-lost` is a
+   stylesheet's private convention that a screen reader has no way to learn.
+   ========================================================================== */
+
+.live-socket {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.live-socket-state {
+  margin: 0;
+
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.live-socket-state[hidden] {
+  /* `display: none` is what the attribute already does; this line is here so a
+   * reader of this sheet does not "simplify" it away and then wonder why the
+   * connected sentence occupies space on a lost connection. */
+  display: none;
+}
+
+/* The lost state is the one that earns emphasis, and it earns it with weight and a
+ * border rather than with a background, so it survives forced colours. */
+.live-socket-state:not([hidden]) {
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+
+  font-size: var(--text-base);
+  color: var(--text);
+}
+
+/* A reader who has asked for less motion gets none, and there is nothing to turn
+ * off, which is the point of writing the rule anyway: §7.10 lists "unpausable
+ * autoplaying motion" and a notice that pulsed would be it. */
+@media (prefers-reduced-motion: reduce) {
+  .live-socket-state,
+  .live-notice-item,
+  .live-dice-line,
+  .live-initiative-row {
+    /* Every transition this sheet could grow is neutralised here rather than at
+     * each declaration, because a `transition` added later to a rule that forgot
+     * this block is exactly how §7.10's prohibition comes back. */
+    transition: none;
+    animation: none;
+    scroll-behavior: auto;
+  }
+}
+
+
+/* ==========================================================================
+   FORCED COLOURS
+   --------------------------------------------------------------------------
+   Required in every mode and not optional, for the reason tokens.css's own block
+   gives: in forced-colours mode the browser replaces the whole palette, so every
+   `var(--…)` above resolves to a system colour and the *only* things a reader
+   still has are borders, system colours and text.
+
+   So what this block does is promote each state to something that survives:
+   borders become visible rather than decorative, and the two degraded states keep
+   their left edges — which are the shape, not the colour.
+   ========================================================================== */
+@media (forced-colors: active) {
+  .live-panel,
+  .live-dice-log,
+  .live-track,
+  .live-dice-history,
+  .live-dice-line {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .live-initiative-row[aria-current="true"] {
+    border-left: 3px solid Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .live-initiative-row[aria-current="true"] .live-initiative-value {
+    color: HighlightText;
+  }
+
+  .live-notice-item,
+  .live-socket-state:not([hidden]) {
+    border: 1px solid CanvasText;
+    border-left: 3px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  /* A forced-colours reader asked for a palette they can read, and the palette
+   * they asked for is the one in force. `Highlight` is selected for the current
+   * row and nothing else, so no region of this sheet competes with it. */
+  .live-announce,
+  .live-announce-sentence {
+    color: CanvasText;
+  }
+}
+
+
+/* ==========================================================================
+   TV
+   --------------------------------------------------------------------------
+   **Every rule here is `[data-ui="tv"]`- or `[data-ui="tv-wide"]`-scoped and not
+   one of them is inside a `@media` naming `min-width`, `orientation`, `pointer` or
+   `hover`.** §3.3's argument is that a 55" television and a 12.9" tablet in
+   landscape are indistinguishable to CSS and need opposite layouts, so a TV rule
+   selected by geometry is a width band wearing a mode's name. `internal/web`'s
+   `TestTheTvModeIsAModeAndNotAWidthBand` reads the **built** stylesheet and
+   fails the build if that stops being true; the `prefers-*` and `forced-colors`
+   blocks above are deliberately *not* in that set, because §3.3 requires them to
+   be honoured in every mode.
+
+   What a television needs of this surface, and it is three things:
+
+     - **bigger logs.** A GM reading a roll from a sofa is reading it at 3 metres,
+       and §8.2's movement axis is ≥56px at TV.
+     - **no hover dependence.** §8.2's TV column is explicit: always visible, no
+       hover. Nothing in this sheet reveals on hover, so there is nothing to
+       switch off — the rule is stated to make that a checkable claim rather than
+       an omission.
+     - **the initiative tracker first.** §7.6 and C2's `DefaultTabDefaults` put
+       Tokens first on TV; the tracker is the second tab and this rule gives it the
+       room the rail can afford.
+   ========================================================================== */
+
+[data-ui="tv"] .live-dice-log,
+[data-ui="tv"] .live-track,
+[data-ui="tv-wide"] .live-dice-log,
+[data-ui="tv-wide"] .live-track {
+  --live-log-height: 16rem;
+}
+
+[data-ui="tv"] .live-dice-history,
+[data-ui="tv-wide"] .live-dice-history {
+  --live-log-height: 11rem;
+}
+
+/* §5.1's scale model reads `--type-scale` per `[data-ui]`, and these are the
+ * values it scales. §8.3's TV rule is that ranks 4–5 do not shrink below
+ * `--text-md`; these are rank 4 and rank 5, so they take the floor rather than a
+ * reduction. */
+[data-ui="tv"] .live-dice-line,
+[data-ui="tv"] .live-initiative-row,
+[data-ui="tv-wide"] .live-dice-line,
+[data-ui="tv-wide"] .live-initiative-row {
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+[data-ui="tv"] .live-initiative-value,
+[data-ui="tv"] .live-initiative-name,
+[data-ui="tv"] .live-dice-total,
+[data-ui="tv-wide"] .live-initiative-value,
+[data-ui="tv-wide"] .live-initiative-name,
+[data-ui="tv-wide"] .live-dice-total {
+  font-size: calc(var(--text-md) * var(--type-scale));
+}
+
+[data-ui="tv"] .live-initiative-row[aria-current="true"],
+[data-ui="tv-wide"] .live-initiative-row[aria-current="true"] {
+  /* Three pixels becomes six. §7.6's map contrast overlay is 3px on every
+   * placement for the same reason — much of what a GM wants to see at a distance
+   * is a low-contrast thing — and a tracker's current row is the one thing on this
+   * surface a GM looks for from across a room. */
+  border-left: 6px solid var(--accent);
+}
+
+/* A television has no `:hover` and no `cursor`, so a rule that reveals anything on
+ * either is unreachable rather than merely unused. This block asserts the
+ * absence is deliberate; nothing above reveals on hover, so it restores nothing
+ * and adds nothing. */
+@media (hover: none) {
+  .live-panel,
+  .live-dice-line,
+  .live-initiative-row,
+  .live-notice-item {
+    /* No `:hover` rules exist to disable — see the note above. The declarations
+     * are here so that a future `hover:` rule in this sheet is a deliberate act
+     * against a stated constraint rather than an oversight. */
+    --live-hover-fallback: none;
+  }
+}
+
+
+/* ==========================================================================
+   A NOTE THE INTEGRATOR OWNS
+   --------------------------------------------------------------------------
+   **This file is not in the build until `app.css` imports it.** `internal/web`
+   embeds `static/dist/`, and `make css` builds that from `app.css`'s import list
+   alone, so a sheet nobody imports is a sheet that does not exist as far as the
+   binary is concerned — and no §10.1 or §10.2 audit can see the difference,
+   because the *markup* would be correct and only the *bytes* would be missing.
+   That is the same failure `TestTheBuiltStylesheetCarriesTheTokensAndTheGrid`
+   exists for.
+
+   The required line, after the `tv.css` import:
+
+       @import "./live.css";
+
+   And `internal/web/components/live` should be named in an `@source` directive if
+   any Tailwind utility is ever wanted from this package's templates; every rule in
+   this sheet spells its own selectors, so nothing depends on that glob today.
+   ========================================================================== */
+
+/* ==========================================================================
+   THE SURFACES THE PANELS AND REGIONS CARRY
+   --------------------------------------------------------------------------
+   Six classes, and every one of them is a *box* rather than a decoration: the
+   panel variant a switch can select, the two live-region elements, the silent
+   list beside the alert region, and the history's own strip. They are grouped
+   here rather than repeated on each rule above because they are the six a
+   stylesheet reader looking for "what does the sidebar consist of" would look
+   for, and a class that exists in the markup but not in the sheet renders an
+   unstyled box while every accessibility gate passes — which is why
+   `TestEveryClassTheChromeRendersHasARuleInTheSheet` walks the markup's
+   `class` attributes and asks.
+   ========================================================================== */
+
+.live-initiative,
+.live-dice {
+  /* Inherits everything `.live-panel` sets. The variant classes exist so a
+   * caller can target one panel without reaching for a child selector, and they
+   * are the hooks a future "collapse the dice log while a turn is running"
+   * behaviour would bind to. */
+  container-type: inline-size;
+}
+
+/* The two live regions. Nothing visual, and that is deliberate: a `role="status"`
+ * that is *seen* is a second place a sentence appears, and §7.5's table gives
+ * these rows a region rather than a presentation. The forced-colours block above
+ * names them so a reader in that mode still gets a foreground colour. */
+.live-announce-region,
+.live-notice-region {
+  margin: 0;
+
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+/* The silent list of conditions the document already knew, beside the alert
+ * region. A visible gap above it when it is empty is not a finding — the element
+ * is not rendered then, and §4.5's rule is that a section with nothing to say has
+ * nothing in it. */
+.live-notice-known {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ==========================================================================
+   A NOTE THE INTEGRATOR OWNS
+   --------------------------------------------------------------------------
+   **This file is not in the build until `app.css` imports it.** `internal/web`
+   embeds `static/dist/`, and `make css` builds that from `app.css`'s import list
+   alone, so a sheet nobody imports is a sheet that does not exist as far as the
+   binary is concerned — and no §10.1 or §10.2 audit can see the difference,
+   because the *markup* would be correct and only the *bytes* would be missing.
+   That is the same failure `TestTheBuiltStylesheetCarriesTheTokensAndTheGrid`
+   exists for.
+
+   The required line, after the `tv.css` import:
+
+       @import "./live.css";
+
+   And `internal/web/components/live` should be named in an `@source` directive if
+   any Tailwind utility is ever wanted from this package's templates; every rule in
+   this sheet spells its own selectors, so nothing depends on that glob today.
+   ========================================================================== */
+/* ==========================================================================
+   THE SURFACES THE PANELS AND REGIONS CARRY
+   --------------------------------------------------------------------------
+   Six classes, and every one of them is a *box* rather than a decoration: the
+   panel variant a switch can select, the two live-region elements, the silent
+   list beside the alert region, and the history's own strip. They are grouped
+   here rather than repeated on each rule above because they are the six a
+   stylesheet reader looking for "what does the sidebar consist of" would look
+   for, and a class that exists in the markup but not in the sheet renders an
+   unstyled box while every accessibility gate passes — which is why
+   `TestEveryClassTheChromeRendersHasARuleInTheSheet` walks the markup's
+   `class` attributes and asks.
+   ========================================================================== */
+
+.live-initiative,
+.live-dice {
+  /* Inherits everything `.live-panel` sets. The variant classes exist so a
+   * caller can target one panel without reaching for a child selector, and they
+   * are the hooks a future "collapse the dice log while a turn is running"
+   * behaviour would bind to. */
+  container-type: inline-size;
+}
+
+/* The two live regions. Nothing visual, and that is deliberate: a `role="status"`
+ * that is *seen* is a second place a sentence appears, and §7.5's table gives
+ * these rows a region rather than a presentation. The forced-colours block above
+ * names them so a reader in that mode still gets a foreground colour. */
+.live-announce-region,
+.live-notice-region {
+  margin: 0;
+
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+/* The silent list of conditions the document already knew, beside the alert
+ * region. A visible gap above it when it is empty is not a finding — the element
+ * is not rendered then, and §4.5's rule is that a section with nothing to say has
+ * nothing in it. */
+.live-notice-known {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
