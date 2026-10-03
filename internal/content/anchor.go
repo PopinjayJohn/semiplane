@@ -430,10 +430,28 @@ type Rename struct {
 //
 // The consequence is stated here because it is surprising, and because a reader who
 // has just moved a page and found every derived anchor unresolvable will reasonably
-// conclude something is broken: **after a rename, derived anchors are stale until
-// they are rewritten.** `Reassociate` finds them by the block-id form, and `Repair` is the
-// only thing that re-derives them — so a campaign that renames pages should run a
-// repair pass, and the reconciliation already does.
+// conclude something is broken: **after a rename, a derived anchor in the ledger no
+// longer equals what a fresh scan of the page computes.**
+//
+// # What repairs it: not a rewrite, and that is the whole answer
+//
+// An earlier version of this comment claimed a `Repair` function existed and that "the
+// reconciliation already does" the re-derivation. **Neither was true** — there is no
+// `Repair`, and phase 10's reconciler re-applies the `+` byte without ever rewriting
+// `secrets_revealed.anchor`. The claim was caught when S7 was written against it and
+// could not find it.
+//
+// So the honest account is that **nothing rewrites the stored anchor, and nothing
+// needs to.** `Reassociate` re-associates the row by the ordinal migration 0012
+// recorded, and carries the revealed state across — which is the operation that
+// matters. The cost is that the stale anchor is re-associated by ordinal on every
+// pass rather than matching outright, which is idempotent, safe, and invisible.
+//
+// The gap worth recording is therefore a *cost*, not a defect: the ledger's derived
+// anchors stay stale for the life of the campaign after a rename, so every reconcile
+// pass on that page takes the ordinal fallback rather than the exact match. A future
+// pass could rewrite them, and it would need `store` to expose an anchor update — which
+// does not exist today.
 //
 // # The tombstone is a row, not a log line
 //
