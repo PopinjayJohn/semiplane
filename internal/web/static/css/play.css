@@ -1,0 +1,290 @@
+/* play.css — the tabletop's own sheet: the compact action bar, the map
+ * readout, and the contrast overlay UI §7.6 requires.
+ *
+ * # The order this is imported in is load-bearing
+ *
+ * `app.css` puts this **after** `shell.css` and `tv.css`, for the same reason
+ * `tv.css` is after `shell.css`: every rule below overrides a rule an earlier
+ * sheet already set, at equal specificity. `shell.css` owns the grid and gives
+ * `.shell--play` a row for the action bar; `tv.css` owns the TV overrides. A
+ * sheet imported before either of them loses every value in it, and nothing
+ * fails — the file is in the build and every rule misses.
+ *
+ * **X and not a test failure.** It is a
+ * product that renders unstyled while every §10.1, §10.2 and §10.6 gate passes,
+ * because the markup is correct and only the bytes are missing. So
+ * `components/play/css_test.go` holds the build, and
+ * `TestEveryClassTheDocumentRendersHasARuleInThisSheet` holds the selectors —
+ * which is a different failure, and the one this sheet was nearly shipped with.
+ *
+ * # Every selector here exists in the rendered document
+ *
+ * That is a claim, and `TestEveryClassTheDocumentRendersHasARuleInThisSheet`
+ * walks `document.templ`'s `class="…"` attributes with `go/parser` and requires a
+ * rule for each one this sheet is responsible for. A stylesheet that names
+ * `.play-action-bar` when the document renders `.play-actions` loads, parses,
+ * contributes its sentinel to the built file, and styles **nothing** — and a test
+ * that only checks the sentinel is green throughout.
+ *
+ * The classes this sheet owns, and where they come from:
+ *
+ *   play-actions      the action bar — `document.templ`'s `actionBar`
+ *   play-map          the map surface or its designed empty state — `scene`
+ *   play-heading      the document's `<h1>`
+ *   shell--play       the grid variant — `document.templ`'s root `div`
+ *   roll-term*        the roll sheet's rows — `rollBody`
+ *
+ * `shell-main`, `shell-rail`, `rail-panels`, `card-list`, `empty`, `panel-note`,
+ * `visually-hidden` and `target` belong to `shell.css` or `components/chat` and
+ * are **not** restyled here. A second declaration of a rule another sheet owns is
+ * a second answer to the same question, which is the shape of bug this repository
+ * keeps recording: the `front_matter` column, the design index, the hook
+ * vocabulary.
+ *
+ * # The map is drawn by PixiJS, so most of it is not here
+ *
+ * `.play-placement` and `.play-grid-line` do not exist and must not be added.
+ * Placements and grid lines are sprites in a canvas, not elements in the DOM —
+ * §7.6 makes the canvas `aria-hidden="true"` and a **decorative mirror**, and the
+ * token list is the accessibility source of truth. A CSS rule could not reach a
+ * sprite even if the class were on something.
+ *
+ * So `--map-dim` and `--map-outline` are declared here and **read by the client**:
+ * `static/js/map/table.js` reads them off the document's computed style and uses
+ * them to dim the map layer and outline every placement and grid line. That is
+ * why they are custom properties and not rule bodies — the record's requirement
+ * is on the *drawing*, and the drawing is in JS.
+ */
+
+/* --- §4.9's action bar ---------------------------------------------------- */
+
+/* `--action-bar-h` is §4.9's number, declared once here and consumed by the
+ * sheet's anchor below. It is also this sheet's sentinel: `css_test.go` requires
+ * it in the **built** stylesheet, and no other sheet declares it, so an import
+ * that never landed is red rather than silent. */
+:root {
+  --action-bar-h: 4.5rem;
+}
+
+/* On compact `/play` the persistent footer **becomes** the action bar rather than
+ * the 4-destination nav (§4.9), and it is 4.5rem where the nav bar is 3.5rem
+ * because these are the primary actions.
+ *
+ * `position: fixed` with an explicit `inset-block-end: 0` and a block-size that
+ * includes the safe area, because a bar pinned to the physical bottom edge on a
+ * device with a home indicator puts its last control under the indicator. The
+ * padding is the safe area and the size includes it, so the controls sit *above*
+ * the indicator rather than behind it.
+ *
+ * `z-index: 3` is above the rail's 2 and below a transient sheet's — the
+ * ordering §8.1 states: tier 1 chrome, then tier 2 rails, then tier 4
+ * transients. The bar is tier 1 wearing tier 2's clothes, and the one thing it
+ * must never be is covered. */
+.play-actions {
+  position: fixed;
+  inset-block-end: 0;
+  inset-inline: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  box-sizing: border-box;
+  min-block-size: var(--target-min);
+  block-size: calc(var(--action-bar-h) + env(safe-area-inset-bottom));
+  padding-block-end: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-block-start: 1px solid var(--border);
+}
+
+/* §4.9's layer-collision rule: the compact rail is a sheet anchored **above** the
+ * action bar, never over it. `--action-bar-h` is the anchor, so the two cannot
+ * disagree — a bar that grows with its safe area moves the sheet with it, because
+ * the sheet reads the same number.
+ *
+ * `translate: 0 100%` is the closed position and `[data-open]`/`[aria-expanded]`
+ * is the open one, so the sheet is off-screen rather than `display: none` — a
+ * display toggle would remove it from the tab order with no transition, and the
+ * transition is what `prefers-reduced-motion` below has something to remove. */
+.shell--play .shell-rail {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: var(--action-bar-h);
+  z-index: 2;
+  max-block-size: min(60dvb, var(--action-bar-h) * 6);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding-block-end: env(safe-area-inset-bottom);
+}
+
+/* --- The map readout ------------------------------------------------------ */
+
+/* At coarse-pointer tiers the map is a **read-only readout** (§4.9): it renders,
+ * it never takes a gesture, and it never reaches the bottom of the screen.
+ *
+ * `pointer-events: none` is the load-bearing declaration and it is what
+ * `TestTheCompactMapTakesNoGesture` asserts on the markup's side; this is its
+ * other half. Without it the canvas swallows taps meant for the action bar, and
+ * the gesture-safety row in §4.9's table — "because the map takes no input at this
+ * tier, there is no drag-versus-bottom-bar or drag-versus-sheet conflict" — is
+ * false in the one place it would be noticed.
+ *
+ * `max-block-size` is what stops it reaching the bottom: the bar is fixed and
+ * overlays, so the map is given the space above it explicitly rather than
+ * relying on the grid's row being shorter. `min(60dvb, …)` is a viewport unit
+ * with a fallback-shaped sibling below, because `dvb` is not universally
+ * supported and a `max-block-size` that silently computes to `none` is the
+ * unstyled case this file exists to avoid. */
+.play-map {
+  max-block-size: 60vh;
+  max-block-size: 60dvb;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+
+:root[data-ui="compact"] .play-map,
+:root[data-ui="compact-short"] .play-map {
+  pointer-events: none;
+}
+
+/* §7.6's contrast overlay, declared for the client to read.
+ *
+ * `--map-dim` is a **translucent overlay on the map layer** and
+ * `--map-outline` is the 3px outline on every placement and grid line. Both are
+ * consumed by `static/js/map/table.js`: the canvas is `aria-hidden` and a
+ * decorative mirror, so there is nothing here for CSS to select and everything
+ * for the renderer to draw.
+ *
+ * The values come from tokens because §10.1 measures the built stylesheet and a
+ * literal here is a colour no gate reads. A campaign's theme can override them
+ * through the same `--brand-*` vocabulary ADR 0054 defines, which is why they are
+ * properties on `:root` and not constants in the module. */
+:root {
+  --map-dim: 0.05;
+  --map-outline: var(--text-subtle);
+  --map-outline-width: 3px;
+}
+
+/* The document's own `<h1>`, which is the campaign's name rather than a page
+ * title. §7.2 makes it the route's heading and it is the only one on the page, so
+ * nothing here may introduce a second: this rule sets the type and the block
+ * spacing the action bar needs beneath it, and nothing else.
+ *
+ * `text-wrap: balance` rather than `pretty` because the heading is short — a
+ * campaign name — and balance is for the short case, while `pretty` is for a
+ * paragraph's last line. */
+.play-heading {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-lg);
+  text-wrap: balance;
+}
+
+/* --- The roll sheet ------------------------------------------------------- */
+
+/* The bar's own sheet, opened from the Roll control. §7.7's menu pattern: a
+ * bottom sheet on touch and TV rather than a popover anchored to a 44px trigger,
+ * because a popover above a 4.5rem bar on a 320px-wide phone has nowhere to go. */
+.roll-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.roll-term {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-inline-size: var(--target-min);
+  min-block-size: var(--target-min);
+  padding: var(--space-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.roll-term-name {
+  font-weight: 600;
+}
+
+.roll-term-summary {
+  font-size: 0.875em;
+  color: var(--text-muted);
+}
+
+/* --- Television ----------------------------------------------------------- */
+
+/* **TV is `[data-ui="tv"]`, never a width band** (ADR 0034): a 55" television and
+ * a 12.9" tablet in landscape are indistinguishable to CSS and need opposite
+ * layouts, so no rule below sits inside a `@media` naming `min-width`,
+ * `orientation`, `pointer` or `hover`.
+ *
+ * **§4.9's "no TV action bar": the television is view-only.** Its view intents
+ * live on the map and `End turn` is a player action, so at these tiers the bar is
+ * not the player's primary control surface and the rail is the one that matters.
+ * What changes is placement and density, not the set of controls — hiding the bar
+ * at a tier where a reader has no other way to reach Roll would be worse than the
+ * record's concern, which is that the bar must not *compete* with the map. */
+:root[data-ui="tv"] .play-actions,
+:root[data-ui="tv-wide"] .play-actions {
+  inset-inline: auto;
+  inset-inline-end: var(--space-4);
+  inset-block-end: var(--space-4);
+  inline-size: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+:root[data-ui="tv"] .shell--play .shell-rail,
+:root[data-ui="tv-wide"] .shell--play .shell-rail {
+  /* A side rail on a television, so it never covers the map the readers in the
+   * room are looking at. `inset-block-end` is reset because the bar is no longer
+   * pinned to the bottom edge and the sheet's anchor would float it mid-screen. */
+  inset-block: 0;
+  inset-inline: auto 0 0;
+  inline-size: var(--rail-right-tv);
+  max-block-size: none;
+  border-inline-end: 1px solid var(--border);
+}
+
+/* --- Reader preferences, in every mode ----------------------------------- */
+
+/* `prefers-reduced-motion` and `forced-colors` are **required in every mode**,
+ * and are deliberately the only two media features this file uses. The sheet
+ * animates one property — the rail's `translate` — and a reader who cannot
+ * tolerate motion gets it as a state rather than a movement. */
+@media (prefers-reduced-motion: reduce) {
+  .shell--play .shell-rail {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .play-actions,
+  .roll-term {
+    background: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+
+  .roll-term-name {
+    color: CanvasText;
+  }
+
+  .roll-term-summary {
+    /* `GrayText` rather than an opacity, because `forced-colors` replaces the
+     * palette and an opacity survives it as a translucent wash over an unknown
+     * background — which is exactly the low-contrast outcome the mode exists to
+     * prevent. */
+    color: GrayText;
+  }
+
+  .play-map {
+    border-color: CanvasText;
+  }
+}

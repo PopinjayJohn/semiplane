@@ -200,8 +200,15 @@ func TestThePlayMatrixThroughTheRouter(t *testing.T) {
 			// the socket: the library has taken the connection over and owns it from
 			// here, and `CloseNow` below is what releases it. There is no HTTP body to
 			// close and closing one would close the table.
+			// `/ws` and not `/play`: architecture S-9 puts the tabletop's document
+			// at `/c/{slug}/play` and the upgrade at `/c/{slug}/ws`, and phase 7
+			// mounted the socket at `/play` only because there was no document to
+			// serve there yet. Dialling `/play` now answers 200 with HTML, which is
+			// exactly what the browser got before phase 9 fixed it -- so this dial
+			// is the assertion that the split is real, and it fails loudly rather
+			// than passing against a page.
 			conn, _, err := websocket.Dial(t.Context(),
-				"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+testCase.slug+"/play",
+				"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+testCase.slug+"/ws",
 				&websocket.DialOptions{HTTPHeader: handshakeHeader(testCase.user)},
 			)
 			if err != nil {
@@ -358,7 +365,7 @@ func TestThePlaySocketOutlivesAGracefulShutdownWithTheStoreStillOpen(t *testing.
 	//
 	//nolint:bodyclose // The body is the socket; see above.
 	conn, _, err := websocket.Dial(t.Context(),
-		"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+inst.campaign.Slug+"/play",
+		"ws"+strings.TrimPrefix(endpoint, "http")+"/c/"+inst.campaign.Slug+"/ws",
 		&websocket.DialOptions{HTTPHeader: handshakeHeader(inst.session())},
 	)
 	if err != nil {

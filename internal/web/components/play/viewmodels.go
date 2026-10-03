@@ -62,6 +62,16 @@ const (
 	// PanelHeadingID is that section's heading, which its `aria-labelledby`
 	// names.
 	PanelHeadingID = "token-list-heading"
+	// PanelRegionID is the token list's element id: the target of UI §7.2's
+	// fourth skip link and the name of the region its `role="region"` declares.
+	//
+	// A separate constant from `PanelTestID` because an id and a hook are two
+	// namespaces a reader should not have to compare by eye, and because this one
+	// is *addressed* — by an `href` and by the focus a skip link moves — where a
+	// `data-testid` is only ever selected. A rename here that does not move the
+	// skip link is a link that moves focus nowhere, which §7.2 calls worse than no
+	// skip link at all.
+	PanelRegionID = "play-token-list"
 	// CountTestID is the panel's own count line.
 	CountTestID = "token-list-count"
 	// EmptyTestID is the no-placements-yet state.

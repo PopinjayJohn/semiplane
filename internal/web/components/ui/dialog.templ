@@ -76,7 +76,7 @@ templ Dialog(view DialogView) {
 	</button>
 	<div
 		id={ view.ID }
-		class="dialog"
+		class={ TargetClass + " dialog" }
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby={ view.ID + "-title" }

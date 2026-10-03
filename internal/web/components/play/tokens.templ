@@ -73,11 +73,26 @@ import (
 // version of that everyone else can see too.
 //
 // The panel is a *panel*, not a landmark: the rail around it is the landmark and
-// this is one of its contents.
+// this is one of its contents. **It is still a region**, though, and that is not a
+// contradiction: `<section>` carrying an accessible name *is* `role="region"` by
+// specification, so the explicit role below states what the element already is —
+// and stating it is what makes `id`, `role` and `aria-labelledby` three
+// attributes a §10.2 audit can check against each other rather than one implicit
+// claim.
+//
+// The `id` is UI §7.2's fourth skip link's target (`PanelRegionID`), and
+// `tabindex="-1"` is what makes activating that link land somewhere a screen
+// reader announces instead of at the top of a scroll container — the same pairing
+// `shellMain` and `chrome.CampaignNav` make for their own skip links. The class
+// is §7.3's, because §10.6's audit walks every element carrying a `tabindex` and
+// this one is in that set.
 templ TokenList(view TokenListView) {
 	<section
-		class="panel token-list"
+		id={ PanelRegionID }
+		class={ "panel token-list " + ui.TargetClass }
+		role="region"
 		aria-labelledby={ PanelHeadingID }
+		tabindex="-1"
 		data-state={ panelState(view.Placements) }
 		data-testid={ PanelTestID }
 	>
