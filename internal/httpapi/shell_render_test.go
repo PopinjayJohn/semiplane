@@ -479,6 +479,10 @@ func newCampaignFixture(t *testing.T) *campaignFixture {
 		// `internal/httpapi/theme`. What this file audits is the `<link>` the
 		// shell emits, which is a shell concern and is asserted here.
 		nil,
+		// `secrets.Handler` is nil for the same reason once more: it answers JSON
+		// and mutates a file, and a document audit has nothing to say about either.
+		// Its own tests mount it on a mux of their own.
+		nil,
 	)
 
 	// Signed in as the campaign's GM. The editor and the stream are GM-only, so an

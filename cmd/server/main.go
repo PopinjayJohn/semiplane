@@ -459,6 +459,11 @@ func runServer(_ []string) error {
 	playRoute := newPlayRoute(plane.hub, logger)
 	pluginRoute := newPluginRoute(db, plugins, plane.hub, logger)
 	themeRoute := newThemeRoute(contentRoots, logger)
+	// `db`, not `httpStore`. `httpStore` is the union the HTTP surface needs and its
+	// point is to assert that `db` satisfies three interfaces at compile time; the
+	// reveal handler's `secrets.Ledger` is a fourth, and passing the concrete handle
+	// is what makes that assertion happen at this call rather than nowhere.
+	secretRoute := newSecretRoute(contentRoots, db, logger)
 	// Set here rather than in the literal above, for the reason the literal's own
 	// comment gives: the account routes are built before the content roots are
 	// open, and the theme handler cannot exist without them. §4.12.3's GM notice
@@ -483,6 +488,7 @@ func runServer(_ []string) error {
 			playRoute,
 			pluginRoute,
 			themeRoute,
+			secretRoute,
 		),
 		ReadHeaderTimeout: cfg.ReadTimeout,
 		ReadTimeout:       cfg.ReadTimeout,

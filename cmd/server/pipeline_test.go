@@ -331,6 +331,7 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 		newPlayRoute(i.plane.hub, discardLogger()),
 		newPluginRoute(i.store, i.plugins, i.plane.hub, discardLogger()),
 		newThemeRoute(roots, discardLogger()),
+		newSecretRoute(roots, i.store, discardLogger()),
 	)
 }
 
@@ -589,10 +590,10 @@ func TestReadyzRendersThePipelineCountersAsZeros(t *testing.T) {
 	// process with no content, no store and no account surface at all — so the
 	// router is built with every one of them nil rather than with a fixture. The
 	// plugin route is among them: it renders over a live hub, which is exactly what
-	// this process has none of.
+	// this process has none of. The reveal route is the last of the nil ones.
 	handler := httpapi.NewRouter(
 		discardLogger(), testConfig(), registry,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 
 	recorder := httptest.NewRecorder()
