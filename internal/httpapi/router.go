@@ -13,6 +13,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
 	playroutes "github.com/semiplane/semiplane/internal/httpapi/play"
+	pluginroutes "github.com/semiplane/semiplane/internal/httpapi/plugins"
 	searchroutes "github.com/semiplane/semiplane/internal/httpapi/search"
 	wikiroutes "github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
@@ -83,7 +84,7 @@ type Store interface {
 // independently-runnable invariant from architecture §15 — the server starts and
 // answers /healthz — depends on neither.
 //
-// The five campaign-scoped handlers are nil-tolerant for the same reason and one
+// The seven campaign-scoped handlers are nil-tolerant for the same reason and one
 // more: a route package is wired by the composition root, so a router built
 // without one registers the rest and answers 404 for that route. That is a
 // *better* failure than the alternative, which is a router that panics on a nil
@@ -109,6 +110,7 @@ func NewRouter(
 	editRoute *editroutes.Handler,
 	eventsRoute *eventroutes.Handler,
 	playRoute *playroutes.Handler,
+	pluginRoute *pluginroutes.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
@@ -149,6 +151,7 @@ func NewRouter(
 	mountCampaignRoutes(
 		campaignMux,
 		wikiRoute, assetRoute, searchRoute, editRoute, eventsRoute, playRoute,
+		pluginRoute,
 	)
 
 	if backing != nil {
@@ -204,17 +207,24 @@ func NewRouter(
 // resolves overlapping patterns by specificity, not by registration order, so
 // reordering these lines cannot change which handler answers a path. It is ordered
 // the way a reader meets the surfaces — read the page, fetch what it names, find
-// it again, change it, be told it changed, then sit at the table — so that the
-// list reads as a product rather than as an alphabet.
+// it again, change it, be told it changed, roll a die, then sit at the table — so
+// that the list reads as a product rather than as an alphabet.
 //
-// Three of the six mount their own gate, and that is not an inconsistency:
-// `edit.Mount`, `events.Mount` and `play.Mount` wrap themselves in
-// `campaigns.RequireEdit`, `RequireEdit` and `RequirePlay` respectively, because
-// they are not all readable by the same reader. A caller who had to remember the
-// gate would eventually register the route without it. The `RequireRead` this
-// function sits under is layered underneath, not replaced: a `player` clears it and
-// is refused 403 by the route's own gate, and an anonymous reader of a public
-// campaign is challenged 401.
+// Four of the seven mount their own gate, and that is not an inconsistency:
+// `edit.Mount`, `events.Mount`, `play.Mount` and `plugins.Mount` wrap themselves in
+// `campaigns.RequireEdit`, `RequireEdit`, `RequirePlay` and — for the plugin route —
+// `RequirePlay`/`RequireRead` per route, because they are not all readable by the
+// same reader. A caller who had to remember the gate would eventually register the
+// route without it. The `RequireRead` this function sits under is layered underneath,
+// not replaced: a `player` clears it and is refused 403 by the route's own gate, and
+// an anonymous reader of a public campaign is challenged 401.
+//
+// **The plugin route mounts its own two gates and derives its own patterns**, and
+// neither is this file's to do: `plugins.Mount` reads the patterns from the UI
+// registry (§10.6's "naming a route is a matter of registering it") and wraps the
+// roller in `RequirePlay` and the link preview in `RequireRead`. So the only job here
+// is to pass the handler through — and listing it is still what makes it behind this
+// list's `Resolve` and `RequireRead`, which is the layer underneath.
 //
 // `/play` is the route where layering two gates matters most, because it is the
 // one whose absence of the inner gate is not a defect anybody would notice until
@@ -234,6 +244,7 @@ func mountCampaignRoutes(
 	editRoute *editroutes.Handler,
 	eventsRoute *eventroutes.Handler,
 	playRoute *playroutes.Handler,
+	pluginRoute *pluginroutes.Handler,
 ) {
 	if wikiRoute != nil {
 		wikiroutes.Mount(mux, wikiRoute)
@@ -257,5 +268,9 @@ func mountCampaignRoutes(
 
 	if playRoute != nil {
 		playroutes.Mount(mux, playRoute)
+	}
+
+	if pluginRoute != nil {
+		pluginroutes.Mount(mux, pluginRoute)
 	}
 }

@@ -41,7 +41,6 @@ import (
 
 	"golang.org/x/net/html"
 
-	"github.com/semiplane/semiplane/internal/domain"
 	"github.com/semiplane/semiplane/internal/domain/rules"
 	"github.com/semiplane/semiplane/internal/plugin"
 	"github.com/semiplane/semiplane/internal/realtime"
@@ -1136,32 +1135,31 @@ func sentenceAfter(rendered, marker string) string {
 // frameRefusal builds an error carrying a `rejected` frame, the shape
 // `realtime.ResolutionFor` recovers.
 //
-// **Produced by asking `realtime.Core` to refuse, not by hand.** The type `ResolutionFor`
-// unwraps for — `*realtime.rejection` — is unexported and cannot be constructed from outside
-// `internal/realtime`, so a hand-built error carrying a `ServerRejected` would be a fixture
-// that does not reach the path it claims to. `Core.Resolve` returns exactly the shape
-// `ReadRefusal`'s first branch reads: a `Resolution` holding a `ServerRejected` for the
-// frame's own `seq`, wrapped in the unexported refusal. This route through the real type is
-// the only way to reach it, and that is worth stating — it is why the branch is tested at
-// all rather than assumed.
+// **Produced by `realtime.Refuse`, not by hand.** The type `ResolutionFor` unwraps for —
+// `*realtime.rejection` — is unexported, so a hand-built error carrying a `ServerRejected`
+// would be a fixture that does not reach the path it claims to, and the branch would be
+// untested. The constructor is the only door, which is why it is exported.
+//
+// It used to be `realtime.Core`, which was the only thing that could produce one and was
+// deleted by ADR 0039's replacement (phase 8), so this fixture reached through the
+// resolver rather than through the seam. That was working by accident: the branch is
+// about the **carrier**, not about a system that resolves nothing, and it is reachable
+// from any resolver that answers a frame — `Hub.Dispatch` over a UI plugin's dispatch is
+// the case that has no peer to send to.
 func frameRefusal(t *testing.T, seq realtime.ClientSeq) error {
 	t.Helper()
 
-	_, err := realtime.Core{}.Resolve(t.Context(), realtime.Intent{
-		Campaign: 1,
-		Actor:    realtime.UserID(10),
-		Role:     domain.RolePlayer,
-		Frame: &realtime.ClientIntent{
-			Type: realtime.TypeIntent,
-			Seq:  seq,
-			Op:   realtime.Op(dice.OpRoll),
-			Args: realtime.IntentArgs{Placement: "p1", Expr: "1d20"},
-		},
-	})
+	err := realtime.Refuse(seq, realtime.RejectUnknownOp,
+		"dice_test: a refusal carrying a frame for seq "+strconv.FormatUint(uint64(seq), 10))
 	if err == nil {
-		t.Fatalf("realtime.Core resolved an intent, so there is no frame-shaped refusal to " +
-			"read; the second branch of ReadRefusal is unreachable and this test is testing " +
+		t.Fatal("realtime.Refuse returned no error, so there is no frame-shaped refusal to " +
+			"read; the first branch of ReadRefusal is unreachable and this test is testing " +
 			"nothing")
+	}
+
+	if resolution := realtime.ResolutionFor(err); resolution.Answer == nil {
+		t.Fatalf("realtime.Refuse(%d) carried no answer, so ResolutionFor recovers nothing "+
+			"and the branch under test is not reached: %v", seq, err)
 	}
 
 	return fmt.Errorf("dice_test: the frame-shaped refusal: %w", err)

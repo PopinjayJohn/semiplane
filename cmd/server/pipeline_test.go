@@ -73,6 +73,17 @@ type instance struct {
 	// asks the registry the product was handed, and a test that built its own
 	// registry would be asserting about a different process.
 	plane *realtimePlane
+
+	// plugins is the registry set the composition root registered, for the same
+	// reason: a fixture holding an empty gameplay registry would serve a wiki that
+	// renders every plugin kind as prose and refuse every roll, and a test written
+	// against that asserts about a product this binary does not ship.
+	//
+	// **Built through `registerPlugins` and not assembled by hand**, so the tests
+	// below exercise the real registration path — including the refusals — rather than
+	// a fixture that resembles it. `newInstance` fails the test if it cannot, which is
+	// the correct place for a broken checkout to be reported.
+	plugins plugins
 }
 
 // newInstance opens a store, creates one account, and registers one campaign with
@@ -121,6 +132,16 @@ func newInstance(t *testing.T) *instance {
 		base:     base,
 		owner:    owner,
 	}
+
+	// Through the composition root's own constructor. `discardLogger` because the only
+	// line it writes is the "plugins registered" summary, and a test asserting on log
+	// output would want the logger it built — which is what the boot-pass tests do.
+	registeredPlugins, err := registerPlugins(discardLogger())
+	if err != nil {
+		t.Fatalf("register the plugins: %v", err)
+	}
+
+	inst.plugins = registeredPlugins
 
 	inst.campaign = inst.registerCampaign(fixtureSlug)
 
@@ -194,7 +215,7 @@ func (i *instance) assemble(
 		roots,
 		registered,
 		i.store,
-		pageKinds{},
+		i.plugins.pageKinds(),
 		newContentSignals(i.registry, discardLogger()),
 		// No event hub. The pipeline indexes either way, and a test asserting the
 		// index converges must not also depend on a browser being attached.
@@ -271,7 +292,7 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 	// the same two resources, and the order that matters: the plane stops, then the
 	// pipeline, then the roots, then the store. A flush issued after the pipeline
 	// had stopped writing is a flush contending with a writer that is going away.
-	i.plane = newRealtimePlane(ctx, i.store, i.registry, discardLogger())
+	i.plane = newRealtimePlane(ctx, i.store, i.registry, i.plugins, discardLogger())
 	i.t.Cleanup(func() {
 		closeRealtimePlane(i.t.Context(), i.plane, discardLogger(), closeTimeout)
 	})
@@ -291,7 +312,7 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 		newWikiRoute(
 			roots,
 			renderers,
-			pageKinds{},
+			i.plugins.pageKinds(),
 			i.lister,
 			instance,
 			discardLogger(),
@@ -302,12 +323,13 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 			roots,
 			i.store,
 			editorRenderers(renderers),
-			pageKinds{},
+			i.plugins.pageKinds(),
 			instance,
 			discardLogger(),
 		),
 		newEventRoute(hub, discardLogger()),
 		newPlayRoute(i.plane.hub, discardLogger()),
+		newPluginRoute(i.store, i.plugins, i.plane.hub, discardLogger()),
 	)
 }
 
@@ -328,7 +350,9 @@ func (i *instance) renderers(
 			continue
 		}
 
-		renderers[registered[idx].Slug] = content.NewRenderer(registered[idx].Slug, pageKinds{})
+		renderers[registered[idx].Slug] = content.NewRenderer(
+			registered[idx].Slug, i.plugins.pageKinds(),
+		)
 	}
 
 	return renderers
@@ -558,13 +582,16 @@ func TestReadyzRendersThePipelineCountersAsZeros(t *testing.T) {
 	// registry, with no campaign registered and nothing failed.
 	newContentSignals(registry, discardLogger())
 
-	// No account routes and none of the six campaign-scoped handlers. The
+	// No account routes and none of the seven campaign-scoped handlers. The
 	// independently-runnable invariant from architecture §15 is that the server
 	// starts and answers `/healthz` from phase 1 onward, and that has to hold for a
 	// process with no content, no store and no account surface at all — so the
-	// router is built with every one of them nil rather than with a fixture.
+	// router is built with every one of them nil rather than with a fixture. The
+	// plugin route is among them: it renders over a live hub, which is exactly what
+	// this process has none of.
 	handler := httpapi.NewRouter(
-		discardLogger(), testConfig(), registry, nil, nil, nil, nil, nil, nil, nil, nil,
+		discardLogger(), testConfig(), registry,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 
 	recorder := httptest.NewRecorder()

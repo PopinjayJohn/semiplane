@@ -381,21 +381,35 @@ func attackModes(pack *Pack, subject *creature) []Advantage {
 //  1. Read the attacker's declared attack — **the creature's data**.
 //  2. Draw the attack die, applying advantage from the pack's condition rows on **both**
 //     participants — **data**, because every condition row says what it does.
-//  3. Ask the critical rule whether the attack die alone crits — **a hook**, and its
-//     answer also decides the hit, because 5e's natural 20 is an automatic critical
-//     hit that bypasses armour class.
-//  4. Compare against the defender's armour class, from the pack's formula — **data**.
-//  5. Resolve the weapon's mastery — **a hook**, because it is a fold over two ordered
+//  3. Decide the hit: a maximum attack die hits whatever else is true, and otherwise
+//     the total is compared against the defender's armour class, from the pack's
+//     formula — **data**.
+//  4. Resolve the weapon's mastery — **a hook**, because it is a fold over two ordered
 //     lists.
-//  6. Roll the damage dice and ask the critical rule again, now with them — **a hook**,
-//     and 2024's second half.
-//  7. Apply the damage, clamped at zero hit points.
+//  5. Roll the damage dice and ask the critical rule whether the attack was a critical
+//     hit — **a hook**, and both editions' policy in one place.
+//  6. Apply the damage, clamped at zero hit points.
 //
-// **The critical rule is consulted twice**, once before the damage dice exist and once
-// after. That is deliberate: it keeps the *policy* — whether a maximum attack die crits
-// at all — in one place, the rule, instead of duplicating it in the resolver as a
-// "natural 20 always hits" line that would need its own toggle. Two calls to one pure
-// function with two inputs, and the resolver never decides what a critical is.
+// # The hit and the critical are two questions, and this file used to ask them as one
+//
+// **Asking the critical rule whether the attack landed was wrong, and the shape of the
+// defect is worth recording because it is quiet.** `defaultCritical` short-circuits on the
+// defender's exemption — 2024's `crit_ignored_by_incapacitated` answers `false` before
+// it consults the attack die at all — so a resolver that took the rule's answer as "it
+// hit" made a **natural 20 miss** against an unconscious, paralysed or incapacitated
+// defender under 2024, while the identical roll auto-hit under 2014 and against any
+// unexempted target. Measured, before this was fixed: `ac: 30`, `unconscious`, a natural
+// 20, a total of 21, `met: false` and no hit.
+//
+// The rule itself was never wrong. A natural 20 is an automatic critical hit in 5e, and
+// 2024's change is that it does **not** automatically count as a *critical hit* against an
+// incapacitated target — which is a statement about the damage dice, not about whether
+// the sword lands. So the exemption governs what a 20 does to the dice (below, in
+// `resolveDamage`) and **nothing else**.
+//
+// `TestANaturalTwentyHitsUnderBothEditionsAndTheExemptionDoesNotMakeItMiss` is what
+// holds it, and it is a table over both editions because either one alone is satisfiable
+// by a constant.
 func (e *Engine) resolveAttack(
 	_ context.Context,
 	call rules.Context,
@@ -477,13 +491,6 @@ func (e *Engine) resolveAttack(
 	total := natural + bonus + attack.AttackBonus
 	exempt := exemptFromCritical(e.pack, &defender)
 
-	onFace, err := e.rules.Critical.Critical(criticalInput{
-		pack: e.pack, natural: natural, defenderExempt: exempt,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dnd5e: the critical rule on %q: %w", args.Attack, err)
-	}
-
 	record := rollRecord{
 		Expr:      attack.Name,
 		Label:     "attack",
@@ -491,7 +498,7 @@ func (e *Engine) resolveAttack(
 		Natural:   &natural,
 		Advantage: advantageScore(mode),
 		Target:    defence,
-		Met:       onFace || total >= defence,
+		Met:       e.hitsOnFace(natural) || total >= defence,
 	}
 
 	// A miss is a complete resolution and produces one mutation. The alternative —
@@ -576,6 +583,39 @@ func exemptFromCritical(pack *Pack, subject *creature) bool {
 	}
 
 	return false
+}
+
+// hitsOnFace reports whether a maximum attack die lands whatever the armour class.
+//
+// **A resolver rule, and deliberately not a hook and not the critical rule.** Three
+// reasons, and the first is the bug this function exists to fix:
+//
+//   - **The critical rule's answer is not the hit's answer.** `defaultCritical`
+//     short-circuits on 2024's `crit_ignored_by_incapacitated`, so asking it "did it
+//     hit?" made a natural 20 *miss* against an unconscious defender. The exemption is
+//     about whether a 20 counts as a critical hit — what it does to the damage dice —
+//     and says nothing about whether the attack lands.
+//   - **No toggle governs it.** `crit_attack_die_max` switches the *critical* off, and
+//     `TestTheCriticalRuleIsReadFromThePacksTogglesAndNotFromGo` asserts a pack with it
+//     off never crits — including on a 20. Reading the toggle here would make that
+//     "never crits" into "never hits", which is a different claim and a wrong one.
+//   - **It is 5e's automatic critical hit**, which is a statement about the attack roll
+//     and not about the dice that follow, so it is shared by both editions and is
+//     therefore not what separates them.
+//
+// **One die only**, and the count is read for the reason `oneDie` gives: `natural` is a
+// **sum** when the pack's primary die draws more than one, and a sum of two d20s is not a
+// natural 20. A pack that rolls `2d10` as its attack die has no face value at all, so
+// there is nothing for this to answer and the comparison is against the armour class
+// alone.
+//
+// `natural > 0` is the "no attack die was rolled" guard, for the reason
+// `defaultCritical` keeps: a resolution that reached here without rolling must not
+// acquire an automatic hit from a zero.
+func (e *Engine) hitsOnFace(natural int) bool {
+	faces, count := e.pack.PrimaryDie()
+
+	return count == 1 && natural > 0 && natural == faces
 }
 
 // resolveDamage rolls a hit's damage and reports whether it was a critical hit.

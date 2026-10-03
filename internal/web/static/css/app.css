@@ -39,7 +39,19 @@
 /* templ renders server-side, so a class name lives in Go source, not in a
  * template file the scanner would find. Pointing the scanner at both roots is
  * what keeps a `data-testid`-adjacent utility from silently vanishing from the
- * built stylesheet. */
+ * built stylesheet.
+ *
+ * **Every root that holds rendered markup is named here**, and `internal/web/plugins`
+ * is one of them from phase 8: §10.6's reference plugins render their centre slot
+ * from Go string constants — `dice`'s `widgetMarkup`, `linkpreview`'s
+ * `hookMarkup` — so their classes live in Go source under this tree and nowhere
+ * else. A glob missing that directory is not a compile error and not a test
+ * failure: it is a plugin whose Tailwind utility never reaches the stylesheet,
+ * which renders unstyled while every other gate passes. That is the same class of
+ * failure as a missing `@import` above, and it is why this is asserted rather than
+ * remembered — `TestTheBuiltStylesheetScansThePluginSources` reads the **built**
+ * file and requires a class that exists only in those sources. */
 @source "../../components/**/*.templ";
+@source "../../plugins/**/*";
 @source "../../../httpapi/**/*.go";
 @source "../../../domain/**/*.go";
