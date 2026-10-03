@@ -10,8 +10,13 @@
  * sheet imported before either of them loses every value in it, and nothing
  * fails — the file is in the build and every rule misses.
  *
- * **X and not a test failure.** It is a
- * product that renders unstyled while every §10.1, §10.2 and §10.6 gate passes,
+ * **This file is imported by `app.css`, after `tv.css`** -- and the sentence is
+ * load-bearing rather than decorative: `css_test.go` reads it, so deleting the
+ * `@import` without moving this sentence is a red test rather than a sheet
+ * nobody notices has stopped applying.
+ *
+ * **A missing `@import` is not a compile error and not a test failure.** It is
+ * a product that renders unstyled while every §10.1, §10.2 and §10.6 gate passes,
  * because the markup is correct and only the bytes are missing. So
  * `components/play/css_test.go` holds the build, and
  * `TestEveryClassTheDocumentRendersHasARuleInThisSheet` holds the selectors —

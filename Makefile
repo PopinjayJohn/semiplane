@@ -296,7 +296,7 @@ test: ## Run tests
 # and the claim a name makes is enforced by the guard, not by the wildcard.
 A11Y_ROUTE_PKGS := $(wildcard ./internal/httpapi/wiki ./internal/httpapi/search \
 	./internal/httpapi/assets ./internal/httpapi/edit ./internal/httpapi/plugins \
-	./internal/httpapi/events ./internal/httpapi/theme)
+	./internal/httpapi/events ./internal/httpapi/theme ./internal/httpapi/play)
 
 # Component packages, listed separately rather than folded into A11Y_PKGS
 # silently, because for **two whole phases** they were absent. `./internal/web`
@@ -336,10 +336,51 @@ A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi \
 #   ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget
 #     |EntitledToAssert|DegradedWarning
 #                             the composition's own invariants
-A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|ScanCoverage|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType|ExactlyOneH1|SkipLink
+#   SheetIsInsideTheBuild | the per-sheet "is this sheet in the built artefact"
+#     |SheetDeclaresNo     tests, and the "does every class this sheet styles
+#     |RuleInTheSheet      exist in the document" tests that go with them. Added
+#     |SelectorInThisSheet in phase 9, and the reason is in the history: three work
+#     |SheetIsResponsibleFor items independently shipped
+#                         `TestTheSheetIsInsideTheBuild` and the pattern below
+#                         matched **none of them**, so every sheet's
+#                         built-artefact assertion was written, tested by
+#                         `make check`, and invisible to `make a11y` -- which is
+#                         the target whose whole job is the claims that read
+#                         `static/dist/app.css`. Deleting a `@import` left
+#                         `make a11y` green on all three.
+#
+#                         It is a name in a list of what the gate claims to run,
+#                         not a rename to quiet the guard. The guard is about a
+#                         package *contributing*; this makes the contribution
+#                         actually execute, which is the other half of the same
+#                         problem and the half `AGENTS.md` records twice: the
+#                         wiki route held 23 tests and the search route 33, and
+#                         neither matched a single alternative.
+A11Y_TESTS := Contrast|Structural|Vocabulary|RepresentsTheRoutes|Target|TvMode|TvRail|PreferencesAreNever|FocusIndicator|BuiltStylesheet|ScanCoverage|InheritedTypeSize|HoverRule|ProductName|ViewModelLayers|LoadFailureIs|CampaignFallsBack|SignOutTarget|EntitledToAssert|DegradedWarning|DegradedNotice|HeadingLevels|EveryRoute|Identifier|IsTheStatePackageType|ExactlyOneH1|SkipLink|SheetIsInsideTheBuild|SheetDeclaresNo|RuleInTheSheet|SelectorInThisSheet|SheetIsResponsibleFor
 
 .PHONY: a11y
-a11y: ## Run the UI §10.1/§10.2/§10.6 accessibility gate
+# `css` and `templ` are prerequisites, and they are here because **this target
+# reads a built artefact and `go test -run` on a missing one reports the wrong
+# failure.**
+#
+# Two of §10.1's and §10.6's claims are about `static/dist/app.css`, and the
+# per-route audits need the served documents, which need `*_templ.go`. Run
+# standalone on a fresh checkout -- which AGENTS.md documents as a supported
+# invocation, "just the §10.1/§10.2/§10.6 gate" -- this target used to report:
+#
+#     FAIL github.com/semiplane/semiplane/internal/web [setup failed]
+#     FAIL github.com/semiplane/semiplane/internal/httpapi/theme [setup failed]
+#
+# which reads as *the audits are broken* and sends a reader looking for a
+# missing audit. The truth is that nothing was built. That is the same failure
+# `AGENTS.md` records for the `A11Y_ROUTE_PKGS` wildcard and for the `a11y`
+# guard's own `-e` bug, in a third place: **a gate whose failure names something
+# other than what is wrong is worse than no gate**, because it costs a reader
+# the one thing they cannot afford, which is time spent on the wrong thing.
+#
+# `check` already ran both before reaching here, so this costs nothing in the
+# normal path and makes the standalone invocation correct.
+a11y: css templ ## Run the UI §10.1/§10.2/§10.6 accessibility gate
 	@echo "==> a11y"
 	@# The guard below exists because `go test -run` reports success when the
 	@# pattern matches nothing. A route package can be listed in A11Y_PKGS, hold
