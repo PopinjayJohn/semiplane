@@ -30,6 +30,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/edit"
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
+	"github.com/semiplane/semiplane/internal/web/components/secret"
 )
 
 // forbiddenVocabulary is the two words that name entities which do not exist.
@@ -310,13 +311,45 @@ func TestTheSaveStateIsAPoliteStatus(t *testing.T) {
 			"announce every save state twice", statuses)
 	}
 
-	// A plain `GET` is not a conflict, so it must not carry an alert either. The
-	// conflict notice is the *only* assertive surface in the editor, and asserting
-	// it is absent here is what proves the alert arrives with the 412 rather than
-	// being present-but-empty on every page.
-	if alerts != 0 {
-		t.Errorf("the editor carries %d role=alert regions on a plain GET, want 0; "+
-			"§7.5's assertive list is a 412, a reveal and a capped reconciliation", alerts)
+	// A plain `GET` is not a conflict, so the **conflict notice** must not be here.
+	//
+	// Asserting "zero alerts" was the old form of this claim and it is now both
+	// wrong and weaker than what replaces it. §7.5's assertive list is three things —
+	// a 412, a reveal, a capped reconciliation — and phase 10 put the second on this
+	// page, so the count is 1 and asserting 0 would assert that the feature is
+	// absent.
+	//
+	// **The property is emptiness, not count**, and it is what the count was a proxy
+	// for: a live region present at load announces nothing, so an assertive region
+	// that ships *empty* is inert, while one that ships with content would speak on
+	// every page load. So this asserts both halves separately — one alert, and it is
+	// the outcome region, and it is empty — which is a stronger claim than the count
+	// it replaces and does not depend on how many assertive surfaces the editor grows.
+	if alerts != 1 {
+		t.Errorf("the editor carries %d role=alert regions on a plain GET, want 1: "+
+			"the reveal outcome region and nothing else. §7.5's assertive list is a "+
+			"412, a reveal and a capped reconciliation, and a plain GET is only the "+
+			"second", alerts)
+	}
+
+	if !rendered.hasTestID(secret.OutcomeRegionTestID) {
+		t.Error("the editor carries an assertive region but not the reveal outcome " +
+			"region, so the alert that is present is one this test did not expect")
+	}
+
+	if body := rendered.textOf(secret.OutcomeRegionTestID); strings.TrimSpace(body) != "" {
+		t.Errorf("the reveal outcome region ships with content on a plain GET: %q. "+
+			"A live region present at load announces nothing, and that is the "+
+			"property; one that arrives already populated speaks on every page load",
+			body)
+	}
+
+	// And the conflict notice specifically is absent, which is the claim the count
+	// used to stand in for.
+	if rendered.hasTestID("conflict-notice") {
+		t.Error("the editor renders a conflict notice on a plain GET. The 412's " +
+			"assertive surface has to arrive with the 412, not be present-but-empty " +
+			"on every page")
 	}
 }
 
