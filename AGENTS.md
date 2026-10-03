@@ -104,9 +104,19 @@ fails when a listed package contributes no test matching `A11Y_TESTS`, naming th
 package. **It caught two more silent passes the moment it landed**, which is the
 argument for it.
 
-So `A11Y_ROUTE_PKGS` is a `$(wildcard …)`: naming a route is a matter of creating
-its directory, and a new route cannot be added without the claim. Three rules
-follow, and each cost a PR:
+**Adding a route to this gate is two steps, and the second is the one that is
+skipped.** `A11Y_ROUTE_PKGS` is a `$(wildcard …)` over **named** paths, and
+`$(wildcard a b c)` is `a b c` with the missing ones dropped — it is not a directory
+scan. The wildcard buys exactly one thing: a package named here *before* it lands
+cannot fail the target. It does **not** mean that creating a route's directory adds
+it, and this file claimed the opposite until phase 8 proved it false.
+
+`internal/httpapi/plugins` is the proof. #64 landed the directory carrying six
+§10.2 audits, and the gate never looked at them, because nobody edited the
+Makefile — and **nothing said so**, because `go test -run` exits 0 on a pattern
+matching nothing, which is the same silent pass the guard above exists for. So:
+**creating the directory is not the claim; naming it is.** Three rules follow, and
+each cost a PR:
 
 - **A test's name is what makes the gate find it.** `A11Y_TESTS` is a list of
   substrings; the search route had 33 tests including a landmark audit, a
@@ -143,6 +153,32 @@ product that renders unstyled while every other gate passes. `grep -c
 `TestTheBuiltStylesheetCarriesTheTokensAndTheGrid` is what holds it, because
 "the shell renders" and "the shell is unstyled" are the same observation from
 every angle a test can take unless the test asks whether the bytes exist.
+
+**The same failure, from the `@source` globs rather than the `@import`s.** Every root
+holding rendered markup must be named there, and `internal/web/plugins` is one of them:
+the reference plugins render their centre slot from Go string constants, so their classes
+are in Go source under that tree and nowhere else. A glob missing it is not a build
+failure, not an accessibility failure, and not anything a §10.2 audit can see — the
+markup is correct and the browser finds no rule for the class.
+`TestTheBuiltStylesheetScansThePluginSources` walks the plugin sources, collects the
+classes their `class="…"` attributes declare, and requires a rule for each in the
+**built** file. Three things make that assertion real rather than decorative, and each
+was a failure before it was fixed:
+
+- **The walk reads Go string literals through `go/parser`, not raw text.** A
+  `class="untargeted"` inside a comment explaining that a rename would be caught is
+  prose, and a walk that read comments reported a class the stylesheet was missing — a
+  loud and *wrong* failure, which is worse than none, because the next real one gets
+  ignored.
+- **It needs a class nothing outside the plugin tree names** (`ScanSentinelClass`, held
+  unique by its own package's test). Every class the shipped plugins use is a
+  `shell.css` component class, so without a sentinel the walk passes with the glob
+  deleted — the silent pass this exists to prevent.
+- **`hasRule` matches a selector, not a substring.** `strings.Contains(css, ".notice")`
+  answers `true` for a stylesheet carrying only `.notice--warning`, and the built file
+  carries exactly three `.notice--*` rules — so a substring check reported the roller's
+  `.notice` present on the strength of a modifier it never uses. Deleting the bare rule
+  from the build is what found it.
 
 Run `make lint-verify` after **any** edit to `.golangci.yml`. In golangci-lint
 v2, `linters` and `formatters` are separate top-level sections; a v1-style file
@@ -278,21 +314,46 @@ internal/httpapi/ handlers, routing, middleware
   ├─ identity/   session cookie → domain.Requestor, on the request context
   ├─ campaigns/  the S-8 access gates, and campaign registration
   ├─ accounts/   the sign-in and campaign-list routes
+  ├─ plugins/    the two reference UI plugins, mounted behind RequirePlay/RequireRead
   └─ wiki/       the read path, and the S-5.7 redaction ordering
 internal/campaignroots/ opens one os.Root per campaign at startup
+internal/domain/rules/    the plugin contract, and the conformance suite
+  ├─ conformance/ the audits every `rules.System` is held against
+  ├─ determinism/ the scope a house-rule module may claim, and the lint rule
+  └─ houserules/  keyed, first-match-wins settings; data-level only
+internal/domain/systems/  gameplay systems; one id, packs as data
+  └─ dnd5e/       the 5e engine, its base pack, and the two editions as overlays
 internal/web/     templ components and static assets
   ├─ components/  the shell document, the auth pages, and their view models
   │  ├─ chrome/   the four landmarks: banner, nav, rail, contentinfo
   │  └─ ui/       §4.7's eleven states and the primitive library
+  ├─ plugins/     the UI tier: `registry.go`, and each plugin's own component
   └─ static/css/  app.css imports tokens.css, shell.css and tv.css in that order
 docs/             Hugo documentation site (its own project root)
 demo-vault/       the demo campaigns (phase 11)
 scripts/          sync-labels.sh, check-site-links.sh, check-site-structure.sh
 ```
 
-Note two subdirectories the architecture overview's module tree requires and that do not
-exist yet: `internal/domain/rules/` and `internal/domain/systems/` (phase 8), and
-`internal/web/plugins/` (phase 8). `scripts/check-demo.sh` arrives with phase 11.
+**`cmd/server/systems.go` is where every registration in this process happens**, and it
+is a separate file rather than part of `wiring.go` because the rule it embodies is one
+of this repository's oldest: there is no `init()`, no package-level registry, and no
+second door. The order there is the §10.5 chain — **edition → gameplay registry → UI
+tier → house-rule registry** — and a reader asking "what does this binary resolve
+under?" reads that one file. Two consequences worth stating:
+
+- **`defaultEdition` is the line that chooses the edition**, and it is a constant
+  rather than configuration or a build tag because ADR 0011's argument is that a
+  choice a reviewer cannot see is a choice nobody can review. `dnd5e.SystemID` is one
+  id for both editions (they differ by pack version, which is its own fingerprint
+  component), so a build registers exactly one — and `plugin.Register` refuses a
+  duplicate id, which is the correct refusal rather than an obstacle.
+- **`kindRegistry` adapts the gameplay registry to `domain.PageKindRegistry`,** and it
+  is the composition root's because that is where both types meet. `kind` is
+  registry-backed (S-3.3, §10.7), so a page's `kind: ancestry` is a game object in a
+  build shipping 5e and prose in one that is not — and a hand-written list beside the
+  registry would be two vocabularies that agree until an overlay disagreed with one.
+
+`scripts/check-demo.sh` arrives with phase 11.
 
 Dependencies point inward. `httpapi` → `domain`/`store`; `domain` imports nothing from the
 project. **`domain` must not import `content`, `store`, or anything with I/O.**
@@ -416,6 +477,38 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   [0018](docs/content/en/decisions/0018-ruleset-version-fingerprint.md).
 - **Secret reconciliation fails toward hiding.** Capped, and on exhaustion it leaves the secret
   hidden and logs an error.
+- **A maximum attack die hits, whatever the critical rule said.** The hit and the
+  critical are two questions. 5e's natural 20 is an automatic critical hit that
+  bypasses armour class, and 2024's `crit_ignored_by_incapacitated` denies only that
+  it **counts as a critical** against an paralysed, unconscious or incapacitated
+  target — which is a claim about the damage dice, not about whether the sword lands.
+  Asking the critical rule "did it hit" made a natural 20 **miss** against such a
+  defender under 2024 while the identical roll auto-hit under 2014 and against any
+  unexempted target: measured at armour class 30, `unconscious`, a natural 20, a total
+  of 27, `met: false` and no mutation reaching the defender at all. The exemption
+  governs what a 20 does to the dice and nothing else, and the auto-hit is a resolver
+  rule with no toggle — `crit_attack_die_max` switches the *critical* off, and a pack
+  that sets it false must still hit.
+  `TestANaturalTwentyHitsUnderBothEditionsAndTheExemptionDoesNotMakeItMiss` holds it
+  over both editions, because either row alone is satisfiable by a constant.
+- **An unknown `system_id` refuses the game and the wiki still serves.** §10.8, S-14.8:
+  a campaign whose plugin was removed or renamed is a real state and not a fault in
+  the row. Three claims, separately asserted because any one can hold while the others
+  fail — the wiki answers **200** with the page's content; the dispatch is **refused**;
+  and the refusal **names the id**. The last one reaches a caller as a typed
+  `*plugin.UnknownSystemError.ID` and an operator as a `plugin.missing` boot line
+  carrying the campaign's slug and the id, **not** through the error's text: that string
+  reaches a browser and a log line, so it is the reason alone (S-12.3). Nothing else
+  produces that line, which is why `reportMissingSystems` is a separate boot pass rather
+  than a branch of the fingerprint one.
+- **An unknown `kind` is inert, not fatal.** S-14.7, §10.8's last row: the registry is
+  kind-backed, so a page's `kind` resolves through `plugin.Registry` and an unrecognised
+  one degrades to `prose` **in the index as well as on the page** — a page rendering as
+  prose while the index says it is a game object is two answers, and the nav tree would
+  offer a link to something the page will not render. The assertion needs both
+  directions, because before phase 8 every kind was prose and the requirement was
+  vacuous: a page of a **registered** kind must not degrade, which is what keeps the
+  degradation from being satisfied by a registry that knows nothing.
 - **No event carries secret content, file contents, or dice results.** Asserted by a test,
   because logging the thing that failed is the natural thing to do when debugging. The
   enforcement is `observability.EventAttributes` having **no field a page body could be passed

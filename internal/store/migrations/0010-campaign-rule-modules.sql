@@ -1,0 +1,102 @@
+-- Migration 0010: `campaign_rule_modules`, the enabled house-rule set of a
+-- campaign.
+--
+-- Architecture §10.5's chain -- "system ID -> base pack -> overlay -> enabled
+-- house-rule modules (declared order) -> effective ruleset" -- needs somewhere to
+-- keep the middle of it, and this is that somewhere. `campaigns.system_id` and
+-- `campaigns.ruleset_version` arrived in 0005 (which explains at length why they
+-- are CREATEd rather than the ALTERs the record sketches), so the only thing the
+-- record's schema section adds is this table.
+--
+-- A row is **configuration, not state**. It says which compiled-in modules this
+-- campaign turns on, in what order, with what data; it never says what any of
+-- them resolved to. That distinction is load-bearing in three places:
+--
+--   - It is why there is no `ruleset_version` here. ADR 0018 settles that the
+--     fingerprint covers resolution *semantics* and not house-rule configuration,
+--     so toggling a house rule must not strand a campaign. A fingerprint derived
+--     from this table's contents would strand every campaign the moment a GM
+--     flipped a toggle, which is the exact failure the record names.
+--   - It is why the table is small, ordered and cheap to read in full at campaign
+--     load, and why "the whole set" is the unit of a write (see
+--     `ReplaceRuleModules`). Applying a half-written module set is not a state
+--     this project can describe.
+--   - It is why nothing here can be attacker-supplied in the ordinary sense: a
+--     module id is a compiled-in identifier from the registry, and S-12.3's ban on
+--     events carrying secret content is unaffected because no house-rule
+--     configuration is ever logged with its contents.
+--
+-- Two departures from the record's sketch (architecture §10.7), both because the
+-- repository already answered the question it asks and a second answer would be
+-- two answers to one question:
+--
+--   1. `campaign_id INTEGER`, not `TEXT`. The sketch was written before
+--      `campaigns` existed; migration 0005 creates it with
+--      `INTEGER PRIMARY KEY AUTOINCREMENT`, and every other campaign-scoped
+--      table in this schema (`campaign_members`, `pages`, `page_revisions`,
+--      `audit_log`) therefore spells its `campaign_id` INTEGER. A TEXT column
+--      referencing an INTEGER primary key would store the id as text, and SQLite's
+--      dynamic typing compares text to integer by class -- so a `WHERE
+--      campaign_id = ?` issued with an int64 would match nothing at all, silently.
+--   2. `ON DELETE CASCADE`, which the sketch omits. Same reason as every other
+--      campaign-scoped table here: a module row grants nothing and is meaningless
+--      without its campaign, and the alternative is rows that can never be read
+--      and cannot be joined to anything. 0005's AUTOINCREMENT means a deleted
+--      campaign's id is not handed to the next campaign, so this is hygiene
+--      rather than a hazard -- and hygiene recorded at the schema is cheaper than
+--      a sweep nobody writes.
+--
+-- No CHECK on `enabled`: a boolean the query layer writes as 0 or 1 and the read
+-- layer converts, with SQLite's own NOT NULL refusing the only value that could
+-- be a mistake. No CHECK on `module_id` either, and for the reason
+-- `campaigns.visibility` and `campaign_members.role` have none -- the form of an
+-- identifier is `rules.ParseID`'s rule, one implementation of it, and the store
+-- calls it rather than restating it. A CHECK here could not be ALTERed anyway.
+--
+-- `config` is a JSON **object** rather than an arbitrary string, and the default
+-- is `{}` for the same reason the column is NOT NULL: "no configuration" is a
+-- value, and a row whose config is the empty string or a bare number is a row no
+-- house-rule application can read. The *shape* of the object -- which keys a
+-- module understands -- belongs to the module, and is deliberately not a
+-- migration per key.
+
+CREATE TABLE campaign_rule_modules (
+    -- INTEGER, and CASCADE: see the header.
+    campaign_id INTEGER NOT NULL REFERENCES campaigns (id) ON DELETE CASCADE,
+    -- The compiled-in module's identifier, spelled with `rules.ParseID`'s rules
+    -- and *not* a foreign key to anything: module definitions live in the
+    -- registry, which is a property of the running build rather than of the
+    -- database (the same reason `page_revisions.source` is CHECKed here rather
+    -- than resolved against a table). A row naming a module this build does not
+    -- have is a refusal at campaign load (S-10.6's shape), not a database error.
+    module_id   TEXT    NOT NULL,
+    -- 0 or 1. A disabled module stays a row rather than being deleted, so that
+    -- re-enabling one is a single-column write and so that "this campaign tried
+    -- this and turned it off" is still a fact the table can answer.
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    -- See the header.
+    config      TEXT    NOT NULL DEFAULT '{}',
+    -- The declaration order, and the whole of first-match-wins: §10.5 resolves a
+    -- conflict in favour of the module that comes first, so this column is the
+    -- conflict policy and not a cosmetic sort key. Unbounded and unconstrained
+    -- because a negative or a large value is a perfectly good way to say "first"
+    -- or "last"; the *order* is what matters and `RuleModulesForCampaign` makes
+    -- it total rather than leaving two modules sharing a `position` in the order
+    -- the storage engine happened to return them.
+    position    INTEGER NOT NULL DEFAULT 0,
+    -- The pair, and the same shape as `campaign_members`: one module is either
+    -- enabled for a campaign or is not, at one position, with one configuration.
+    -- A surrogate id would be a second answer to "which module is this" with
+    -- nothing to say which of two rows wins.
+    PRIMARY KEY (campaign_id, module_id)
+);
+
+-- No index beyond the primary key, and the reason is worth stating because every
+-- other table here earns one: the only query is "every module of this campaign,
+-- ordered by (position, module_id)", which the primary key's leading column
+-- already narrows to one campaign and whose ORDER BY is **total** -- `module_id`
+-- is unique within a campaign by the key, so no two rows can tie and the answer
+-- does not depend on which plan the planner picks. A campaign holds a handful of
+-- house-rule modules, so the sort that remains is over a handful of rows, and an
+-- index bought for that would be a write cost on every toggle for a query the
+-- planner can already answer.

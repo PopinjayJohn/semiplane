@@ -57,6 +57,7 @@ linters:
     - errname
     - errorlint
     - exhaustive
+    - forbidigo
     - gocritic
     - gosec
     - govet
@@ -136,6 +137,51 @@ linters:
       comparison: true
     exhaustive:
       default-signifies-exhaustive: true
+    forbidigo:
+      # S-10.4: rule code may not reach for a wall clock or for ambient
+      # randomness. These patterns are NOT hand-maintained -- they are
+      # `determinism.LintPatterns()`, derived from the same table `Audit` walks,
+      # and `TestTheLintConfigurationIsTheTableTheAuditWalks` fails the build if
+      # this list and that function disagree. Editing one without the other is
+      # the drift this comment exists to make impossible.
+      #
+      # Configuring `forbid` here also replaces forbidigo's default list
+      # (`fmt.Print*` and the bare `print`/`println`), which nothing in this
+      # repository calls, and which `TestTheLintConfigurationIsTheTableTheAuditWalks`
+      # confirms is gone. `TestTheSeededDerivationIsNotFlagged` is the other half
+      # of that: `rand.New` and `rand.NewPCG` are how `rules.Context.Rand` derives
+      # a source from a campaign's recorded seed, and they are deliberately absent
+      # from the `rand` alternation. A determinism rule that fires on the one
+      # correct implementation of randomness is a rule nobody disables.
+      #
+      # The scope is not here because forbidigo has no path setting; it is the
+      # `path-except` rule under `exclusions` below, which keeps every one of
+      # these findings out of the rest of the codebase.
+      forbid:
+        # `time`'s clock: a value, or the passage of one, a result can depend on.
+        - pattern: '^time\.(After|AfterFunc|NewTicker|NewTimer|Now|Since|Sleep|Tick|Until)$'
+          msg: 'S-10.4: a resolution is a pure function of (state, intent, seed); rules.Context.Rand derives randomness from the seed and there is no clock. See ADR 0044.'
+        # The package-level source of crypto/rand, math/rand and math/rand/v2.
+        # All three name their package `rand`, which is why this is one pattern
+        # and why it has to be derived rather than written out per import path.
+        # `rand.New`, `rand.NewPCG` and `rand.NewChaCha8` are absent on purpose.
+        - pattern: '^rand\.(ExpFloat64|Float32|Float64|Int|Int31|Int31n|Int32N|Int63|Int63n|Int64N|IntN|Intn|N|NormFloat64|Perm|Prime|Read|Seed|Shuffle|Text|Uint32|Uint32N|Uint64|Uint64N)$'
+          msg: 'S-10.4: the package-level source is seeded per process, so a roll from it is not auditable and a replay does not replay it. Use rules.Context.Rand(label). See ADR 0044.'
+      # There is deliberately NO pattern for map iteration. One was written --
+      # `^maps\.(All|Keys|Values)$` -- and removed, because forbidigo sees the
+      # call and not what the call is an argument to: `slices.Sorted(maps.Keys(m))`,
+      # the one sanctioned spelling, was flagged exactly as loudly as
+      # `for k := range maps.Keys(m)`. A determinism rule that fires on the one
+      # correct way to write the thing it forbids is a rule the next contributor
+      # disables wholesale, and a disabled rule catches nothing. This is the same
+      # failure `Context.Rand`'s G404 suppression exists to avoid, in the linter's
+      # own configuration.
+      #
+      # So map iteration belongs to the audit (`range/map` and
+      # `range/map-iterator`, the two entries in `determinism.LintBlindSpots`, held
+      # by `TestNoRuleFileBreaksTheDeterminismRules`), which reads the range
+      # clause rather than the call and can therefore tell the two apart. The
+      # linter keeps the half it can hold; the audit keeps the half it can.
     gosec:
       severity: medium
       confidence: medium
@@ -228,6 +274,23 @@ linters:
       - std-error-handling
       - common-false-positives
     rules:
+      # forbidigo's scope, in one place. The patterns above are the whole of
+      # S-10.4's call half and they apply *only* to rule code: `internal/domain`
+      # keeps a `time.Now` in its store's clock, its middleware times requests,
+      # and its tests need a wall clock. `path-except` rather than `path` because
+      # forbidigo has no path setting of its own.
+      #
+      # The expression is `determinism.ScopePattern()`, derived from
+      # `determinism.RuleDirs()`, and `TestTheLintScopeIsTheAuditScope` fails the
+      # build when the two disagree: an audit watching directories the linter does
+      # not is the one drift that loses a violation rather than duplicating one.
+      #
+      # `internal/domain/systems` is named before it exists, so the second half of
+      # the phase is covered the moment it lands and a new rule package cannot be
+      # added without this file noticing.
+      - path-except: '^(internal/domain/rules/|internal/domain/systems/)'
+        linters:
+          - forbidigo
       - path: _test\.go
         linters:
           - gosec

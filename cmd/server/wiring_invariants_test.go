@@ -67,7 +67,7 @@ func TestTheEditorAndTheWikiRouteHoldTheSameRenderers(t *testing.T) {
 	t.Parallel()
 
 	wikiRenderers := wiki.CampaignRenderers{
-		"greyhaven": content.NewRenderer("greyhaven", pageKinds{}),
+		"greyhaven": content.NewRenderer("greyhaven", kindRegistry{}),
 	}
 	editRenderers := editorRenderers(wikiRenderers)
 
@@ -76,7 +76,7 @@ func TestTheEditorAndTheWikiRouteHoldTheSameRenderers(t *testing.T) {
 	// not.
 	const latecomer = "blackgate"
 
-	wikiRenderers[latecomer] = content.NewRenderer(latecomer, pageKinds{})
+	wikiRenderers[latecomer] = content.NewRenderer(latecomer, kindRegistry{})
 
 	if _, err := editRenderers.Renderer(latecomer); err != nil {
 		t.Errorf("a campaign added to the wiki route's renderer map is not visible to "+
