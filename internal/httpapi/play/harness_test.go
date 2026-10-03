@@ -51,6 +51,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,11 +62,14 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/domain/rules"
+	"github.com/semiplane/semiplane/internal/domain/systems/dnd5e"
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
 	"github.com/semiplane/semiplane/internal/httpapi/identity"
 	"github.com/semiplane/semiplane/internal/httpapi/play"
 	"github.com/semiplane/semiplane/internal/realtime"
 	"github.com/semiplane/semiplane/internal/store"
+	"github.com/semiplane/semiplane/internal/web/components"
 )
 
 // The test constants. Every one of them is a bound rather than a sleep, and the
@@ -127,6 +131,14 @@ const (
 	gmSlug      = "gilded-cage"
 	privateSlug = "hollow-choir"
 	absentSlug  = "no-such-campaign"
+)
+
+// The instance's chrome, as `cmd/server` supplies it to every route.
+const (
+	instanceName = "Greyhaven"
+	testVersion  = "test"
+	signOutPath  = "/logout"
+	statusPath   = "/status"
 )
 
 // The test identity header. A header rather than a cookie because the route reads
@@ -197,7 +209,7 @@ func newUnwiredHarness(t *testing.T) *harness {
 	play.Mount(route, &play.Handler{})
 
 	mux := http.NewServeMux()
-	mux.Handle("/c/{slug}/play", resolveCampaign(backing, route))
+	mux.Handle("/c/{slug}/", resolveCampaign(backing, route))
 
 	server := httptest.NewServer(withRequestor(mux))
 	t.Cleanup(server.Close)
@@ -219,7 +231,25 @@ func newMounted(t *testing.T, with mount) *harness {
 		Clock:   realtime.HubClock{Stale: with.stale, Now: clock.Now, After: clock.After},
 	})
 
-	handler := &play.Handler{Hub: hub, ReadTimeout: testReadTimeout}
+	handler := &play.Handler{
+		Hub:         hub,
+		ReadTimeout: testReadTimeout,
+		// The document's chrome, wired the way `cmd/server` wires the wiki route's:
+		// an instance name, a sign-out target and a status link. Every one of them
+		// is optional on the handler, so a test that wants the fallbacks sets them
+		// back to zero through `mount.handler` rather than mounting a second route.
+		Instance:    components.InstanceView{Name: instanceName, Version: testVersion},
+		SignOutHref: signOutPath,
+		StatusHref:  statusPath,
+		// The die sheet's notation and the token list's rows are the two document
+		// fields with a source, and both are wired here so that the default document
+		// is a *populated* one — a fixture where every section is empty can only
+		// assert that emptiness renders, and the interesting assertions are about
+		// what the sections do with content.
+		Systems:   fixtureSystems(t),
+		Snapshot:  fixtureSnapshot,
+		Campaigns: backing,
+	}
 	if with.handler != nil {
 		with.handler(handler)
 	}
@@ -238,7 +268,13 @@ func newMounted(t *testing.T, with mount) *harness {
 	// order `router.go` composes them in, because `Resolve` reads the requestor to
 	// decide the tier and a reader installed after it would resolve every campaign
 	// as TierNone.
-	mux.Handle("/c/{slug}/play", resolveCampaign(backing, route))
+	//
+	// The **subtree** pattern rather than the two routes individually: S-9 splits
+	// this package across `/play` and `/ws`, and a fixture that named only one of
+	// them would serve the other from an unmatched path — which `net/http` answers
+	// with a 404 that reads exactly like a gate refusing, and this file's whole
+	// matrix is about telling those two apart.
+	mux.Handle("/c/{slug}/", resolveCampaign(backing, route))
 
 	server := httptest.NewUnstartedServer(withRequestor(mux))
 	if with.server != nil {
@@ -323,7 +359,7 @@ func withRequestor(next http.Handler) http.Handler {
 func (h *harness) dial(slug string, header http.Header) (*websocket.Conn, *http.Response, error) {
 	h.t.Helper()
 
-	endpoint := "ws" + strings.TrimPrefix(h.server.URL, "http") + "/c/" + slug + "/play"
+	endpoint := "ws" + strings.TrimPrefix(h.server.URL, "http") + "/c/" + slug + "/ws"
 	if header == nil {
 		header = http.Header{}
 	}
@@ -491,10 +527,16 @@ func newFixtureStore() *fixtureStore {
 	backing.campaigns[gmSlug] = domain.Campaign{
 		ID: gmCampaignID, Slug: gmSlug, Name: "The Gilded Cage",
 		Visibility: domain.VisibilityPublic,
+		// A gameplay system, because a campaign without one has no table to
+		// offer: `tableHref` is membership **and** `SystemID`, so a fixture with
+		// no system would render a document whose navigation silently omits the
+		// Table destination and every assertion about it would be vacuous.
+		SystemID: string(dnd5e.SystemID),
 	}
 	backing.campaigns[privateSlug] = domain.Campaign{
 		ID: privateCampaignID, Slug: privateSlug, Name: "The Hollow Choir",
 		Visibility: domain.VisibilityPrivate,
+		SystemID:   string(dnd5e.SystemID),
 	}
 
 	// `outsiderUserID` is in **neither** campaign. That is the row the S-8 matrix
@@ -542,6 +584,34 @@ func (s *fixtureStore) Membership(
 
 func (s *fixtureStore) CreateCampaign(context.Context, domain.Campaign) (domain.Campaign, error) {
 	return domain.Campaign{}, errFixtureUnimplemented
+}
+
+// CampaignsForUser is the navigation's Campaigns section: the reader's own
+// campaigns, sorted by slug.
+//
+// Sorted because map iteration is not an order, and the section is rendered into
+// a document a test compares. The same invariant rule code has, applied to a
+// fixture because a fixture that answered in random order would make a
+// byte-comparison flaky rather than wrong.
+func (s *fixtureStore) CampaignsForUser(
+	_ context.Context,
+	userID int64,
+) ([]domain.Campaign, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	listed := make([]domain.Campaign, 0, len(s.campaigns))
+	for _, campaign := range s.campaigns {
+		if _, member := s.memberships[campaign.ID][userID]; member {
+			listed = append(listed, campaign)
+		}
+	}
+
+	slices.SortFunc(listed, func(a, b domain.Campaign) int {
+		return strings.Compare(a.Slug, b.Slug)
+	})
+
+	return listed, nil
 }
 
 func (s *fixtureStore) CreateMembership(
@@ -776,6 +846,119 @@ func newTestRegistry(t *testing.T) *realtime.Registry {
 			}, nil
 		},
 	})
+}
+
+// fixtureSystems answers a campaign's gameplay system with the real 5e engine.
+//
+// The real engine rather than a stub `rules.System`: that interface has nine
+// methods, and a stub returning a hand-written grammar would assert only that
+// this route copies four fields across — which it does either way. The join is
+// what could be wrong (asking about the reader instead of the campaign, or
+// returning the answer for the wrong id), and only a system that is actually
+// constructed answers that.
+func fixtureSystems(t *testing.T) play.Systems {
+	t.Helper()
+
+	engine, err := dnd5e.New(dnd5e.Options{})
+	if err != nil {
+		t.Fatalf("build the 5e engine: %v", err)
+	}
+
+	return func(context.Context, int64) (rules.System, error) {
+		return engine, nil
+	}
+}
+
+// The two placements every document fixture carries, and the difference between
+// them is the whole of the visibility rule: one a player may see and one they
+// may not.
+const (
+	shownPlacementID  = realtime.PlacementID("p-shown")
+	hiddenPlacementID = realtime.PlacementID("p-hidden")
+)
+
+// fixtureSnapshot is the live state the first server-rendered document reads.
+//
+// It is a function rather than a value because the handler's seam takes the
+// campaign id, and a fixture that ignored the id would pass against a route that
+// asked about the *reader* — the same join `fixtureSystems` exists to check.
+func fixtureSnapshot(_ context.Context, campaignID int64) (realtime.Document, bool) {
+	if campaignID <= 0 {
+		return realtime.Document{}, false
+	}
+
+	return realtime.Document{
+		Revision: 7,
+		Placements: []realtime.Placement{
+			{
+				ID: shownPlacementID, X: 1, Y: 2,
+				HP: 7, MaxHP: 7, Visible: true, Version: 7,
+			},
+			{
+				ID: hiddenPlacementID, X: 3, Y: 4,
+				HP: 1, MaxHP: 4, Visible: false, Version: 7,
+			},
+		},
+	}, true
+}
+
+// documentResponse is one served document, read whole.
+//
+// The headers come with the body because three of this route's claims are about
+// headers — the content type, the cache policy and `Vary` — and a helper that
+// returned only the body would make each of them a second request.
+type documentResponse struct {
+	status int
+	header http.Header
+	body   string
+}
+
+// fetch performs a plain `GET` against an absolute path on the test server, as
+// one user — 0 meaning anonymous — and reads status, headers and body whole.
+//
+// The general form of `get`, because S-9's split makes two paths claim two
+// different answers (`/play` is a document, `/ws` is an upgrade) and a reader
+// written twice would be a second answer to "what did the server send".
+func (h *harness) fetch(path string, user int64) documentResponse {
+	h.t.Helper()
+
+	request, err := http.NewRequestWithContext(
+		h.t.Context(),
+		http.MethodGet,
+		h.server.URL+path,
+		nil,
+	)
+	if err != nil {
+		h.t.Fatalf("build the request for %s: %v", path, err)
+	}
+
+	if user != 0 {
+		request.Header.Set(userHeader, strconv.FormatInt(user, 10))
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		h.t.Fatalf("GET %s: %v", path, err)
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		h.t.Fatalf("read the body of %s: %v", path, err)
+	}
+
+	return documentResponse{
+		status: response.StatusCode,
+		header: response.Header,
+		body:   string(body),
+	}
+}
+
+// get fetches `/c/{slug}/play` as one user, 0 meaning anonymous.
+func (h *harness) get(slug string, user int64) documentResponse {
+	h.t.Helper()
+
+	return h.fetch("/c/"+slug+"/play", user)
 }
 
 // writePlain answers a request with a short text body, for the harness's own

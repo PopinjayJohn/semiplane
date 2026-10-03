@@ -1,4 +1,25 @@
-// The route: `GET /c/{slug}/play` as a WebSocket, and the loop that keeps one.
+// The table's two routes: the VTT document at `GET /c/{slug}/play` and the
+// WebSocket at `GET /c/{slug}/ws`, plus the loop that keeps one.
+//
+// # Two routes, one gate, and why the split is not cosmetic
+//
+// S-9 fixes this pair: `/play` is the VTT — an HTML document a browser can be
+// pointed at — and `/ws` is the upgrade. Until this work item the socket was
+// mounted **on** `/play`, so the record's own URL scheme was unreachable: a
+// player who opened `/c/{slug}/play` in a browser received a 400 from a
+// WebSocket handshake rather than a table, and a client that followed the spec
+// could not connect at all. Two routes on one path cannot both be true, and the
+// record says which one each is.
+//
+// The split costs nothing that was not already paid: `Mount` still wraps both in
+// `campaigns.RequirePlay`, so the gate is one line covering the pair rather than
+// two lines that could drift apart — and the document is *more* exposed than the
+// socket was, because a rendered page carries the reader's name, the campaign's
+// live placements and the campaign navigation. A `/play` that answered without a
+// gate would be the failure this package's header already calls the most
+// expensive one, now on a route with an HTML body.
+//
+// The rest of this file is the socket. `document.go` is the other route.
 //
 // # What this package is and is not
 //
@@ -78,6 +99,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/campaigns"
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
 	"github.com/semiplane/semiplane/internal/realtime"
+	"github.com/semiplane/semiplane/internal/web/components"
 )
 
 // The two faults `viewerFor` can find, and both are wiring faults rather than
@@ -157,13 +179,19 @@ const (
 	defaultReadLimit = realtime.MaxTransportReadBytes
 )
 
-// Handler serves the tabletop socket.
+// Handler serves a campaign's table: the document at `/play` and the socket at
+// `/ws`.
 //
-// Three fields and no per-connection state: the hub is the broker, the logger is
-// optional, and the two durations are the loop's bounds. Everything a connection
-// needs beyond that is a local variable in `serve`, because a `Handler` is shared
-// by every request in the process and a field per connection would be a data race
+// No per-connection state: the hub is the broker, the logger is optional, and
+// the two durations are the loop's bounds. Everything a connection needs beyond
+// that is a local variable in `serve`, because a `Handler` is shared by every
+// request in the process and a field per connection would be a data race
 // wearing a struct.
+//
+// The document fields below are the same shape of thing: one value per process,
+// set once by the composition root, read on every request. They are fields rather
+// than constructor arguments because `Mount` takes a `*Handler` and the routes it
+// registers need both halves.
 type Handler struct {
 	// Hub is the broker. Required: a route with no hub has nothing to join and
 	// nothing to fan out to, and answering that with an open socket would be a
@@ -186,28 +214,82 @@ type Handler struct {
 	// configuration that would redefine the protocol is refused rather than
 	// shipped.
 	ReadLimit int64
+
+	// The four document fields, and every one of them is optional. See
+	// `document.go` for why each exists; the shape they share is that a zero
+	// value renders a working document with one section shorter, which is the
+	// same tolerance `wiki.Handler` gives its own chrome fields and the reason a
+	// composition root that has not wired one yet serves a table rather than
+	// panicking on the request path.
+	//
+	// Nil is a real state for every one of them: no instance name, no sign-out
+	// form, no campaign switcher, no gameplay system and no live placements are
+	// each a build or a campaign that can exist, and none of them is a fault in
+	// this route.
+
+	// Instance names the running instance and reports what is unhealthy, for the
+	// banner, the footer and the document title's third part.
+	Instance components.InstanceView
+
+	// SignOutHref is where the banner's sign-out form posts. Empty renders no
+	// form rather than one that posts nowhere.
+	SignOutHref string
+
+	// StatusHref is the instance status link in the footer (UI §4.2). Empty
+	// omits it rather than pointing at a route that answers 404.
+	StatusHref string
+
+	// Campaigns lists the reader's own campaigns for the navigation's Campaigns
+	// section. Nil omits the section entirely.
+	Campaigns CampaignLister
+
+	// Systems reports which gameplay system a campaign plays under, which is
+	// where the die sheet's notation comes from. Nil, an error or a system with
+	// no grammar each render §4.7's honest empty state instead of a notation
+	// this build cannot justify.
+	Systems Systems
+
+	// Snapshot reads the campaign's live placements for the first server-rendered
+	// document. Nil, or a campaign whose state is not open, renders the token
+	// list's empty state — which is the truth until a client says otherwise, and
+	// is why the field is a function rather than a `*realtime.Hub` method: the
+	// hub holds no snapshot accessor by design (`h.states` is unexported and
+	// `Registry.Get` answers only for states that are already live).
+	Snapshot SnapshotFunc
 }
 
-// Mount registers the socket on mux, behind the play gate.
+// Mount registers the table's two routes on mux, both behind the play gate.
+//
+// S-9 fixes the pair: `/c/{slug}/play` is the VTT document and `/c/{slug}/ws` is
+// the WebSocket upgrade. Mounting the socket on `/play` — which is what this
+// package did until the document existed — was a spec violation that no test
+// could see, because the URL a browser requests and the URL a socket dials are
+// both strings and nothing holds them apart. The document now occupies `/play`,
+// and `handler.serveDocument` and `ServeHTTP` each own one of the two.
 //
 // **The gate is mounted here and not left to the caller**, for the reason
 // `events.Mount` and `edit.Mount` give: ADR 0024 says authorisation is a gate a
 // route mounts and never a check inside a handler, and the strongest form of that
-// is a route that mounts its own. `/play` is the route where the omission would
-// cost most — a socket is a standing capability, so a table reachable without a
-// gate is a campaign whose live state is readable, writable and observable by
-// anyone who can reach the port — and where a caller who had to remember the gate
-// would eventually register the route without it.
+// is a route that mounts its own. The table is where the omission would cost most
+// — a socket is a standing capability, so a table reachable without a gate is a
+// campaign whose live state is readable, writable and observable by anyone who
+// can reach the port — and where a caller who had to remember the gate would
+// eventually register the route without it. One gate, `RequirePlay`, wraps both
+// routes, so the document and the socket can never disagree about who may see the
+// table.
 //
 // The campaign's id and the reader's role are read from the context rather than
 // from the URL and the cookie, for the same reason the editor reads them there:
 // the gate resolved them, and reading the slug again would be a second lookup
 // that could answer a different campaign if the row had changed in between.
 //
-// One method, `GET`, and a `POST` to this URL is a method that exists nowhere in
-// the design, so `net/http`'s 405 is the honest answer.
+// One method, `GET`, on each route, and a `POST` to either URL is a method that
+// exists nowhere in the design, so `net/http`'s 405 is the honest answer.
 func Mount(mux *http.ServeMux, handler *Handler) {
-	mux.Handle("GET /c/{slug}/play", campaigns.RequirePlay(handler))
+	gate := campaigns.RequirePlay
+
+	mux.Handle("GET /c/{slug}/ws", gate(handler))
+	mux.Handle("GET /c/{slug}/play", gate(http.HandlerFunc(handler.serveDocument)))
 }
 
 // ServeHTTP admits a member to a campaign's table over a WebSocket.
