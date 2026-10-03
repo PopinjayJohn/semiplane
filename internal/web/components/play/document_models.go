@@ -89,10 +89,25 @@ const (
 
 	// ChatReason is why the control does nothing.
 	//
-	// The chat surface is not in this document: its transport and its panel are a
-	// different work item, and a button that opened an empty sheet would be a
-	// focus stop that lies about what it does.
-	ChatReason = "Chat is not connected to this table yet."
+	// **Rewritten when the panel was mounted, and the earlier sentence was
+	// wrong.** It used to read "Chat is not connected to this table yet", which
+	// was true while the panel was a different work item's. `chat.Panel` now
+	// renders in this document, so the log *is* on the table and lines do arrive
+	// over the event stream — a stated reason that a reader can disprove by
+	// looking at the panel beside it is worse than no reason, because it teaches
+	// them that the other reasons are unreliable too.
+	//
+	// What is still true is narrower: the **log** is connected and the **compose
+	// form** is not. `chat.PanelView.Compose`'s zero value renders the
+	// signed-out paragraph, so pressing this opens a surface whose input cannot
+	// send, and the reason says exactly that rather than implying the whole
+	// feature is absent.
+	//
+	// Sending needs an op the protocol does not have — the 5e pack declares
+	// `roll`, `attack`, `heal`, `apply_condition`, `clear_condition`,
+	// `apply_status`, `remove_token` and `set_hit_points`, and no `chat` — so
+	// this is the same gap as `EndTurnReason` above, stated at its own size.
+	ChatReason = "The chat log is connected; sending needs a chat operation the table does not have yet."
 
 	// RollUnavailable is what the die sheet says when the campaign has no grammar
 	// to offer.
