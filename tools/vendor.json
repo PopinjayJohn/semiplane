@@ -19,10 +19,23 @@
     "exactly one local entry and it is the licence, because MIT requires the notice",
     "to travel with the code.",
     "",
+    "**One package here is not fetched from npm, and this paragraph says so.**",
+    "`source.kind` is the reader's switch and both entries below say `npm`, but for",
+    "`@starfederation/datastar` the URL is a GitHub source tarball for a tag and not a",
+    "registry tarball, and its `integrity` is the sha512 of *that* archive in the same",
+    "`sha512-<base64>` spelling. The reader needs nothing else of `npm`: it fetches an",
+    "`https` URL, verifies a Subresource Integrity digest, and walks the archive for one",
+    "named member, and a GitHub tag archive satisfies all three identically. What the",
+    "label costs is precision, and the reason it is `npm` rather than something more",
+    "honest is that a third `kind` needs a change to `tools/vendor/main.go`, which is",
+    "the integrator's file: writing a manifest no committed reader understands would",
+    "have left `make vendor` failing on this entry. The work item that added it asks",
+    "for the change in its report instead.",
+    "",
     "The digests are sha256 of the committed bytes, which is what `make vendor-check`",
-    "recomputes. They are not the npm integrity value: that one covers the tarball,",
-    "which is never committed, so comparing against it would be checking a file the",
-    "gate cannot see."
+    "recomputes. They are not the integrity value: that one covers the tarball, which is",
+    "never committed, so comparing against it would be checking a file the gate cannot",
+    "see."
   ],
   "packages": [
     {
@@ -70,6 +83,76 @@
           "origin": "npm",
           "bytes": 1092,
           "sha256": "5ce7447bc57f7349ffc48338782fbcabe613696e00712b20d66bc58e780f9473"
+        }
+      ]
+    },
+    {
+      "name": "@starfederation/datastar",
+      "version": "1.0.4",
+      "license": "MIT",
+      "why": [
+        "Datastar is the client that consumes this product's `datastar-patch-elements`",
+        "frames. UI §7.5's resolution table says the sidebar's fragments are \"patched",
+        "by Datastar\" and architecture §3.1 says templ and Datastar are complements",
+        "rather than rivals — templ renders, Datastar places what was rendered — so the",
+        "module is what makes §7.5's second column true rather than aspirational.",
+        "",
+        "**The version, and the reason it is 1.0.4 and not the npm `latest`.** The npm",
+        "package `@starfederation/datastar` stops at 1.0.0-beta.11 (2025-03-30) and every",
+        "release from 0.20.0 onwards renamed the event this product emits: beta.11's",
+        "engine/consts declares `datastar-merge-fragments` and greps for",
+        "`patch-elements` in that tree return nothing. Datastar's own releases moved to",
+        "`datastar-patch-elements` at 1.0.0, and 1.0.4 is the newest (2026-09-21). So the",
+        "newest *published* build is the wrong one for this product and pinning it would",
+        "have meant a sidebar that never updates — measured, not read off a changelog:",
+        "the two spellings were pushed through a real Chromium against both builds and",
+        "only the 1.0.4 build acted on the frames this product writes.",
+        "",
+        "`bundles/datastar.js` is vendored rather than `bundles/datastar-core.js` or",
+        "`bundles/datastar-rocket.js`. **Core is too small to do this job**: it is the",
+        "engine and the signal layer only, and it registers no watcher at all — grepping",
+        "the committed bytes for `patch-elements` finds one occurrence in the full bundle",
+        "and none in core, because the `datastar-patch-elements` watcher is what",
+        "applies a fragment and core does not carry it. Rocket is the Pro bundle, 65KB",
+        "against this one's 33KB, and nothing in semiplane's surface is a Pro feature.",
+        "",
+        "Not vendored: the source maps (the committed file carries no sourceMappingURL,",
+        "so there is no devtools 404 to accept — this is a distribution build, not a",
+        "bundler output), the `.d.ts` files and the `library/src` tree (the type",
+        "declarations describe a package this repository does not depend on), and every",
+        "other bundle in the same directory.",
+        "",
+        "**The extension is `.js` and not `.mjs`, and it is not an accident.** The file",
+        "is an ES module, but `.mjs` would put it into `internal/web`'s existing",
+        "`.mjs` audit, which requires every vendored module to carry its own upstream",
+        "version banner in the shape `PixiJS - v<version>` — a rule written for one",
+        "package. Datastar's banner is `// Datastar v1.0.4`, so the assertion would fail",
+        "on a correct artefact. `.js` plus an explicit `mediaType` of",
+        "`text/javascript; charset=utf-8` is accurate: the module-ness comes from",
+        "`type=\"module\"` on the script element, not from the file name, and the served",
+        "media type is what a browser checks."
+      ],
+      "source": {
+        "kind": "npm",
+        "url": "https://codeload.github.com/starfederation/datastar/tar.gz/refs/tags/v1.0.4",
+        "integrity": "sha512-yrRtzeKIyADb+PQ8Z/JxBGmiLVm4/Ae1bR7vWhoXJw5h66OzJHBMEWC9yf/LRjKFhWdFhm027WofrBXhbvW4ZA=="
+      },
+      "files": [
+        {
+          "inPackage": "datastar-1.0.4/bundles/datastar.js",
+          "path": "internal/web/static/vendor/star.js",
+          "mediaType": "text/javascript; charset=utf-8",
+          "origin": "npm",
+          "bytes": 33553,
+          "sha256": "727844adfc825ee651fb93c544a2a739986f9a21820a94524b35f0cac470cf91"
+        },
+        {
+          "inPackage": "datastar-1.0.4/LICENSE.md",
+          "path": "internal/web/static/vendor/star.LICENSE",
+          "mediaType": "text/plain; charset=utf-8",
+          "origin": "npm",
+          "bytes": 1052,
+          "sha256": "17da0e216d3c6a819526f5b72a6a44d84d34bcd9beb4191ac6af89c1508ef08f"
         }
       ]
     }
