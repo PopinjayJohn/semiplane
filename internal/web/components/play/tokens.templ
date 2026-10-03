@@ -1,0 +1,146 @@
+package play
+
+// The token list: a `<ul>` of `<button>` elements, one per placement, and the
+// accessibility source of truth for the tabletop (UI §7.6).
+//
+// # Why this is ordinary buttons in natural tab order
+//
+// §7.6 says "a `<ul>` of `<button>` elements, one per placement" and "ArrowUp /
+// ArrowDown move focus between placements". Those are two different claims and
+// this file answers them separately, because the second one is an *enhancement*
+// over the first and the first is what the contract actually rests on:
+//
+//   - **Every placement is a real `<button type="button">` with no `tabindex`.**
+//     That makes the list operable by the keyboard alone with *no JavaScript at
+//     all*: `Tab` reaches every row in document order and `Enter`/`Space`
+//     activates it. Phase 9's DoD item is "the token list is operable by keyboard
+//     alone", and this is the property that satisfies it. It is asserted in Go
+//     over the parsed DOM, so it cannot rot.
+//
+//   - **The arrow keys are an addition.** They move focus in the same order `Tab`
+//     would, and they exist because a remote control and a screen-reader user
+//     both want them (§7.5's row names the token list as one of the four places
+//     arrows move between items). Removing the script costs a keyboard user
+//     nothing that `Tab` did not already give them.
+//
+// What this file deliberately does **not** do is the roving-tabindex listbox
+// pattern: it would take the rows out of the tab order, which means one button in
+// the document is unreachable unless the script that made it unreachable is
+// working. "Operable by keyboard alone" has to survive the script being blocked.
+//
+// # The four facts, and why they are inside the button
+//
+// §7.6 requires each row to name its placement, its hit points, its conditions and
+// its layer. They are four `<span>`s inside one `<button>`, so the button's
+// accessible name **is** the concatenation of the four — no `aria-label` to keep
+// in step with the visible text, and nothing to get out of date. An `aria-label`
+// on a row whose visible text changes is a second copy of the row's meaning, and
+// the visible one is the copy nobody re-reads.
+//
+// The spans carry no `aria-hidden`, and there is no `aria-describedby`: the
+// details are the name, not a description of a name that could have been shorter.
+//
+// # Selection is `aria-pressed`, and the server selects nothing
+//
+// Every row renders `aria-pressed` — `false` in every server-rendered document,
+// because selection is client state (§7.6: "Enter selects and moves the camera",
+// and "selection mirrors to the canvas"). The attribute is written out rather
+// than omitted: a toggle button with no `aria-pressed` is not a toggle button at
+// all, and writing the false value says "a selection exists and none is made"
+// instead of saying nothing.
+//
+// `aria-pressed` rather than `role="radio"` in a `radiogroup` because a radio
+// group is the semantics of *one choice from a set that should behave as one
+// widget* — which is what a roving tabindex buys, and which would take the rows
+// out of the tab order. Same decision as the listbox one above, taken once.
+//
+// # No `role="application"`, which is §7.6's prohibition
+//
+// The canvas is a PixiJS surface that will swallow keys if anything lets it, and
+// `role="application"` is the switch that tells a screen reader to stop
+// interpreting keystrokes. This package must never set it; phase 9's DoD says so
+// again, and `TestNoRoleApplicationAnywhereInTheSurface` is the assertion.
+
+import (
+	"github.com/semiplane/semiplane/internal/web/components/ui"
+)
+
+// TokenList is the panel: a heading, a count, and the list.
+//
+// A `<section>` named by its own visible heading rather than a `<div>`, and the
+// name resolves to a heading a reader can see — §7.2's rule is that a landmark's
+// name resolves to something announceable, and a visible heading is the only
+// version of that everyone else can see too.
+//
+// The panel is a *panel*, not a landmark: the rail around it is the landmark and
+// this is one of its contents.
+templ TokenList(view TokenListView) {
+	<section
+		class="panel token-list"
+		aria-labelledby={ PanelHeadingID }
+		data-state={ panelState(view.Placements) }
+		data-testid={ PanelTestID }
+	>
+		<h2 id={ PanelHeadingID }>Tokens</h2>
+		<p class="panel-note" data-testid={ CountTestID }>{ countLabel(view.Placements) }</p>
+		if len(view.Placements) == 0 {
+			// §4.7's rule that a section with nothing in it is absent, stated as a
+			// sentence instead: the panel is present because the rail's tab is
+			// present, and "Nothing on the table" beside an empty heading is the
+			// state a reader needs rather than a widget that lied.
+			<p class="empty" data-testid={ EmptyTestID }>
+				No tokens have been placed yet.
+			</p>
+		} else {
+			<ul class="card-list token-rows" data-token-list data-testid={ ListTestID }>
+				for _, placement := range view.Placements {
+					@TokenRow(placement)
+				}
+			</ul>
+			<p class="panel-note" data-testid={ KeysTestID }>{ KeysHint }</p>
+		}
+	</section>
+}
+
+// TokenRow is one placement: a list item holding one button.
+//
+// The `<li>` carries nothing identifying. §10.2's hook rule is that a hook
+// appearing more than once in a document selects nothing, and a row is the
+// repeated element here — so the row is located by the `data-placement` on the
+// button inside it, which is unique within a campaign because
+// `realtime.PlacementID` is.
+templ TokenRow(placement PlacementView) {
+	<li class="token-row-item">
+		<button
+			type="button"
+			class={ ui.TargetClass + " token-row" }
+			data-token
+			data-placement={ placement.ID }
+			aria-pressed={ pressLabel(placement.Selected) }
+		>
+			<span class="token-row-name">{ nameLabel(placement) }</span>
+			if placement.Kind != "" {
+				<span class="token-row-kind">{ placement.Kind }</span>
+			}
+			<span class="token-row-hp">{ hpLabel(placement) }</span>
+			if conditions := conditionsLabel(placement); conditions != "" {
+				<span class="token-row-conditions">{ conditions }</span>
+			}
+			<span class="token-row-layer">{ layerLabel(placement) }</span>
+		</button>
+	</li>
+}
+
+// pressLabel is the row's `aria-pressed` value.
+//
+// Written as a function rather than interpolated from a `bool` so the two values
+// are literals in Go and a reader can see that neither is empty. §10.2's
+// reference rule holds it: `aria-pressed` is a token attribute, and the two legal
+// values are `true` and `false`.
+func pressLabel(selected bool) string {
+	if selected {
+		return "true"
+	}
+
+	return "false"
+}
