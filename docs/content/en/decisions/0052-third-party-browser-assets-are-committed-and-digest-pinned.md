@@ -1,6 +1,6 @@
 ---
 title: "0052 — Third-party browser assets are committed, digest-pinned, and served from our own origin"
-description: "PixiJS and Datastar are committed under `internal/web/static/vendor/` with a sha256 per file and the npm tarball integrity, `make vendor` re-fetches and verifies, and `make vendor-check` re-hashes the committed bytes with no network at all."
+description: "PixiJS and Datastar are committed under `internal/web/static/vendor/` with a sha256 per file and the upstream archive integrity, `make vendor` re-fetches and verifies, and `make vendor-check` re-hashes the committed bytes with no network at all."
 lede: "A campaign-scoped, reader-authorised assets route means a CDN is a second origin this product would have to authenticate a player to, and a build that reaches the network is a build whose output depends on a third party being up. The cost is a committed blob and a `vendor-check` that has to actually run — which is the whole of this record, because a pin nobody verifies is a comment."
 weight: 3
 date: "2026-10-03"
@@ -57,23 +57,50 @@ in the Makefile changed to accommodate it.
 `internal/web/static/vendor/`, declared in `tools/vendor.json`, and held to two
 digests that are not interchangeable.**
 
-- `source.integrity` is npm's own Subresource Integrity value: the **sha512 of
-  the tarball**. The tarball is never committed, so this is the digest only
-  `make vendor` can check, against the bytes the registry actually served.
+- `source.integrity` is the upstream's own Subresource Integrity value: the
+  **sha512 of the source archive**. The archive is never committed, so this is
+  the digest only `make vendor` can check, against the bytes the source actually
+  served.
 - `files[].sha256` and `files[].bytes` describe the **committed file** — what
   `make vendor-check` recomputes from disk on every `make check`.
 
-Comparing the tarball digest in the offline check would be checking a file the
+Comparing the archive digest in the offline check would be checking a file the
 gate cannot see, and comparing the committed digest in the fetch would trust
-whatever the registry served. Both are present because the two questions are
-different: *did the registry give me the package it says it did?* and *are the
+whatever the source served. Both are present because the two questions are
+different: *did the source give me the artefact it says it did?* and *are the
 bytes on this disk the bytes this repository reviewed?*
+
+### Two upstreams, and why the manifest names them rather than assuming one
+
+`source.kind` is `npm` for a registry tarball and `archive` for a project's own
+release tarball, and `tools/vendor` takes **one path for both**: an `https` URL,
+an integrity digest checked *before* anything is decompressed, and one named
+member walked out of the archive. `files[].origin` is `archive` for a file
+extracted from that pinned source and `local` for a file this repository wrote —
+the MIT licence is the only one, because MIT requires the notice to travel with
+the code.
+
+The distinction is bookkeeping, not behaviour, and the honest reason it exists
+is that **Datastar is not served by a registry.** npm's
+`@starfederation/datastar` stops at `1.0.0-beta.11`, and every build from
+0.20.0 onwards dispatches on `datastar-merge-fragments`; the rename to
+`datastar-patch-elements` this product emits happened at 1.0.0. So the pinned
+source is a GitHub tag tarball for `v1.0.4`, and labelling it `npm` was a stated
+falsehood in the one file whose entire job is being trustworthy about
+provenance. A manifest whose `kind` is wrong for half its entries trains the
+reader to stop reading it, which is the whole cost this decision is paying to
+avoid.
+
+The alternative was to leave the lie and document it in the manifest's
+`description`, which is what first happened: a paragraph explaining that one entry
+says `npm` and means something else. An apology in a data file is not a
+correction, and the field was small enough to fix.
 
 ### Three targets, because there are three claims
 
 | Target | Network | Claim |
 |---|---|---|
-| `make vendor` | yes | Re-fetch every `npm` package, verify it, write the pinned bytes into the vendor tree. |
+| `make vendor` | yes | Re-fetch every pinned package, verify it, write the pinned bytes into the vendor tree. |
 | `make vendor-dry-run` | yes | The same fetch and the same verification, writing nothing. |
 | `make vendor-check` | **no** | Re-hash the committed bytes, and require every file in the served tree to be declared. |
 

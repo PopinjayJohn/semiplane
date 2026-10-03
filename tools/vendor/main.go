@@ -66,16 +66,39 @@ const (
 	// reader that reads the old one loosely.
 	schemaVersion = 1
 
-	// originNPM is a file that comes out of the package's tarball.
-	originNPM = "npm"
+	// originArchive is a file that comes out of the package's pinned source
+	// archive — whichever kind of upstream served it.
+	//
+	// The name says `archive` and not `npm` because a package is not always
+	// served by a registry. `@starfederation/datastar` is pinned to a GitHub
+	// release tarball for a tag, and labelling that `npm` was a stated lie in
+	// the one file whose entire job is being trustworthy about provenance. The
+	// behaviour is identical either way — extract a named member from a
+	// verified archive — so this constant is a label, not a branch, and
+	// `sourceKind` is where the upstream is actually named.
+	originArchive = "archive"
 
 	// originLocal is a file this repository wrote. There is nothing upstream to
 	// fetch it from, so `make vendor` verifies it in place and says so.
 	originLocal = "local"
 
-	// integrityAlgorithm is what npm publishes and therefore the only algorithm
-	// this reader accepts. sha1 is npm's historical spelling and is not strong
-	// enough to pin executable code a browser will run.
+	// The two upstreams a pinned archive can come from. They are handled by one
+	// code path, and the distinction is bookkeeping rather than behaviour: both
+	// are an `https` URL, both are held to a committed Subresource Integrity
+	// digest before a byte is decompressed, and both are walked for one named
+	// member. What a registry tarball and a project's own release tarball share
+	// is the whole of what this reader does with them.
+	//
+	// So why two names at all? Because the alternative was one name that was
+	// wrong for half the entries, and a reader auditing the manifest's
+	// provenance is exactly the reader this schema exists for. Naming the
+	// upstream costs one comparison and says something true.
+	kindNPM     = "npm"
+	kindArchive = "archive"
+
+	// integrityAlgorithm is what an npm registry publishes, and therefore the only
+	// algorithm this reader accepts. sha1 is the registry's historical spelling
+	// and is not strong enough to pin executable code a browser will run.
 	integrityAlgorithm = "sha512"
 
 	// maxTarballBytes bounds what a third party can make this process hold in
@@ -107,7 +130,13 @@ type pkgSpec struct {
 	Files   []fileSpec `json:"files"`
 }
 
-// sourceSpec is where an `npm` package's tarball is and what it must hash to.
+// sourceSpec is where a package's pinned archive is and what it must hash to.
+//
+// `Kind` names the upstream, not the mechanism: `npm` is a registry tarball and
+// `archive` is a project's own release tarball. `download` treats both
+// identically, so a reader wanting to know what is actually fetched reads `URL`
+// — and `Kind` is here so the manifest can say what that URL *is* rather than
+// leaving it to be inferred from the hostname.
 type sourceSpec struct {
 	Kind      string `json:"kind"`
 	URL       string `json:"url"`
@@ -239,7 +268,7 @@ func fetchPackage(
 		file := &pkg.Files[index]
 
 		switch file.Origin {
-		case originNPM:
+		case originArchive:
 			if !fetched {
 				body, err := download(ctx, client, pkg.Source)
 				if err != nil {
@@ -268,23 +297,31 @@ func fetchPackage(
 			return fmt.Errorf(
 				"%s declares origin %q, and this reader knows %q and %q. An origin it "+
 					"does not know is a file nothing verifies", file.Path, file.Origin,
-				originNPM, originLocal)
+				originArchive, originLocal)
 		}
 	}
 
 	return nil
 }
 
-// download fetches the tarball and holds it to the pinned npm integrity.
+// download fetches the archive and holds it to the pinned integrity.
 //
 // Order is the argument: the integrity check runs before anything is
-// decompressed, so a tarball that is not the pinned one is never parsed at all.
+// decompressed, so an archive that is not the pinned one is never parsed at all.
+//
+// **The two accepted kinds take the same path on purpose.** A registry tarball
+// and a project's own release tarball are the same artefact with a different
+// provenance: an `https` URL, a Subresource Integrity digest, and one named
+// member to walk out of it. Branching on which upstream served it would add a
+// second code path to a function whose entire value is that there is one, and
+// the manifest already says which is which.
 func download(ctx context.Context, client *http.Client, source sourceSpec) ([]byte, error) {
-	if source.Kind != originNPM {
-		return nil, fmt.Errorf("source kind %q is not %q", source.Kind, originNPM)
+	if source.Kind != kindNPM && source.Kind != kindArchive {
+		return nil, fmt.Errorf(
+			"source kind %q is neither %q nor %q", source.Kind, kindNPM, kindArchive)
 	}
 
-	if err := checkRegistryURL(source.URL); err != nil {
+	if err := checkSourceURL(source.URL); err != nil {
 		return nil, err
 	}
 
@@ -295,7 +332,7 @@ func download(ctx context.Context, client *http.Client, source sourceSpec) ([]by
 
 	// G107's premise is an attacker-chosen URL, and this one is a line of a file
 	// committed to this repository and read in every diff that changes it. The
-	// scheme is checked by checkRegistryURL above and the bytes that come back
+	// scheme is checked by checkSourceURL above and the bytes that come back
 	// are held to a committed digest before they are parsed, so a URL that was
 	// altered in transit buys nothing.
 	response, err := client.Do(request)
@@ -306,7 +343,7 @@ func download(ctx context.Context, client *http.Client, source sourceSpec) ([]by
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: the registry answered %s", source.URL, response.Status)
+		return nil, fmt.Errorf("fetch %s: the source answered %s", source.URL, response.Status)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxTarballBytes+1))
@@ -326,12 +363,15 @@ func download(ctx context.Context, client *http.Client, source sourceSpec) ([]by
 	return body, nil
 }
 
-// checkRegistryURL refuses a URL that would silently downgrade the fetch.
+// checkSourceURL refuses a URL that would silently downgrade the fetch.
 //
 // The host is deliberately **not** pinned: this repository does not hard-code
 // which registry serves a package, and a check that named `registry.npmjs.org`
-// would be a second place to change when a package moves.
-func checkRegistryURL(raw string) error {
+// would be a second place to change when a package moves — or when it was never
+// served by a registry at all. What is pinned is everything about the *request*
+// that a URL could weaken: the scheme, the absence of credentials, and a
+// present host.
+func checkSourceURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", raw, err)
@@ -353,7 +393,7 @@ func checkRegistryURL(raw string) error {
 }
 
 // verifyIntegrity holds a downloaded tarball to the Subresource Integrity
-// string npm publishes: `sha512-<base64 of the digest>`.
+// string an npm registry publishes: `sha512-<base64 of the digest>`.
 //
 // The comparison is constant-time because it costs one import and the habit is
 // worth keeping on a digest gate; the value is public, so this is hygiene and
@@ -363,7 +403,7 @@ func verifyIntegrity(tarball []byte, integrity string) error {
 	if !found || algorithm != integrityAlgorithm {
 		return fmt.Errorf(
 			"integrity %q is not a `%s-<base64>` Subresource Integrity string, which is "+
-				"what npm publishes and what this reader verifies", integrity, integrityAlgorithm)
+				"what a registry publishes and what this reader verifies", integrity, integrityAlgorithm)
 	}
 
 	want, err := base64.StdEncoding.DecodeString(encoded)

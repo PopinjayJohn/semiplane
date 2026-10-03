@@ -37,6 +37,13 @@ type member struct {
 
 // tarball builds a gzipped tarball from members, in the order given.
 //
+// fromArchive is the origin every fixture file is extracted from. Nearly all of
+// them are, and `originArchive` is six characters longer than `originNPM` was —
+// long enough that writing it out pushes the `pin(...)` calls past the line
+// limit, which is a line-length problem caused by a rename that made the code
+// more honest. The other origin has its own constant and its own tests.
+const fromArchive = originArchive
+
 // A slice rather than a map on purpose: a test that asserts on archive order
 // should not depend on map iteration order.
 func tarball(t *testing.T, members ...member) []byte {
@@ -96,7 +103,7 @@ func pin(path, inPackage, origin, body string) fileSpec {
 	}
 }
 
-// registry is an `httptest` npm. It is TLS because `checkRegistryURL` refuses
+// registry is an `httptest` npm. It is TLS because `checkSourceURL` refuses
 // plain HTTP, and a test that used an `http://` URL would be asserting against
 // a fetch this reader refuses before it gets that far.
 //
@@ -135,7 +142,7 @@ func (reg *registry) serve(t *testing.T, bodies map[string][]byte) *http.Client 
 // sourceFor builds an `npm` source pointing at a path on the test registry.
 func (reg *registry) sourceFor(path string, tarballBody []byte) sourceSpec {
 	return sourceSpec{
-		Kind:      originNPM,
+		Kind:      kindNPM,
 		URL:       reg.url + path,
 		Integrity: integrity(tarballBody),
 	}
@@ -214,8 +221,13 @@ func TestTheFetcherWritesThePinnedBytesOfEveryPackage(t *testing.T) {
 				License: "MIT",
 				Source:  reg.sourceFor("/alpha.tgz", firstTarball),
 				Files: []fileSpec{
-					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", originNPM, firstBody),
-					pin("static/vendor/alpha.LICENSE", "package/LICENSE", originNPM, firstNotice),
+					pin(
+						"static/vendor/alpha.mjs",
+						"package/dist/alpha.mjs",
+						fromArchive,
+						firstBody,
+					),
+					pin("static/vendor/alpha.LICENSE", "package/LICENSE", fromArchive, firstNotice),
 				},
 			},
 			{
@@ -224,7 +236,7 @@ func TestTheFetcherWritesThePinnedBytesOfEveryPackage(t *testing.T) {
 				License: "MIT",
 				Source:  reg.sourceFor("/beta.tgz", secondTarball),
 				Files: []fileSpec{
-					pin("static/vendor/beta.mjs", "package/dist/beta.mjs", originNPM, secondBody),
+					pin("static/vendor/beta.mjs", "package/dist/beta.mjs", fromArchive, secondBody),
 				},
 			},
 		},
@@ -280,7 +292,7 @@ func TestAFetchedFileThatIsNotThePinnedOneIsRefusedAndNothingIsWritten(t *testin
 				License: "MIT",
 				Source:  reg.sourceFor("/alpha.tgz", tarballBody),
 				Files: []fileSpec{
-					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", originNPM, pinned),
+					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", fromArchive, pinned),
 				},
 			},
 		},
@@ -412,7 +424,7 @@ func TestALocalOriginIsVerifiedOnDiskAndReachesNoNetwork(t *testing.T) {
 				License: "MIT",
 				// A URL that would fail if it were ever fetched: the claim under
 				// test is that it is not.
-				Source: sourceSpec{Kind: originNPM, URL: "https://example.invalid/x.tgz"},
+				Source: sourceSpec{Kind: kindNPM, URL: "https://example.invalid/x.tgz"},
 				Files: []fileSpec{
 					pin("static/vendor/NOTICE", "", originLocal, notice),
 				},
@@ -513,8 +525,8 @@ func TestTheRegistryURLMustBeHTTPSAndCarryNoCredentials(t *testing.T) {
 		"nothing at all":   "",
 		"not a URL at all": "://",
 	} {
-		if err := checkRegistryURL(raw); err == nil {
-			t.Errorf("checkRegistryURL accepted %s (%q)", name, raw)
+		if err := checkSourceURL(raw); err == nil {
+			t.Errorf("checkSourceURL accepted %s (%q)", name, raw)
 		}
 	}
 
@@ -522,8 +534,8 @@ func TestTheRegistryURLMustBeHTTPSAndCarryNoCredentials(t *testing.T) {
 		"https://registry.npmjs.org/pixi.js/-/pixi.js-8.22.0.tgz",
 		"https://example.invalid/deep/path/p.tgz?token=1",
 	} {
-		if err := checkRegistryURL(raw); err != nil {
-			t.Errorf("checkRegistryURL refused %q: %v", raw, err)
+		if err := checkSourceURL(raw); err != nil {
+			t.Errorf("checkSourceURL refused %q: %v", raw, err)
 		}
 	}
 }
@@ -550,7 +562,7 @@ func TestAnOriginThisReaderDoesNotKnowIsRefused(t *testing.T) {
 				License: "MIT",
 				Source:  reg.sourceFor("/alpha.tgz", tarballBody),
 				Files: []fileSpec{
-					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", originNPM, body),
+					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", fromArchive, body),
 					{
 						Path:   "static/vendor/whatever.js",
 						Origin: "cdn",
@@ -644,7 +656,7 @@ func TestADryRunVerifiesEverythingAndWritesNothing(t *testing.T) {
 				License: "MIT",
 				Source:  reg.sourceFor("/alpha.tgz", tarballBody),
 				Files: []fileSpec{
-					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", originNPM, body),
+					pin("static/vendor/alpha.mjs", "package/dist/alpha.mjs", fromArchive, body),
 				},
 			},
 		},
@@ -676,7 +688,7 @@ func TestADryRunVerifiesEverythingAndWritesNothing(t *testing.T) {
 	// And it still holds the bytes to the pin: a mismatching package fails the
 	// dry run rather than passing it because nothing was written.
 	doc.Packages[0].Files[0] = pin(
-		"static/vendor/alpha.mjs", "package/dist/alpha.mjs", originNPM, "export const alpha = 2;")
+		"static/vendor/alpha.mjs", "package/dist/alpha.mjs", fromArchive, "export const alpha = 2;")
 
 	if err := fetchAll(t.Context(), root, doc, client, io.Discard, true); err == nil {
 		t.Fatal("the dry run accepted a member whose bytes are not the pinned ones")
