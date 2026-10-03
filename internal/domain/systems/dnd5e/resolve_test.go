@@ -1476,3 +1476,161 @@ func TestAnAttackLandsWhenTheRollBeatsArmourClass(t *testing.T) {
 			landed, missed)
 	}
 }
+
+// TestANaturalTwentyHitsUnderBothEditionsAndTheExemptionDoesNotMakeItMiss is the bug a
+// player finds in one round, written down before it was fixed.
+//
+// `defaultCritical` short-circuits on the defender's exemption, and `resolveAttack` used to
+// read that rule's answer as **the hit**. So under a 2024 pack — the toggle on, and the
+// `unconscious` row carrying `critical_exempt` — a natural 20 against an unconscious
+// defender **missed**: an armour class of 30, a total of 27, `met: false`, no mutation
+// addressing the defender at all. The identical roll auto-hit under 2014 and against any
+// unexempted target, so the defect was invisible to every fixture that did not combine a
+// maximum die, an unreachable armour class and a 2024 condition row.
+//
+// The rule that was consulted is not wrong. A natural 20 is an automatic critical hit in
+// 5e, and what 2024 changes is that it does **not** automatically *count as* a critical
+// hit against an incapacitated, paralysed or unconscious target — a statement about the
+// damage dice, not about whether the sword lands.
+//
+// # Both editions, and both halves of each
+//
+// **The table, because either row alone is satisfiable by a constant.** A resolver that
+// always let a 20 through would pass 2024 and is exactly the bug; a resolver that never
+// let one through would pass a 2014-only test and break the table. So each row asserts the
+// hit **and** the critical, which are the two questions the fix separated, and the two
+// editions are required to disagree about the second while agreeing about the first.
+//
+// The seeds are searched rather than hardcoded, for the reason
+// `TestTheCriticalRuleIsReadFromThePacksTogglesAndNotFromGo` searches: a d20 reaches its
+// maximum one time in twenty, and a golden seed is a value that changes whenever the
+// pack's numbers do. **A search that found no 20 fails**, because a test that silently
+// never reached the case is the shape of failure this file is written against.
+func TestANaturalTwentyHitsUnderBothEditionsAndTheExemptionDoesNotMakeItMiss(t *testing.T) {
+	t.Parallel()
+
+	// Both editions through this package's own overlay seam. The editions themselves ship
+	// as embedded files in `dnd5e/overlays`, and a test in *this* package cannot read them:
+	// that package imports this one, so importing it back is an import cycle. The two
+	// overlays below therefore restate the two rows this test is about — the toggle and the
+	// `unconscious` row's `critical_exempt` — and nothing else, which is the same shape
+	// every other edition test in this file uses.
+	edition2024 := engineWithOverlay(t, `system: "dnd5e"
+version: "test-2024-exemption@1"
+title: "2024"
+toggles:
+  crit_attack_die_max: true
+  crit_damage_die_max: true
+  crit_ignored_by_incapacitated: true
+conditions:
+  - slug: unconscious
+    label: "Unconscious"
+    summary: "Not awake; cannot act."
+    attack: advantage
+    critical_exempt: true
+`)
+
+	edition2014 := engineWithOverlay(t, `system: "dnd5e"
+version: "test-2014-exemption@1"
+title: "2014"
+toggles:
+  crit_attack_die_max: true
+  crit_damage_die_max: false
+  crit_ignored_by_incapacitated: false
+`)
+
+	// Level 5, Strength 18: `prof` 3 plus a Strength modifier of +4, so a natural 20 is a
+	// total of 27.
+	attacker := aToken(t, "Vurg", 5,
+		map[string]int{"strength": 18, "dexterity": 12},
+		map[string]any{
+			"attacks": []any{map[string]any{
+				"name": "spear", "ability": "strength", "damage": "1d12+4",
+			}},
+			"ac": 0,
+		})
+
+	// Armour class 30 and a natural 20's total of 27: **no attack die this system can roll
+	// beats this on the total**, so every hit in this test is an automatic one and the
+	// comparison against armour class is inert by construction. Room to take the damage, and
+	// the condition the exemption is read from.
+	defender := aToken(t, "Wall", 3, map[string]int{"dexterity": 14},
+		map[string]any{
+			"ac": 30, "hp": 1000, "max_hp": 1000,
+			"conditions": []string{"unconscious"},
+		})
+
+	if !edition2024.Pack().Toggle(toggleCritIgnoredByIncapacitated) {
+		t.Fatal("the 2024 fixture did not switch the exemption on; the fixture is wrong")
+	}
+
+	if edition2014.Pack().Toggle(toggleCritIgnoredByIncapacitated) {
+		t.Fatal("the 2014 fixture left the exemption on; the fixture is not a 2014 pack")
+	}
+
+	for _, testCase := range []struct {
+		name         string
+		engine       *Engine
+		wantCritical bool
+	}{
+		// 2024 denies the *critical*, and says nothing about the hit.
+		{name: "2024", engine: edition2024, wantCritical: false},
+		// 2014 crits on the 20, and the hit was never in question.
+		{name: "2014", engine: edition2014, wantCritical: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			naturalTwenties := 0
+
+			for seed := range 200 {
+				state := aState(t, map[rules.ObjectID][]byte{
+					"attacker_1": attacker, "defender_1": defender,
+				})
+
+				mutations := resolve(t, testCase.engine, aTestCall(t, byte(seed)), state,
+					attackOn(t, "attacker_1", "spear"))
+
+				record := bodyOf(t, mutations[0].Args).LastRoll
+				if record == nil || record.Natural == nil {
+					t.Fatalf("seed %d: the attack recorded no natural", seed)
+				}
+
+				if *record.Natural != 20 {
+					continue
+				}
+
+				naturalTwenties++
+
+				if !record.Met {
+					t.Errorf("seed %d: a natural 20 against an unconscious defender with an "+
+						"unreachable armour class did not hit (total %d, target %d); a "+
+						"maximum attack die lands whatever the critical rule said",
+						seed, record.Total, record.Target)
+				}
+
+				hit, reached := mutationFor(t, mutations, "defender_1")
+				if !reached {
+					t.Errorf("seed %d: a natural 20 reached nobody; the defender took no damage, "+
+						"so the auto-hit did not resolve", seed)
+
+					continue
+				}
+
+				if bodyOf(t, hit.Args).HitPoints >= 1000 {
+					t.Errorf("seed %d: the attack hit and dealt nothing", seed)
+				}
+
+				if got := record.Critical; got != testCase.wantCritical {
+					t.Errorf("seed %d: a natural 20 against an unconscious defender critted=%v, "+
+						"want %v", seed, got, testCase.wantCritical)
+				}
+			}
+
+			if naturalTwenties == 0 {
+				t.Fatalf("no seed in 0..199 rolled a natural 20, so this test never reached the " +
+					"case it exists for; a search that finds nothing is a test that proves nothing")
+			}
+		})
+	}
+}
