@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "description": [
+    "The vendor pin (D13). Every third-party browser asset this product serves is",
+    "committed under internal/web/static/vendor/ and listed here with a digest,",
+    "so `make vendor` re-fetches and verifies and `make vendor-check` re-hashes the",
+    "committed bytes and fails on a mismatch.",
+    "",
+    "Why committed at all rather than fetched at boot or bundled through a CDN: the",
+    "assets route is campaign-scoped and reader-authorised (S-8), a CDN is a second",
+    "origin this product would have to authenticate a player to, and a build that",
+    "reaches the network is a build whose output depends on a third party being up.",
+    "The cost is a committed blob and a vendor-check that has to actually run.",
+    "",
+    "`origin: \"npm\"` means `make vendor` fetches the tarball at `source.url`, verifies",
+    "it against `source.integrity`, and extracts the member at `files[].inPackage`.",
+    "`origin: \"local\"` is a file this repository wrote: it is committed and hashed",
+    "like any other, but there is nothing upstream to re-fetch it from. There is",
+    "exactly one local entry and it is the licence, because MIT requires the notice",
+    "to travel with the code.",
+    "",
+    "The digests are sha256 of the committed bytes, which is what `make vendor-check`",
+    "recomputes. They are not the npm integrity value: that one covers the tarball,",
+    "which is never committed, so comparing against it would be checking a file the",
+    "gate cannot see."
+  ],
+  "packages": [
+    {
+      "name": "pixi.js",
+      "version": "8.22.0",
+      "license": "MIT",
+      "why": [
+        "PixiJS is the renderer for the live tabletop. It is a WebGL/WebGPU retained-",
+        "mode engine, which is the right shape for a map that holds a few hundred",
+        "sprites and repaints on a state change rather than on a frame loop:",
+        "architecture §15 step 10 chose it and §10.6 records that the client surface",
+        "is deliberately limited to placements, fog and initiative, so a new gameplay",
+        "system adds no client work.",
+        "",
+        "The `browserAll` entry point is vendored rather than the default one: it is",
+        "the build that eagerly initialises the asset and text extensions, which is",
+        "what a map needs, and it is the same file the package's own `browser`",
+        "condition exports.",
+        "",
+        "Not vendored: pixi.mjs (the unminified twin, 2.2MB), the source maps (the",
+        "committed file ends in a sourceMappingURL comment pointing at a file this",
+        "repository does not ship — a devtools 404 on purpose, because a 2.2MB map",
+        "for an 841KB module is not a cost a self-hosted instance should carry), and",
+        "every optional extension (gif, html-source, advanced blend modes, the WebGPU",
+        "and WebGPU-adjacent texture loaders), none of which a map renders with."
+      ],
+      "source": {
+        "kind": "npm",
+        "url": "https://registry.npmjs.org/pixi.js/-/pixi.js-8.22.0.tgz",
+        "integrity": "sha512-QbTANHMZ751MIjLiLSUSM8a7LNMWwMIf0KbRCqlW+SPS9hNLfSVS+cl1O2SEp9g1K/wyLzj/OJHv+1TUfiPr/w=="
+      },
+      "files": [
+        {
+          "inPackage": "package/dist/pixi.min.mjs",
+          "path": "internal/web/static/vendor/pixi.min.mjs",
+          "mediaType": "text/javascript; charset=utf-8",
+          "origin": "npm",
+          "bytes": 841319,
+          "sha256": "66257bc46776898bf8c54daaed402ed8f9ac109379c47b2dfa8aa048544d2953"
+        },
+        {
+          "inPackage": "package/LICENSE",
+          "path": "internal/web/static/vendor/pixi.LICENSE",
+          "mediaType": "text/plain; charset=utf-8",
+          "origin": "npm",
+          "bytes": 1092,
+          "sha256": "5ce7447bc57f7349ffc48338782fbcabe613696e00712b20d66bc58e780f9473"
+        }
+      ]
+    }
+  ]
+}
