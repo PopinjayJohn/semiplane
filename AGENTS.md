@@ -141,6 +141,26 @@ each cost a PR:
   because no audited document carried a second `search` landmark; adding the
   fixture made it reachable and it immediately failed three unrelated rules, which
   is the audit working.
+- **Three work items independently shipped `TestTheSheetIsInsideTheBuild`, and
+  `A11Y_TESTS` matched none of them.** Phase 9 gave each stylesheet a test proving
+  it reached `static/dist/app.css`; `BuiltStylesheet` is in the pattern and the test
+  name does not contain it. So every sheet's built-artefact assertion ran under
+  `make check` and **not** under `make a11y` — the target whose entire job is the
+  claims that read the built stylesheet. Deleting a `@import` from `app.css` left
+  `make a11y` green on all three. Adding `SheetIsInsideTheBuild`,
+  `SheetDeclaresNo`, `RuleInTheSheet`, `SelectorInThisSheet` and
+  `SheetIsResponsibleFor` to the pattern made five more tests execute; deleting the
+  `play.css` import is now red. This is the **other half** of the same problem as
+  the route that held 23 tests and matched none, and it is the half the guard
+  cannot see: the guard checks that a package *contributes*, not that the
+  contribution is the test you meant.
+- **A disjunction needs both arms red, and an escape hatch left in place after the
+  thing it was escaping has arrived is a hole.** A sheet's test said "either
+  `app.css` imports this, or this sheet's header says it is not imported yet" —
+  correct while unwired, and **disarmed the moment the import landed**, because
+  deleting the import then found the stale sentence still sitting in the header and
+  passed. The marker tracks the wiring: it moved with the import, and both arms are
+  now red. A note must not outlive the fact it describes.
 
 ```bash
 make check          # the full gate

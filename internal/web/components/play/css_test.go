@@ -31,20 +31,41 @@ import (
 //
 // So there are two tests, and the second is the one that would have caught it.
 
-// notInTheBuild is the sentence this sheet's own header carries while `app.css`
-// does not import it.
+// theImportHasLanded is the sentence this sheet's own header carries **now that
+// `app.css` imports it**.
 //
-// A **header marker**, not a skip, and the distinction is the whole design: the
-// assertion is a disjunction of two facts, both checked. Either `app.css` imports
-// the sheet — and then the **built** file is read, because that is the only
-// artefact that can tell a rule was dropped by the build — or the sheet's header
-// says it is not wired in yet, and the reason is logged on every run.
+// # The marker tracks the wiring, and that is the whole design
 //
-// Delete the marker without the import landing and this goes **red**, which is
-// the direction that matters: a note must not outlive the fact it describes, and
-// the failure that catches that is the whole reason for the second branch
-// existing rather than the test simply being deleted until the import lands.
-const notInTheBuild = "A missing `@import` is not a compile error"
+// This started as "is not in the build until `app.css` imports it", which is what
+// the sheet said while it was unwired. The import has since landed, so the marker
+// moved with it — and leaving the old sentence in place would have quietly
+// disarmed the test: `TestTheSheetIsInsideTheBuild` is a **disjunction**, so with
+// the import deleted it takes the second branch, finds the "not imported" marker
+// still sitting in the header, and passes. Deleting the `@import` from `app.css`
+// was green. That is the failure this comment exists to prevent, and it is the
+// one `AGENTS.md` keeps recording: a note must not outlive the fact it describes,
+// and a temporary escape hatch left in place after the thing it was escaping has
+// arrived stops being an escape hatch and becomes a hole.
+//
+// So the assertion stays a disjunction and both halves are live:
+//
+//   - `app.css` imports the sheet → the **built** file is read, because that is
+//     the only artefact that can tell a rule was dropped by the build; and
+//   - it does not → the header must say it has *not* been wired in, which it
+//     does not say, so this is red and names the fix.
+//
+// Both directions are therefore red. A test with one live branch would be simpler
+// and would be a test that stopped working when the work it was waiting for
+// arrived.
+const theImportHasLanded = "is imported by `app.css`"
+
+// notWiredInYet is the sentence the header carries if the import is ever removed,
+// and which it therefore does **not** carry today. Named rather than inlined so
+// both halves of the disjunction are visible in one place, and so a reader can
+// see that the second half is currently unreachable — which is the point: it is
+// the arm that fires when someone deletes the `@import`, and it fires because the
+// first sentence is still there.
+const notWiredInYet = "is not imported by `app.css`"
 
 // theSheetIsTheSentinel is this sheet's own contribution to the built file.
 //
@@ -95,7 +116,20 @@ func TestTheSheetIsInsideTheBuild(t *testing.T) {
 
 	entry := readFile(t, sheetEntryPoint)
 
-	if strings.Contains(entry, "play.css") {
+	// **The `@import` line, not the string "play.css".** The first version of this
+	// test asked whether `app.css` *mentioned* `play.css`, and that is true of the
+	// explanatory comment above the import as well as the import itself — so
+	// deleting the import left the sheet looking present, the test took the strict
+	// branch, read a built file that no longer carried the sentinel, and the
+	// whole disjunction quietly became a no-op on the one failure it exists for.
+	//
+	// A loose predicate on a *prose-bearing* file is the same mistake as a loose
+	// predicate on markup, and this phase has now made it in three places: a
+	// heading fixture that stopped violating its rule, a control-name audit that
+	// read subtree text, and a selector walk that read comments. The pattern is
+	// the same each time — **match the construct, not a word that appears near
+	// it.**
+	if appImports(t, entry, "play.css") {
 		built := readFile(t, builtStylesheetPath)
 
 		if !strings.Contains(built, theSheetIsTheSentinel) {
@@ -109,19 +143,24 @@ func TestTheSheetIsInsideTheBuild(t *testing.T) {
 		return
 	}
 
-	t.Logf("NOTE: %s is not imported by %s yet.\n"+
-		"      internal/web embeds static/dist/ and make css builds that from "+
-		"app.css's import list, so a sheet nobody imports renders the tabletop "+
-		"unstyled while every section 10.2 gate passes. add to %s, after tv.css:\n"+
-		"          @import \"./play.css\";",
-		sheetPath, entry, sheetEntryPoint)
+	header := readFile(t, sheetPath)
 
-	if !strings.Contains(readFile(t, sheetPath), notInTheBuild) {
-		t.Errorf("%s is not imported by %s and its own header no longer says so.\n"+
-			"Either the import was added and this note left behind -- in which case "+
-			"the built stylesheet must be re-checked, since `make css` has not "+
-			"necessarily run -- or the sheet was never wired in and the warning was "+
-			"deleted. Both leave this test asserting nothing", sheetPath, entry)
+	if strings.Contains(header, theImportHasLanded) {
+		t.Errorf("%s is no longer imported by %s, and this sheet's header still "+
+			"says it is. The tabletop renders unstyled and every section 10.2 gate "+
+			"still passes, because the markup is correct and only the bytes are "+
+			"missing -- which is the failure a stale note here hides.\n"+
+			"      add to %s, after the live.css import:\n"+
+			"          @import \"./play.css\"; and move the header's sentence to "+
+			"say it is not wired in yet",
+			sheetPath, sheetEntryPoint, sheetEntryPoint)
+	}
+
+	if !strings.Contains(header, notWiredInYet) {
+		t.Errorf("%s is not imported by %s and its own header does not say it is "+
+			"unwired either, so this assertion is about nothing. One of the two "+
+			"sentences has to be true: the header describes the wiring, and the "+
+			"wiring has changed", sheetPath, sheetEntryPoint)
 	}
 }
 
@@ -242,6 +281,35 @@ const (
 	sheetEntryPoint     = "../../static/css/app.css"
 	builtStylesheetPath = "../../static/dist/app.css"
 )
+
+// appImports reports whether `app.css` carries an `@import` line for `sheet`.
+//
+// The line, and not the filename appearing anywhere: `app.css`'s own comments
+// name every sheet it assembles, and each of those comments says why the *order*
+// is load-bearing. So a substring test finds the sheet in prose and concludes it
+// is imported, and the gate built on it cannot fail.
+func appImports(t *testing.T, entry, sheet string) bool {
+	t.Helper()
+
+	for line := range strings.SplitSeq(entry, "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 || fields[0] != "@import" {
+			continue
+		}
+
+		if strings.Trim(fields[1], `"';`) == "./"+sheet {
+			return true
+		}
+	}
+
+	return false
+}
 
 // readFile fails rather than skipping when a file is absent.
 //
