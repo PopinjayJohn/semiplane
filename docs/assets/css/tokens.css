@@ -2,7 +2,7 @@
  * semiplane docs — token layer.
  *
  * Authored from the token tables in the UI specification
- * (.kilo/plans/1790778908232-responsive-ui-ux-design-spec.md §6). When
+ * (.opencode/plans/1790778908232-responsive-ui-ux-design-spec.md §6). When
  * internal/web gains its own tokens.css, this file is the source it is copied
  * from, not a second palette — and tokens_contrast_test.go should assert both
  * files against the same floors. Two palettes would drift, and a docs site

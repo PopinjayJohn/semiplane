@@ -44,7 +44,7 @@ blob-report/
 node_modules/
 
 # Agent Manager worktrees are ephemeral checkouts, never part of the repo
-.kilo/worktrees/
+.opencode/worktrees/
 
 # Toolchain binaries installed by the Makefile (tailwind, templ). Never
 # committed: the standalone Tailwind binary is ~110MB.
@@ -68,15 +68,10 @@ docs/public/
 docs/resources/
 docs/.site-check/
 docs/.hugo_build.lock
-# Design records staged from .kilo/plans by `make site-plans`
+# Design records staged from .opencode/plans by `make site-plans`
 docs/assets/plans/
 
 # Editor/IDE
 # .idea/
 # .vscode/
 *.code-workspace
-
-# OpenCode resolves the skills through .opencode/opencode.jsonc, which points at
-# the committed .kilo/skills. The local symlink is a convenience for tooling that
-# expects a .opencode/skills path, not a tracked file.
-.opencode/skills

@@ -54,7 +54,7 @@ enableRobotsTXT = true
     [languages.en.params]
       description = "A self-hosted, system-agnostic TTRPG wiki and virtual tabletop. One Go binary, one SQLite file, your campaign content in your own Obsidian vault."
 
-# Hugo sandboxes os.ReadFile to the project root: neither "../.kilo/plans/..." nor
+# Hugo sandboxes os.ReadFile to the project root: neither "../.opencode/plans/..." nor
 # an absolute path outside docs/ resolves, and a path that escapes the root
 # returns empty rather than an error -- which is exactly the silent-empty-page
 # failure the design-record shortcode exists to prevent. A module mount would be
@@ -66,7 +66,8 @@ enableRobotsTXT = true
 [params]
   # The design-record shortcode resolves its target through this, so a renamed
   # plan fails one edit here and one rg -- not a hard-coded path in a layout.
-  # Resolved as an asset path, because Hugo mounts ../.kilo/plans to assets/plans.
+  # Resolved as an asset path, because `make site-plans` stages
+  # ../.opencode/plans into docs/assets/plans.
   planDir = "plans"
   repo = "https://github.com/PopinjayJohn/semiplane"
   # Dated in the banner on every /design/ page. These are records, not docs.

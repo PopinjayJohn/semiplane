@@ -310,7 +310,7 @@ lint-workflows: ## Lint the GitHub Actions workflows
 # runtime assets the binary serves, unlike Hugo.
 
 SITE_PLANS := $(SITE_DIR)/assets/plans
-PLAN_SRC   := .kilo/plans
+PLAN_SRC   := .opencode/plans
 
 .PHONY: site-plans
 site-plans: ## Stage the committed design records where Hugo can read them

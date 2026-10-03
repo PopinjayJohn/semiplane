@@ -78,7 +78,7 @@ better prompt than an absent heading.
 
 <!-- This repository is agent-driven. State plainly whether an agent produced the
      change and which instructions it followed — AGENTS.md, a skill under
-     .kilo/skills, or neither. An agent-authored change that skipped the
+     .opencode/skills, or neither. An agent-authored change that skipped the
      quality-gate skill is exactly what this section exists to surface. -->
 
 ## For reviewers
