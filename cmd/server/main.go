@@ -396,6 +396,17 @@ func runServer(_ []string) error {
 		kinds,
 		signals,
 		hub.Sink(),
+		// Reconciliation is wired here rather than inside `newContentPipeline`
+		// because it needs the concrete `*store.Store` and the root registry, and
+		// the pipeline's own signature deliberately takes the narrow
+		// `content.PageStore`. A pipeline that built it would have to widen that
+		// parameter to admit SQL it does not otherwise use.
+		//
+		// It is the **last** sink and the ordering is load-bearing: a successful pass
+		// rewrites one byte, which settles as a change of its own and arrives back
+		// here. Convergence is on the state being fixed, not on a flag, so the second
+		// visit finds nothing pending and writes nothing.
+		secretReconciler(contentRoots, reconcileLedger{store: db}, logger),
 	)
 	if err != nil {
 		return fmt.Errorf("wire the content pipeline: %w", err)

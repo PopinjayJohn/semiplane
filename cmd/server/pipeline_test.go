@@ -68,6 +68,15 @@ type instance struct {
 	// store-backed one installed while the product ran on a different one.
 	lister pageLister
 
+	// roots is the open `*content.Registry`, kept so a test can reach the same
+	// `os.Root` per campaign the product serves. `assemble` opens them and closes
+	// them in its own cleanup; a test that needed a root would otherwise have to
+	// open a second registry, and ADR 0004's single-instance rule applies to the
+	// store rather than the roots, so the second registry would be a *different*
+	// confinement boundary over the same directory — which is precisely the kind
+	// of near-miss that makes a confinement test meaningless.
+	roots *content.Registry
+
 	// plane is the realtime plane the router was built with, held for the same
 	// reason as `lister`: a test asserting that a refusal opened no campaign state
 	// asks the registry the product was handed, and a test that built its own
@@ -206,6 +215,7 @@ func (i *instance) assemble(
 	i.t.Helper()
 
 	roots, _, err := campaignroots.Open(ctx, i.store, discardLogger())
+	i.roots = roots
 	if err != nil {
 		i.t.Fatalf("open campaign content roots: %v", err)
 	}
@@ -219,6 +229,12 @@ func (i *instance) assemble(
 		newContentSignals(i.registry, discardLogger()),
 		// No event hub. The pipeline indexes either way, and a test asserting the
 		// index converges must not also depend on a browser being attached.
+		nil,
+		// No reconciliation either, for the same reason and a stronger one: a
+		// reconciler in this fixture would rewrite pages as they settle, and a test
+		// asserting the index converges must not also be asserting that nothing else
+		// touched the file. The sink's own coverage is `secrets_reconcile_test.go`,
+		// which drives it deliberately.
 		nil,
 	)
 	if err != nil {
