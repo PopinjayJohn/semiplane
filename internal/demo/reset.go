@@ -108,12 +108,26 @@ func Reset(ctx context.Context, manifest Manifest, opts Options) (ResetResult, e
 		)
 	}
 
-	accounts, absent, err := opts.resetPlan(ctx, manifest)
+	absent, err := opts.resetPlan(ctx, manifest)
 	if err != nil {
 		return ResetResult{}, err
 	}
 
-	result := ResetResult{Accounts: accounts, Absent: absent, Warning: warning}
+	// `Accounts` is **not** seeded from the plan here. It was, and every account came
+	// out twice: `resetPlan` already returns the usernames it found, and the deletion
+	// loop below appended each one again as it was removed. Nothing was deleted twice —
+	// the loop deletes by name, and a second delete of a gone row is simply not
+	// `deleted` — but `len(result.Accounts)` was twice the truth and the command
+	// printed each name twice.
+	//
+	// The duplication was invisible to the package's own tests because they assert
+	// that a name is **present**, not that it appears **once**. It was found by
+	// running `demo reset` and reading its output, which is the argument for the
+	// install guide's own rule: a guide whose commands were not run is a guide that
+	// reports a defect nobody typed.
+	//
+	// So the result carries what was actually removed, and nothing else.
+	result := ResetResult{Absent: absent, Warning: warning}
 
 	for index := range manifest.Campaigns {
 		slug := manifest.Campaigns[index].Slug
@@ -149,13 +163,12 @@ func Reset(ctx context.Context, manifest Manifest, opts Options) (ResetResult, e
 func (o Options) resetPlan(
 	ctx context.Context,
 	manifest Manifest,
-) (accounts, absent []string, err error) {
-	accounts = []string{}
+) (absent []string, err error) {
 	absent = []string{}
 
 	named, err := o.namedCampaigns(ctx, manifest)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	for index := range manifest.Accounts {
@@ -169,12 +182,12 @@ func (o Options) resetPlan(
 				continue
 			}
 
-			return nil, nil, fmt.Errorf("%w: look up the account %q: %w", errDemo, username, err)
+			return nil, fmt.Errorf("%w: look up the account %q: %w", errDemo, username, err)
 		}
 
 		if account.IsAdmin {
 			// The refusal this file is named for. See the type's comment.
-			return nil, nil, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"%w: the account %q exists and holds instance administration, so this "+
 					"artefact did not create it and this command will not delete it; remove "+
 					"it with `semiplane admin` if that is what you want",
@@ -186,21 +199,23 @@ func (o Options) resetPlan(
 		// the campaigns are gone is a refusal that arrived too late to have been useful.
 		elsewhere, err := o.membershipsOutside(ctx, account.ID, named)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		if len(elsewhere) > 0 {
-			return nil, nil, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"%w: the account %q is still a member of %s, which this artefact does not seed, "+
 					"so this command did not create it and will not delete it",
 				errDemo, username, strings.Join(elsewhere, ", "),
 			)
 		}
 
-		accounts = append(accounts, username)
+		// Nothing is appended: the caller deletes what it finds and reports from
+		// what it deleted. This list used to be returned and then reported a second
+		// time, which is the double-print the install walkthrough found by running it.
 	}
 
-	return accounts, absent, nil
+	return absent, nil
 }
 
 // namedCampaigns returns the slugs the manifest declares that this instance actually has.
