@@ -1,13 +1,13 @@
 ---
 title: "Install"
-description: "Run semiplane from source, from a release binary, or behind a reverse proxy."
+description: "Run semiplane from source, seed it with the demo vault, or put it behind a reverse proxy."
 lede: "One binary, one SQLite file, and a directory your campaigns can point at. There is no external service to sign up for."
 weight: 10
 ---
 
-Everything below runs on a machine with a Go toolchain. semiplane is a single
-statically linked binary with no runtime dependencies beyond a writable
-directory and a C library from your distribution.
+Everything below runs on a machine with a Go toolchain until a release exists to
+download. semiplane is a single statically linked binary with no runtime
+dependencies beyond a writable directory and a C library from your distribution.
 
 ## From source
 
@@ -24,15 +24,22 @@ into and then fill.
 
 ## Accounts
 
-There is no interface to create the first user yet, so there is nothing to do at
-this step. When it lands it will be a CLI subcommand rather than an environment
-variable, so that no password ever sits where `ps` and shell history can read
-it:
+The first account is a command rather than an environment variable, so that no
+password ever sits where `ps` and shell history can read it. Omit
+`--password` and it is read from the terminal instead:
 
 ```bash
-# planned — not implemented yet
 semiplane admin create --username you
+semiplane admin help        # every flag: create, and campaign add
 ```
+
+`--admin` grants instance administration. Leave it off for an account that only
+needs to run a game, because an instance administrator can register campaigns and
+manage users on an instance that already has any.
+
+The quickest way to *see* an instance is not to create an account: the
+[demo vault]({{ "install/demo/" | relURL }}) seeds three campaigns and prints a
+password you sign in with.
 
 ## Configuration
 
@@ -80,14 +87,23 @@ only says the process is alive. A difference between them is a campaign whose
 content root has gone missing, which is reported in the interface as a persistent
 banner rather than a transient toast — an ongoing condition, not an event.
 
+## See it running first
+
+Before configuring anything, the [demo vault]({{ "install/demo/" | relURL }}) gives
+you a populated instance — three campaigns, a seeded tabletop, two accounts and a
+printed password — in three commands. It is the fastest way to find out whether
+this is the thing you want, and it is what the rest of this page is about
+installing.
+
 ## What is not here yet
 
-- Releases are not published, so there is no prebuilt binary and no container
-  image. Building from source is the supported path.
-- `admin create`, campaign registration, and the content root do not exist yet.
-  The server currently serves `/healthz`, `/readyz`, and a 404 for everything
-  else.
-- Tag-triggered release workflows are deliberately out of scope until there is a
-  version to release.
+- No release has been published yet, so there is no prebuilt binary and no
+  container image. Building from source is the supported path. The demo vault's
+  artefact is produced the same way, by `make demo-artifact`.
+- Tag-triggered release workflows publish the demo artefact beside the binary;
+  what they do not publish is a container image, and no multi-arch binary matrix
+  is promised yet.
+- There is no upgrade path. Back up the SQLite file and your vaults; a migration
+  is forward-only, so an older binary will not open a newer database.
 
 The [roadmap]({{ "roadmap/" | relURL }}) says which phase each of these lands in.
