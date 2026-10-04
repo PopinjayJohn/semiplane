@@ -12,12 +12,22 @@ another. The spelling is a **leading slash**:
 [[public-post/town-notice]]      a relative path inside *this* campaign
 ```
 
-That is the whole rule, and the slash is doing all the work. Written without it,
-`public-post/town-notice` is relative to the directory of the page that wrote it — from
-`notes/`, that is `notes/public-post/town-notice`, exactly as Obsidian would read it.
-The leading slash is Obsidian's own spelling for a link at the top of the vault, and
-here the top of the vault *is this campaign*, so a vault-absolute reference whose first
-segment is not a directory this campaign has is a reference into another campaign.
+That is the rule, and the slash is doing the work that matters: it writes the target
+campaign **down**. Written without it, `public-post/town-notice` is *read first* as a
+path relative to the directory of the page that wrote it — from `notes/`, that is
+`notes/public-post/town-notice`, exactly as Obsidian would read it. The leading slash is
+Obsidian's own spelling for a link at the top of the vault, and here the top of the
+vault *is this campaign*, so a vault-absolute reference whose first segment is not a
+directory this campaign has is a reference into another campaign.
+
+**Write the slash anyway, and do not rely on the other spelling being broken.** If the
+relative reading finds nothing, semiplane tries the reference once more as a bare page
+name — so `public-post/town-notice` written from inside `public-post` will usually
+resolve after all, by way of a page called `town-notice`. It lands on the same page the
+slashed spelling reaches, which is exactly why this is worth knowing: nothing about the
+result looks wrong, and the link you wrote is not the link you meant. The slash is
+unambiguous, survives a page moving up a directory, and never depends on a page of the
+same name happening to exist somewhere else.
 
 Here is one, pointing at Greyhaven by name:
 
