@@ -1,7 +1,7 @@
 ---
 title: "0060 — The demo vault ships as a release artefact, not embedded in the binary"
-description: "The demo vault is committed at `demo-vault/`, built by `make demo-artifact` into `semiplane-demo-v<version>.tar.gz`, and published to the GitHub Release beside the binary. The binary embeds none of it, so the vault ships on its own schedule instead of the Go build's — and the price is a version skew between the two, which `semiplane demo seed` is supposed to refuse and today cannot."
-lede: "Embedding a content artefact in a compiler's output makes prose ship on a compiler's schedule. The alternative is a download, a version number on both sides, and a check between them — and the check is the half of this decision that is not finished."
+description: "The demo vault is committed at `demo-vault/`, built by `make demo-artifact` into `semiplane-demo-v<version>.tar.gz`, and published to the GitHub Release beside the binary. The binary embeds none of it, so the vault ships on its own schedule instead of the Go build's — and the price is a version skew between the two, which `semiplane demo seed` refuses when both versions are known."
+lede: "Embedding a content artefact in a compiler's output makes prose ship on a compiler's schedule. The alternative is a download, a version number on both sides, and a check between them — and the check only fires when both numbers exist, which is why a development build warns and proceeds."
 weight: 5
 date: "2026-10-04"
 status: "accepted"
@@ -157,28 +157,43 @@ full:
   `(this build carries no version)`, says out loud that the artefact therefore
   cannot be checked against it, and returns no error.
 
-That last bullet is the state of the thing today, and it is the honest headline:
+That last bullet is permanent and is the honest limit of this record's mitigation.
 
-**`productVersion` in `cmd/server/wiring.go` is `const productVersion = ""`.** A
-constant, and Go's linker does not rewrite constants —
-`go build -ldflags "-X main.productVersion=0.1.0"` exits 0, changes nothing, and
-the binary still reports `(this build carries no version)`. So a build of this
-tree **cannot** name its own release, the release workflow can only stamp the
-artefact's half of the pair, and `ErrVersionSkew` is therefore unreachable in
-every build produced today. Every shipped artefact/binary pair takes the warning
-branch and proceeds.
+### The check was unreachable, and this record is why
 
-The mitigation is written, correct and tested; it is not armed. `wiring.go`'s own
-comment says the constant "becomes a `var`" the moment a release workflow stamps
-a version, and that one-word change has not happened. Until it does, **"the seed
-refuses skew" is true only when both versions are known, and today the binary
-can never know one.** Any statement of this record's mitigation that omits that
-sentence is overstating it.
+`productVersion` in `cmd/server/wiring.go` was **`const productVersion = ""`**. Go's
+linker does not rewrite constants, so `go build -ldflags "-X main.productVersion=0.1.0"`
+exits 0, changes nothing, and the binary still reported
+`(this build carries no version)`. Every artefact/binary pair therefore took the warning
+branch, and `ErrVersionSkew` was **unreachable in every build this tree produced** — a
+gate whose condition could not be met.
+
+Worse than inert: `-X` against a `const` produces **no error and no warning**, so a
+release could stamp a version, watch a clean run, and ship an artefact whose skew check
+did nothing. Nothing in the logs would have said so.
+
+`wiring.go`'s own comment predicted the fix and named its trigger: *"The moment the
+release workflow stamps a version this becomes a `var`, and nothing else changes."* The
+release workflow arrived with this phase, so that moment was the moment, and `productVersion`
+is now a `var`. Measured on the same artefact:
+
+| Binary | `-X` stamp | Outcome |
+| --- | --- | --- |
+| `var`, unstamped | — | exit 0, `cannot be checked against it` |
+| `var` | `9.9.9` | **exit 1**, `declares product "0.1.0" and this binary is "9.9.9"` |
+| `const` *(before)* | `9.9.9` | exit 0, `cannot be checked against it` |
+
+The third row is the finding: the stamp was accepted and ignored, so the check could not
+fire no matter what the release passed it.
+
+**So "the seed refuses skew" is true when both versions are known, and a development build
+still warns and proceeds** — which is the right answer for a build that genuinely does not
+know its release. Any statement of this mitigation that omits that sentence is overstating
+it.
 
 ### What the check still cannot catch
 
-Even once armed, three cases pass it, and none of them is worth pretending
-otherwise:
+Three cases pass it, and none of them is worth pretending otherwise:
 
 - **Two different artefacts both stamped for the same release.** A re-run of the
   workflow over a changed vault produces a different tarball under the same name,
