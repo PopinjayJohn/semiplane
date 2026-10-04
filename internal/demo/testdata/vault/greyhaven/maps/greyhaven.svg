@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4800" height="3200" viewBox="0 0 4800 3200">
+  <rect width="4800" height="3200" fill="#1b1d21"/>
+  <rect x="200" y="200" width="4400" height="2800" fill="none" stroke="#3c4048" stroke-width="8"/>
+  <path d="M 400 2800 L 400 1200 L 1800 1200 L 1800 600 L 4400 600" fill="none" stroke="#6b7280" stroke-width="24"/>
+  <circle cx="1800" cy="1200" r="48" fill="#8b5cf6"/>
+  <circle cx="2400" cy="600" r="48" fill="#8b5cf6"/>
+  <text x="400" y="240" fill="#9ca3af" font-family="sans-serif" font-size="120">Greyhaven — north road</text>
+</svg>
