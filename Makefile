@@ -429,6 +429,62 @@ cover: ## Run tests and report coverage
 test-integration: ## Run integration-tagged tests
 	$(GO) test -race -count=1 -tags=integration $(PKGS)
 
+# --- The demo vault gate -------------------------------------------------------
+#
+# Phase 11's completeness gate (plan D9): every page reachable from its campaign index,
+# every registered page kind demonstrated, every installed render extension exercised,
+# both `[!secret]` states present, the unresolved-link count equal to exactly the
+# breakage the vault declares, and every referenced asset present.
+#
+# **Every one of those requirements is derived, not enumerated.** The kind list is
+# `plugin.Registry.Kinds()` over every edition the build ships, so adding a kind to a
+# plugin turns this red until the vault demonstrates it; the extension list is
+# `ext.Builtins()`; the secret states are the two `content.SecretState` values; and the
+# broken-link budget is the length of the vault's own `demo.broken` declarations rather
+# than a number written here. A gate listing page names would be a checklist describing
+# pages that no longer exist, and deleting a page from the list and deleting the page from
+# the vault are the same event.
+#
+# `DEMO_TESTS` is a list of substrings of the gate's test names, in the same shape as
+# `A11Y_TESTS` and for the same reason: a name here is a claim that the audit is run by
+# *this* target, and the claim is enforced. Two guards hold it and neither is enough
+# alone:
+#
+#   - `scripts/check-demo.sh` checks that the pattern selects at least one test. It
+#     cannot see a test that exists and is not in the pattern, because `go test -run`
+#     exits 0 on a pattern matching nothing — the silent pass AGENTS.md records three
+#     times over.
+#   - `TestDemoEveryGateTestIsSelectedByTheMakefileGate` reads this package's own AST and
+#     requires **every** `TestDemo*` function to appear below. That is the half the
+#     shell guard cannot see, and it is the half that bit three separate work items in
+#     phase 9.
+#
+# The list is deliberately *readable* rather than exhaustive-looking: a new gate test is
+# added here by naming it, and `make demo-check` is the review point where somebody
+# notices it was not — except that here the omission fails the build rather than waiting
+# to be noticed.
+#
+# **`demo-check` is not yet part of `check`**, and that is a deliberate, temporary state
+# rather than an oversight: the vault (`demo-vault/greyhaven/**`) is wave B of phase 11
+# and does not exist yet. Until it does, the gate runs against its own committed fixture
+# (`internal/demo/testdata/vault`) and says so on stderr — a green `make demo-check`
+# today verifies *the gate*, not a demo vault, and the exit status alone cannot tell
+# those apart. `TestDemoTheAuditFailsOnAnEmptyVault` proves the auditor is red on nothing
+# and `TestDemoTheShippedVaultIsAuditedWhenItExists` audits the real vault the moment it
+# appears, so the green is a claim about the gate rather than a silence about the vault.
+# **The integrator should add `demo-check` to `check` in the same commit that lands the
+# first campaign directory**, and at that point the banner stops printing.
+DEMO_PKG   := ./internal/demo
+DEMO_TESTS := FixtureVault|UndeclaredBrokenLink|RepairedDeclaration|BudgetIsDerived|RemovingAKind|RegistryTurnsTheGate|RemovingAnExtension|RemovingTheRevealedSecret|RemovingTheCollapsedSecret|UnreachablePage|MissingAsset|AssetInACampaign|NoIndexPage|TwoIndexPages|NoFindingCarriesSecretText|SkipsThePagesContent|AuditIsDeterministic|AuditFailsOnAnEmptyVault|AuditFailsOnAVaultRoot|ShippedVaultIsAudited|ExistsAndIsEmpty|BudgetIsResolvedForTheDemoReader|KindsTheGateDemands|EverySecretStateTheScanner|RedactionMarkerIsTheProductsOwn|GateDerivesItsRequirements|GateTestIsSelectedByTheMakefileGate|GateTargetRunsThisPackagesTests|FixtureCarriesBothSecretStates
+
+.PHONY: demo-check
+demo-check: ## Assert the demo vault is complete (registry-derived; no hand-written list)
+	@# `$(GOENV)` rather than `$(GO)`: the script needs `go` on PATH, and `$(GO)`
+	@# expands to `. /etc/profile.d/go.sh && go`, whose `&&` does not survive being
+	@# handed to a script as an environment variable. See the script's header.
+	@$(GOENV) DEMO_PKG='$(DEMO_PKG)' DEMO_TESTS='$(DEMO_TESTS)' GO_TEST='go test' \
+		./scripts/check-demo.sh
+
 .PHONY: check
 check: ## Mandatory gate: fmt-check, vendor-check, css, templ, build, vet, lint, a11y, test
 	@echo "==> format check"
