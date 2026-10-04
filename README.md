@@ -27,6 +27,7 @@ file in your vault is simultaneously prose, a stat block, a map, and a handout.
 **[popinjayjohn.github.io/semiplane](https://popinjayjohn.github.io/semiplane/)**
 
 - [Install](https://popinjayjohn.github.io/semiplane/install/) — run it
+- [Demo vault](https://popinjayjohn.github.io/semiplane/install/demo/) — three campaigns that demonstrate the product, installed in three commands
 - [Concepts](https://popinjayjohn.github.io/semiplane/concepts/) — the vocabulary, and why "session" is not it
 - [Operating](https://popinjayjohn.github.io/semiplane/operating/) — backup, upgrades, the single-instance rule
 - [Security](https://popinjayjohn.github.io/semiplane/operating/security/) — the trust boundary
@@ -40,6 +41,19 @@ cd semiplane
 make run          # http://localhost:8080
 make ci           # the gate: fmt, build, vet, lint, test -race
 make site-serve   # the docs site, with live reload
+```
+
+Or look at a populated instance first, without configuring anything: three
+campaigns that demonstrate the product against itself — a showcase with every
+feature, a public one, and one whose gameplay system is deliberately missing so
+the degraded path is visible. It installs in three commands and prints a password
+you sign in with; the [walkthrough](https://popinjayjohn.github.io/semiplane/install/demo/)
+has every command and what it prints.
+
+```bash
+make demo-artifact     # dist/semiplane-demo-v<version>.tar.gz
+tar -xzf dist/semiplane-demo-v*.tar.gz
+go run ./cmd/server demo seed --root "$PWD/semiplane-demo"
 ```
 
 ## Contributing
