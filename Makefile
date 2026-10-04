@@ -464,16 +464,23 @@ test-integration: ## Run integration-tagged tests
 # notices it was not — except that here the omission fails the build rather than waiting
 # to be noticed.
 #
-# **`demo-check` is not yet part of `check`**, and that is a deliberate, temporary state
-# rather than an oversight: the vault (`demo-vault/greyhaven/**`) is wave B of phase 11
-# and does not exist yet. Until it does, the gate runs against its own committed fixture
-# (`internal/demo/testdata/vault`) and says so on stderr — a green `make demo-check`
-# today verifies *the gate*, not a demo vault, and the exit status alone cannot tell
-# those apart. `TestDemoTheAuditFailsOnAnEmptyVault` proves the auditor is red on nothing
-# and `TestDemoTheShippedVaultIsAuditedWhenItExists` audits the real vault the moment it
-# appears, so the green is a claim about the gate rather than a silence about the vault.
-# **The integrator should add `demo-check` to `check` in the same commit that lands the
-# first campaign directory**, and at that point the banner stops printing.
+# **`demo-check` is part of `check` as of the commit that landed the first campaign
+# directory**, which is what this comment used to ask the integrator for. It was
+# deliberately withheld until then because a green `make demo-check` over no vault
+# verifies *the gate* and not a vault, and the exit status alone could not tell those
+# apart — the banner said so on stderr, and
+# `TestDemoTheAuditFailsOnAnEmptyVault` proved the auditor is red on nothing.
+#
+# **All three campaigns are present now, so that caveat is discharged** and the gate is
+# a claim about the shipped vault. The two properties that made it safe to admit are
+# still what hold it: the rules are **derived from `plugin.Registry` and
+# `ext.Builtins()`** rather than written down, so a kind added in a later phase turns
+# this red until the vault demonstrates it; and the unresolved-link **budget is the
+# length of the vault's own `demo.broken`**, so it cannot drift from the breakage the
+# vault demonstrates.
+#
+# It sits after `a11y` and before `test` because it reads `static/dist/app.css` (the
+# built stylesheet) for the callout's contrast, which is why `css` has to have run.
 DEMO_PKG   := ./internal/demo
 DEMO_TESTS := FixtureVault|UndeclaredBrokenLink|RepairedDeclaration|BudgetIsDerived|RemovingAKind|RegistryTurnsTheGate|RemovingAnExtension|RemovingTheRevealedSecret|RemovingTheCollapsedSecret|UnreachablePage|MissingAsset|AssetInACampaign|NoIndexPage|TwoIndexPages|NoFindingCarriesSecretText|SkipsThePagesContent|AuditIsDeterministic|AuditFailsOnAnEmptyVault|AuditFailsOnAVaultRoot|ShippedVaultIsAudited|ExistsAndIsEmpty|BudgetIsResolvedForTheDemoReader|KindsTheGateDemands|EverySecretStateTheScanner|RedactionMarkerIsTheProductsOwn|GateDerivesItsRequirements|GateTestIsSelectedByTheMakefileGate|GateTargetRunsThisPackagesTests|FixtureCarriesBothSecretStates
 
@@ -486,7 +493,7 @@ demo-check: ## Assert the demo vault is complete (registry-derived; no hand-writ
 		./scripts/check-demo.sh
 
 .PHONY: check
-check: ## Mandatory gate: fmt-check, vendor-check, css, templ, build, vet, lint, a11y, test
+check: ## Mandatory gate: fmt-check, vendor-check, css, templ, build, vet, lint, a11y, demo-check, test
 	@echo "==> format check"
 	@diffs="$$($(GOENV) golangci-lint fmt --diff 2>/dev/null)"; \
 		if [ -n "$$diffs" ]; then echo "unformatted files:"; echo "$$diffs"; \
@@ -514,6 +521,11 @@ check: ## Mandatory gate: fmt-check, vendor-check, css, templ, build, vet, lint,
 	@echo "==> vet";    $(MAKE) --no-print-directory vet
 	@echo "==> lint";   $(MAKE) --no-print-directory lint
 	@echo "==> a11y";   $(MAKE) --no-print-directory a11y
+	@# `demo-check` reads the **built** stylesheet for the callout's contrast, which is
+	@# why it sits below `css` and `templ` and above nothing that would rebuild them.
+	@# It is a Go test run through the shell guard below, and the guard is what makes
+	@# `go test -run` matching nothing an exit status of 0 rather than a pass.
+	@echo "==> demo-check"; $(MAKE) --no-print-directory demo-check
 	@echo "==> test";   $(MAKE) --no-print-directory test
 	@echo "==> all checks passed"
 
