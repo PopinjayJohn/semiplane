@@ -344,7 +344,7 @@ func (i *instance) serve(registered []domain.Campaign) http.Handler {
 			discardLogger(),
 		),
 		newEventRoute(hub, discardLogger()),
-		newPlayRoute(i.plane.hub, discardLogger()),
+		newPlayRoute(i.plane, i.store, i.plugins, discardLogger()),
 		newPluginRoute(i.store, i.plugins, i.plane.hub, discardLogger()),
 		newThemeRoute(roots, discardLogger()),
 		newSecretRoute(roots, i.store, discardLogger()),

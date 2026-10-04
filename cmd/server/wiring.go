@@ -124,13 +124,45 @@ func (l pageLister) PagesForCampaign(
 // a shutdown that overruns the sum of them is a shutdown with a wedged disk.
 const realtimeFlushBudget = 10 * time.Second
 
-// productVersion is the build's version as the rail shows it.
+// productVersion is the build's version as the rail shows it, and as the demo
+// command reports it.
 //
-// A constant rather than an ldflag-injected variable because nothing injects one
-// yet and an empty version is a truthful answer where "0.0.0" would not be. The
-// moment the release workflow stamps a version this becomes a var, and nothing
-// else changes: the rail renders whatever it holds.
-const productVersion = ""
+// # It was a `const`, and the comment above this line said when that would stop
+// being right. That moment has arrived.
+//
+// The comment read: *"The moment the release workflow stamps a version this becomes a
+// var, and nothing else changes."* Phase 11's artefact work item added the release
+// workflow — and then found, by running the release path rather than reading it, that
+// `-ldflags -X` against a **constant is silently ignored**. The linker writes to
+// variables, so a `-X` naming a `const` compiles, links, exits 0, and changes nothing.
+//
+// That made the demo seed's version-skew refusal **unreachable in every build of this
+// tree**: `internal/demo.Check` compares the artefact's declared `product` against this
+// value, and this value was permanently `""`, so `Check` took its versionless branch on
+// every run — warning and proceeding — rather than its refusal branch. A gate whose
+// condition cannot be met is not a gate, and this one looked armed in the source and
+// disarmed in the binary.
+//
+// The distinction matters more than it looks: `-X` on a `const` produces **no error and
+// no warning**, so nothing in the release logs would ever have said the version was not
+// stamped. That is the failure this repository keeps meeting in a new costume — correct
+// markup, absent behaviour, nothing red.
+//
+// # Why a var is not simply a smaller version of the same thing
+//
+// A `var` with no `-X` is still `""`, which is the truthful answer for a development
+// build and is what `Check`'s versionless branch already handles. So the change is
+// behaviour-preserving for every build that does not stamp one, and it is the *stamped*
+// build that gains the refusal. The rail renders whatever it holds either way, which is
+// what the old comment meant by "nothing else changes".
+//
+// # The two consumers, and why they want the same value
+//
+// `components.InstanceView.Version` renders in the rail, and `cmd/server/demo.go` hands it
+// to `demo.Env.Version` for `Check`. They want the same thing — what release this binary
+// is — so they read one name rather than two that could disagree, which is the same
+// reason `cmd/server/systems.go` exists.
+var productVersion = ""
 
 // newWikiRoute builds the campaign-scoped wiki handler over the content roots, the
 // per-campaign renderers, the kind registry and the maintained page index.

@@ -505,8 +505,11 @@ These are the expensive-to-undo surfaces. Each has a named test in `spec.md` §S
   phase 10 — its name reads like a guarantee and it is the opposite.
   [0029](docs/content/en/decisions/0029-redaction-operates-on-the-source.md)
 - **A cross-campaign wikilink is `[[/campaign/Page]]`**, with the leading slash, and is never
-  inlined. The slash is what makes the relative reading and the cross-campaign reading mutually
-  exclusive. `[[Other/Foo]]` is a *relative* link inside the home campaign.
+  inlined. The slash writes the target campaign **down**, which is what ADR 0017 needs. It does
+  **not** make the two readings exclusive: `[[Other/Foo]]` is read *first* as a relative link, and
+  a reference whose relative reading fails is **retried as a bare page name** — so the slashless
+  spelling usually resolves too, by way of a page called `Foo`. Prescribe the slash; do not rely on
+  the other form being broken.
   [0026](docs/content/en/decisions/0026-cross-campaign-wikilinks-are-vault-absolute.md)
 - **The page index is the watcher-maintained `pages` table.** It was a walk of the content root
   until phase 4 wrote it; the walk is gone. The startup index runs **before** the router serves,

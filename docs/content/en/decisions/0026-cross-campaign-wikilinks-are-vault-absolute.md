@@ -1,6 +1,6 @@
 ---
 title: "0026 — A cross-campaign wikilink is spelled `[[/campaign/Page]]`, with the leading slash"
-description: "A leading slash is what makes the relative reading and the cross-campaign reading of a wikilink mutually exclusive, and ADR 0017 needs that."
+description: "A leading slash is what makes a cross-campaign wikilink's target campaign written down in the author's text rather than guessed, which is what ADR 0017 needs. It does not make the two readings disjoint — the resolver retries a failed relative reference as a bare page name."
 lede: "ADR 0017 requires a cross-campaign link to render identically for every viewer, which is only possible if the target campaign is written down in the author's text and never looked up. The spelling that achieves it is Obsidian's own vault-absolute form, because without the slash a reference is ambiguous with a relative path."
 weight: 220
 date: "2026-10-01"
@@ -36,9 +36,34 @@ A cross-campaign reference is **vault-absolute**, written with a leading slash:
 `[[/public-post/Some Page]]`.
 
 The leading slash is Obsidian's own spelling for a path from the vault root, and it is what makes
-the two readings disjoint — a reference beginning `/` can only be vault-absolute, and one that does
-not can only be relative. There is no case where the same text means different things in different
-vaults.
+the cross-campaign target **written down**. A reference beginning `/` can only be vault-absolute,
+and one that does not is read as relative first.
+
+**The two readings are disjoint in the *authoring* sense and not in the *resolving* sense, and
+this record originally claimed the stronger thing.** It said the slash "makes the two readings
+disjoint" and that a slashless `[[Other/Foo]]` "can only be relative". Both halves of that are
+about what the text *says*, and neither is about what the resolver then does:
+
+> A reference that fails the relative reading is re-tried as a **bare page name**.
+> `recordOutside` step 3 takes `path.Base` of the target and looks that up across the visible
+> campaigns.
+
+So `[[public-post/town-notice]]` written from inside `public-post` — which this record says is a
+relative link naming `notes/public-post/town-notice` — resolves anyway, because the relative
+reading failed and the basename `town-notice` was found. It reaches **the same page** the slashed
+spelling reaches, which is why nothing about it looked broken.
+
+The relative reading is still tried **first** and still wins whenever it finds anything, which is
+what keeps `[[deep/../Goblin]]` meaning one thing. And the fallback is the same one a bare
+`[[Goblin]]` uses, which is why it is broad: it is what makes a broken-link report able to say
+"probably meant". Neither is changed by this correction — **the code is right and this sentence
+was wrong**, and `TestASlashlessCrossCampaignReferenceResolvesByItsBasename` holds the difference
+so it cannot be re-claimed.
+
+What a reader should take from the correction: **prescribe the slash** — both readings agree on
+it, it is unambiguous, and it survives a page being moved up a directory — but do not rely on a
+slashless cross-campaign spelling being *broken*, because it may well resolve to the page you
+meant.
 
 The consequence is stated rather than discovered: **a reference with a leading slash never resolves
 within the home campaign.** That is the cost, and it is the right one, because the alternative

@@ -35,6 +35,7 @@ import (
 const (
 	subcommandServe = "serve"
 	subcommandAdmin = "admin"
+	subcommandDemo  = "demo"
 	subcommandHelp  = "help"
 
 	flagHelpShort = "-h"
@@ -54,9 +55,12 @@ Usage:
   semiplane serve               run the server
   semiplane admin create        add an account
   semiplane admin campaign add  register a campaign
+  semiplane demo seed           populate this instance from the demo vault
+  semiplane demo reset          remove the demo campaigns and their state
   semiplane help                show this message
 
-Run "semiplane admin help" for the admin subcommands' flags.
+Run "semiplane admin help" for the admin subcommands' flags, and
+"semiplane demo help" for the demo subcommands'.
 
 Configuration is documented at https://popinjayjohn.github.io/semiplane/install/.
 `
@@ -100,6 +104,8 @@ func run(args []string) error {
 		return runServer(rest)
 	case subcommandAdmin:
 		return runAdmin(rest)
+	case subcommandDemo:
+		return runDemo(rest)
 	case subcommandHelp, flagHelpShort, flagHelpLong:
 		fmt.Fprint(os.Stdout, usageText)
 
@@ -237,7 +243,11 @@ func runServer(_ []string) error {
 	// A refusal stops the boot, and `systems.go` says why that is the right
 	// direction: every one of them is about a compiled-in data pack or about this
 	// composition root, never about anything an operator did to their instance.
-	plugins, err := registerPlugins(logger)
+	// Named `built` rather than `plugins`, because `plugins` is the package-level
+	// type this function's own signature space uses and a local of that name hides it
+	// for the rest of the function. It read as harmless until `runDemo` needed the
+	// type and `govet` pointed at the shadowing.
+	built, err := registerPlugins(logger)
 	if err != nil {
 		return fmt.Errorf("register the plugins: %w", err)
 	}
@@ -256,7 +266,7 @@ func runServer(_ []string) error {
 	//    `observability.Writes` registered into the same registry as the
 	//    pipeline's surfaces. Both of those already exist at this point and
 	//    neither exists later.
-	plane := newRealtimePlane(ctx, db, registry, plugins, logger)
+	plane := newRealtimePlane(ctx, db, registry, built, logger)
 
 	// The page-kind registry every renderer and the editor share, held once and
 	// handed down. **One value rather than three lookups** because `content.NewRenderer`
@@ -264,7 +274,7 @@ func runServer(_ []string) error {
 	// to "which kinds does this build know" — and the failure mode is the bad one: a
 	// page that renders as a game object on the wiki and as prose in the editor, with
 	// nothing in either log to say which side is wrong.
-	kinds := plugins.pageKinds()
+	kinds := built.pageKinds()
 
 	// Every campaign's fingerprint is checked against what this build resolves
 	// under, and nothing is opened. The boot pass is read-only by construction
@@ -281,7 +291,7 @@ func runServer(_ []string) error {
 	// resolver, and a per-intent refusal is seen by a client rather than by an operator.
 	// This pass is what puts "campaign X names system Y, which this build does not
 	// resolve" in a log before the server listens.
-	reportMissingSystems(plugins.gameplay, registered, logger)
+	reportMissingSystems(built.gameplay, registered, logger)
 
 	// The shutdown step for the realtime plane. **Not** a `defer`: it has to run
 	// in the same `beforeDrain` step as the event hub and before the HTTP drain,
@@ -467,8 +477,8 @@ func runServer(_ []string) error {
 		logger,
 	)
 	eventRoute := newEventRoute(hub, logger)
-	playRoute := newPlayRoute(plane.hub, logger)
-	pluginRoute := newPluginRoute(db, plugins, plane.hub, logger)
+	playRoute := newPlayRoute(plane, db, built, logger)
+	pluginRoute := newPluginRoute(db, built, plane.hub, logger)
 	themeRoute := newThemeRoute(contentRoots, logger)
 	// `db`, not `httpStore`. `httpStore` is the union the HTTP surface needs and its
 	// point is to assert that `db` satisfies three interfaces at compile time; the

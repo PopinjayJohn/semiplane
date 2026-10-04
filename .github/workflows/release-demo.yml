@@ -1,0 +1,199 @@
+name: Release the demo vault
+
+on:
+  # Deliberately NO paths filter, for the reason pages.yml gives: a filter would
+  # silently stop publishing when something the release depends on changed, and a
+  # tag is already the narrowest trigger there is. A tag says "this commit is a
+  # release"; the paths it touched are not a question worth asking about.
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to (re-)publish, with or without a leading "v"'
+        required: true
+        type: string
+
+# `contents: write`, and it is the only elevation this workflow needs: creating a
+# Release and uploading an asset to it. `actions/checkout` needs `contents: read`,
+# which `write` implies.
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+# One release at a time, and never cancel one in flight. Two runs of this workflow
+# against one tag would race to upload the same asset name; cancelling a run that
+# has already created the Release would leave a Release with no asset, which is the
+# state the install guide's download step fails against.
+concurrency:
+  group: release-demo-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # **No `actions/setup-go`, and that is measured rather than assumed.**
+      # `make demo-artifact` is `find`, `sort`, `tar`, `gzip` and `sha256sum` over
+      # `demo-vault/`; it compiles nothing. Running it under `env -i PATH=/usr/bin:/bin`
+      # produced the same digest (7b5e328f…) as a run with the full toolchain on
+      # PATH. So the artefact cannot be affected by a Go toolchain bump, which is
+      # half of what ADR 0060 is for — and the job is a tar and an upload.
+      #
+      # It also means this workflow cannot fall out of step with `go.mod`, because it
+      # never reads it.
+
+      # One version, resolved once, from the tag — or from the dispatch input so a
+      # failed publish can be retried without re-tagging. The leading `v` is the tag's
+      # and is not part of the version: the asset is `semiplane-demo-v0.1.0.tar.gz`
+      # while the tag is `v0.1.0`.
+      - name: Resolve the version
+        id: version
+        env:
+          TAG: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if [ -z "$version" ]; then
+            echo "::error::no version resolved from '$TAG'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "resolved version $version from $TAG"
+
+      # `DEMO_VERSION=` overrides the Makefile's default, which is the `product` read
+      # out of the committed `demo-vault/demo.manifest.yml`. The default is right for a
+      # local build — that file is already the answer to "which release was this built
+      # against" — and wrong for a release, which must stamp its own tag into the
+      # manifest inside the tarball rather than ship whatever the commit happened to
+      # carry.
+      #
+      # **There is deliberately no matching `-ldflags -X main.productVersion=…` here.**
+      # The binary half of the version pair is `productVersion` in
+      # `cmd/server/wiring.go`, and it is a `const` — Go's linker does not rewrite
+      # constants, so `-X` against it exits 0 and changes nothing. Measured: a binary
+      # built with `-ldflags "-X main.productVersion=0.1.0"` still reports
+      # `(this build carries no version)` and still takes the warning branch of
+      # `internal/demo.Check`. Adding that flag here would be a line that reads like
+      # it stamps the binary and does nothing; when `productVersion` becomes a `var`,
+      # this is where the other half of the pair comes from, and ADR 0060's
+      # Consequences section says so.
+      - name: Build the demo artefact
+        env:
+          DEMO_VERSION: ${{ steps.version.outputs.version }}
+        run: make demo-artifact DEMO_VERSION="$DEMO_VERSION"
+
+      # The Makefile already asserts that the staged manifest declares what it was
+      # asked to stamp, and that three builds over one perturbed tree and one reversed
+      # list agree. This step checks the two things *it* cannot: that the file on disk
+      # is named for the tag being released, and that a second run in a fresh
+      # directory produces the same bytes. The second is the release asset's digest
+      # being a fact of this job rather than an assertion in a comment, and it is what
+      # goes in the release notes.
+      - name: Verify the artefact and record its digest
+        id: artefact
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset="dist/semiplane-demo-v${VERSION}.tar.gz"
+
+          if [ ! -f "$asset" ]; then
+            echo "::error::expected $asset for tag ${GITHUB_REF_NAME}, and it is not there"
+            ls -l dist/ || true
+            exit 1
+          fi
+
+          digest="$(sha256sum "$asset" | cut -d' ' -f1)"
+          bytes="$(wc -c < "$asset" | tr -d ' ')"
+
+          # `DEMO_DIST` into a second directory so the rebuild starts from a clean
+          # staging area rather than over the tree the first build left behind.
+          DEMO_DIST=.stage2 make demo-artifact DEMO_VERSION="$VERSION" > /dev/null
+          second="$(sha256sum "$asset" | cut -d' ' -f1)"
+
+          if [ "$digest" != "$second" ]; then
+            echo "::error::not reproducible in this job: $digest then $second"
+            exit 1
+          fi
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "bytes=$bytes" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Demo vault"
+            echo
+            echo 'The demo vault installs in three commands:'
+            echo
+            echo '```bash'
+            echo "VERSION=${VERSION}"
+            echo "curl -fsSL -o semiplane-demo.tar.gz \\"
+            echo "  https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/semiplane-demo-v\${VERSION}.tar.gz"
+            echo 'tar -xzf semiplane-demo.tar.gz'
+            echo 'semiplane demo seed --root "$PWD/semiplane-demo"'
+            echo '```'
+            echo
+            echo "Full instructions: https://popinjayjohn.github.io/semiplane/install/demo/"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| asset | \`semiplane-demo-v${VERSION}.tar.gz\` |"
+            echo "| bytes | ${bytes} |"
+            echo "| sha256 | \`${digest}\` |"
+          } > release-notes.md
+          cat release-notes.md
+
+      # `gh` ships on the runner, so there is no install step and therefore no version
+      # to drift. `GH_TOKEN` rather than `GITHUB_TOKEN` spelled out: `gh` reads
+      # `GH_TOKEN` and falls back to a file on disk for a local checkout, which on a
+      # runner is a stale token from the checkout step.
+      - name: Attach the artefact to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ASSET: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset="dist/semiplane-demo-v${ASSET}.tar.gz"
+
+          # Create the Release only if it is not already there. `gh release create`
+          # fails on an existing Release, so a re-run of this workflow against a tag
+          # whose binary publish already made the Release would fail at the last step
+          # with the artefact built and nothing to show for it. And when the binary
+          # publish lands, this runs second and adds its asset **beside** the
+          # binaries, which is the arrangement the install guide's URL assumes.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG exists; uploading the asset to it."
+            gh release upload "$TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            echo "Release $TAG does not exist yet; creating it with the asset."
+            gh release create "$TAG" "$asset" \
+              --title "$TAG" \
+              --generate-notes \
+              --notes-file release-notes.md \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Verify what the release now serves
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # The asset list is the one thing this workflow asserts about GitHub rather
+          # than about its own filesystem, and it is the thing a reader's `curl`
+          # depends on: a Release that exists with no asset is a 404 one command away
+          # from being a support question.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,assets \
+            --jq '"release \(.tagName): \(.assets | length) asset(s)", (.assets[] | "  \(.name)  \(.size) bytes")'
+
+          count="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::Release $TAG has no assets. The install guide's download step would 404."
+            exit 1
+          fi
