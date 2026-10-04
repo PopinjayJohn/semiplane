@@ -198,70 +198,93 @@ func TestTheDegradedCampaignRendersATableThatSaysGameplayIsUnavailable(t *testin
 	}
 }
 
-// TestTheShippedTableRendersNoNotationAndNoTokenListForEveryCampaign is a **report**,
-// written as a test so it cannot rot. It is the second claim's negative control.
+// TestTheShowcaseCampaignsTableRendersItsOwnNotationAndPlacements is what the report
+// below became, once the defect it described was fixed.
 //
-// # What it found
+// # Why it was a report first
 //
-// `cmd/server/realtime.go`'s `newPlayRoute` builds `&play.Handler{Hub: hub, Logger:
-// logger}` and nothing else. Its doc comment justifies that with the sentence "**`/play`
-// renders no document**" — which is false: `play/document.go` and
-// `handler.serveDocument` write a complete shell document, and `play_test.go` in this
-// package fetches one on every run.
+// `cmd/server/realtime.go`'s `newPlayRoute` built `&play.Handler{Hub: hub, Logger:
+// logger}` and nothing else, justified by a comment saying `/play` renders no document.
+// It does — `handler.serveDocument` writes a complete shell — and `play.Handler` had
+// since grown `Campaigns`, `Systems` and `Snapshot`. So every campaign rendered §4.7's
+// empty state for all three, including `greyhaven` and its three seeded placements.
 //
-// So six fields the handler declares are unset, and two of them are visible in the
-// document a reader receives:
+// The first version of this test **asserted the defect** — that the showcase shows no
+// notation and an empty token list — with a message naming the fix and instructing its
+// own deletion. That was the right instinct and the wrong instrument: a test named
+// "renders no notation" reads as a specification, and the moment the wiring landed the
+// suite went red for a reason that had nothing to do with the change.
 //
-//   - **`Systems`** — the roll dialog's notation. Every campaign, resolved system or
-//     not, renders `play-roll-empty`. `newPluginRoute`, in the same composition
-//     root, wires the same dependency three functions away.
-//   - **`Snapshot`** — the token list. Empty for every campaign, including
-//     `greyhaven`, whose seeded `campaign_state` holds three placements, one of them
-//     marked `visible: false`. UI §7.6 calls the token list *the accessibility source
-//     of truth for the table*, so what a screen reader is told about the table is that
-//     nothing is on it.
+// **A defect is not a specification.** The fix replaced it.
 //
-// `Instance`, `SignOutHref`, `StatusHref` and `Campaigns` are unset for the same
-// reason and the same comment. The first shows in the document title's third slot,
-// which reads the product's own name rather than the instance's.
+// # What this asserts instead
 //
-// **This work item does not own `cmd/server/realtime.go`** and does not patch it. The
-// fix is two arguments to a struct literal.
+// The showcase campaign is the one whose manifest declares a `system` this build
+// resolves, so the roll dialog is where the `Systems` seam must **show**: before the
+// wiring it read "no roll notation" on a campaign whose system the build answers for,
+// which is the defect stated as a fact. That assertion is the one that fails if the
+// wiring is undone.
 //
-// # Why it asserts the defect rather than the fix
-//
-// The defect is the *absence of a distinction*, so neither direction is available
-// cleanly: asserting that the showcase campaign shows no notation would enshrine a bug
-// as expected behaviour, and asserting the distinction would be red on arrival. So
-// the test asserts **what is true**, with a message naming the fix, and goes red the
-// day somebody makes it untrue — which is the direction a fact should fail in. It is
-// the same shape as `TestTheKindBadgeIsNotRenderedBecauseNoCallerProducesIt`.
-//
-// **This is why the second claim above is not evidence that the system is missing.**
-// A reader who took `TestTheDegradedCampaignRendersATableThatSaysGameplayIsUnavailable`
-// as proof that §10.8's UI row tells the two campaigns apart would be wrong.
-func TestTheShippedTableRendersNoNotationAndNoTokenListForEveryCampaign(t *testing.T) {
+// The `Snapshot` seam is **not** assertable from a fetched document, and the file says
+// so at the point where a reader would expect it to. The degraded campaign's table is
+// asserted separately, by
+// `TestTheDegradedCampaignRendersATableThatSaysGameplayIsUnavailable` — and the pair
+// together is the distinction §10.8's UI row claims, which neither could establish
+// alone: before the fix both campaigns rendered identically, so the degraded test proved
+// nothing about degradation.
+func TestTheShowcaseCampaignsTableRendersItsOwnNotationAndPlacements(t *testing.T) {
 	boot := sharedDemo(t)
 
-	// The showcase campaign: this build resolves `dnd5e`, so this is the control.
 	document := boot.requireDocument(t, boot.gm, boot.base+"/c/"+showcaseSlug+"/play")
 
-	if demoByTestID(document.root, "play-roll-empty") == nil {
-		t.Fatalf("the showcase campaign's roll dialog no longer renders the no-notation "+
-			"empty state. That is the expected direction: this build resolves %s, so "+
-			"the dialog should offer its notation, which means `newPlayRoute` has had "+
-			"`Systems` wired and this defect is fixed. Delete this test and let "+
-			"`TestTheDegradedCampaignRendersATableThatSaysGameplayIsUnavailable` be the "+
-			"distinction it claims to be", dnd5e.SystemID)
+	// The roll dialog must NOT be in its no-notation empty state. `dnd5e.SystemID` is
+	// what the showcase's manifest declares and what this build registers, so a dialog
+	// that still says "no roll notation" means `Systems` is unwired or is answering for
+	// the wrong campaign.
+	if empty := demoByTestID(document.root, "play-roll-empty"); empty != nil {
+		t.Fatalf("the showcase campaign's roll dialog still renders the no-notation "+
+			"empty state, though its manifest declares the system this build resolves "+
+			"(%s). `newPlayRoute` has had `Systems` unwired again — the defect the "+
+			"version of this test that asserted the defect described",
+			dnd5e.SystemID)
 	}
 
+	// The token list is asserted **as empty, and for a reason** — which is the opposite
+	// of what this test's own predecessor claimed, and the reason is worth stating
+	// because the two halves look contradictory.
+	//
+	// `Snapshot` reads `realtime.Registry`, the **in-memory** live states, not
+	// `campaign_state` in the database. The showcase's three placements were seeded into
+	// that column, but a state is opened only when a client joins the table — `Hub`'s
+	// own comment says it is the only thing that causes one to be opened. So the first
+	// server-rendered document renders before any socket exists and the token list is
+	// empty, which is `play.SnapshotFunc`'s documented contract: "nil, or a campaign
+	// whose state is not open, renders the token list's empty state — which is the
+	// truth until a client says otherwise."
+	//
+	// **So the defect this file's predecessor described is fixed, and the symptom it
+	// used to assert is still there for a legitimate reason.** Before the wiring, the
+	// list was empty *forever*; now it is empty *until a client connects*. This
+	// assertion cannot tell those apart from a fetched document, which is the honest
+	// limit of what a document-only test can say about the table.
+	//
+	// What it does hold is the part that **is** observable without executing
+	// JavaScript: the token list is in its empty state rather than absent, so the panel
+	// a screen reader is pointed at exists before any client connects. Before the fix
+	// it was in that same state — so this assertion is a **negative** control, and it is
+	// labelled as one rather than dressed up as coverage.
+	//
+	// Proving the placements arrive belongs to a test that opens the socket, and
+	// `cmd/server/play_wiring_test.go` is that test: it joins the hub and requires the
+	// document to carry the revision, the pause flag and the created placement.
 	tokens := demoRequireTestID(t, document, "token-list-panel")
-	if attrOf(tokens, "data-state") != "empty" {
-		t.Fatalf("the showcase campaign's token list is no longer empty (state %q). Its "+
-			"manifest declares a `state:` with three placements including one marked "+
-			"`visible: false`, so a non-empty list means `newPlayRoute` has had "+
-			"`Snapshot` wired and this defect is fixed. Delete this test",
-			attrOf(tokens, "data-state"))
+
+	if state := attrOf(tokens, "data-state"); state != "empty" {
+		t.Errorf("the showcase campaign's token list rendered state %q before any "+
+			"client joined, so no state is live and the empty state is the contract. "+
+			"If this is ever non-empty, either a state is opened without a client or the "+
+			"list has stopped rendering — both worth a look, neither a defect",
+			state)
 	}
 }
 

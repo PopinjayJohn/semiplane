@@ -477,7 +477,7 @@ func runServer(_ []string) error {
 		logger,
 	)
 	eventRoute := newEventRoute(hub, logger)
-	playRoute := newPlayRoute(plane.hub, logger)
+	playRoute := newPlayRoute(plane, db, built, logger)
 	pluginRoute := newPluginRoute(db, built, plane.hub, logger)
 	themeRoute := newThemeRoute(contentRoots, logger)
 	// `db`, not `httpStore`. `httpStore` is the union the HTTP surface needs and its

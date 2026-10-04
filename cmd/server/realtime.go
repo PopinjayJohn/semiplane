@@ -76,6 +76,7 @@ import (
 	"time"
 
 	"github.com/semiplane/semiplane/internal/domain"
+	"github.com/semiplane/semiplane/internal/domain/rules"
 	"github.com/semiplane/semiplane/internal/httpapi/play"
 	"github.com/semiplane/semiplane/internal/observability"
 	"github.com/semiplane/semiplane/internal/plugin"
@@ -181,26 +182,112 @@ func newRealtimePlane(
 	return &realtimePlane{registry: states, gate: gate, hub: hub}
 }
 
-// newPlayRoute builds the tabletop socket handler.
+// newPlayRoute builds the tabletop document and socket handler.
 //
-// Two fields and **no `Instance` view**, and the absence is the point rather than
-// an omission. The other five routes render a document through the shell, so they
-// carry the instance's identity for the header and the rail. `/play` renders no
-// document: it answers either `101 Switching Protocols` with a socket on it, or a
-// sentence of plain text from `play.refuse`. A field nothing reads is the
-// stylesheet-import failure in field form — a value in the product that looks like
-// it is wired and is read by nobody — so the handler holds the hub and the logger
-// and nothing else, which is exactly what `play.Handler` declares.
+// # The comment that used to be here was false, and it was false quietly
 //
-// The bounds (`ReadTimeout`, `ReadLimit`) are left zero on purpose. `play`'s
-// header says zero means "the default", and the defaults are
-// `realtime.MaxTransportReadBytes` and the route's own 90 seconds. Stating them
-// here would be a second place to change them, and a copy of
-// `MaxTransportReadBytes` could be lowered below the codec's own bound without
-// anything noticing — the same silent redefinition of the protocol the constant's
-// own comment is about.
-func newPlayRoute(hub *realtime.Hub, logger *slog.Logger) *play.Handler {
-	return &play.Handler{Hub: hub, Logger: logger}
+// It read: *"Two fields and no `Instance` view, and the absence is the point... `/play`
+// renders no document: it answers either `101 Switching Protocols` with a socket on it,
+// or a sentence of plain text from `play.refuse`... the handler holds the hub and the
+// logger and nothing else, which is exactly what `play.Handler` declares."*
+//
+// Every clause of that was defensible when written and none of it was true by phase 9.
+// `play/document.go` and `handler.serveDocument` write a complete shell document, and
+// `internal/web/e2e/play_test.go` fetches one on every run. `play.Handler` had grown
+// `Campaigns`, `Systems` and `Snapshot` so the document could render the campaign
+// switcher, the die sheet and the token list — and this function kept its two-field
+// literal.
+//
+// So **every campaign rendered §4.7's empty state for all three**: a roll dialog with
+// "no roll notation", a token list reading "No tokens have been placed yet" — including
+// `greyhaven` and its three seeded placements, one of them marked `visible: false`. UI
+// §7.6 calls the token list *the accessibility source of truth for the table*, so what
+// a screen reader was told about the table was that nothing was on it.
+//
+// # Why nothing was red
+//
+// Each field's own doc comment says a nil value renders the empty state, and that is
+// the correct contract. It is also exactly what made the defect invisible: **an unwired
+// field is indistinguishable from a campaign that has nothing on it**, so a test
+// asserting "the token list is empty" passes in both worlds. This is the same failure
+// the repository documents for a deleted `@import` and for an unread `route_pkgs`
+// entry — correct markup, absent behaviour, nothing red — and **a comment asserting the
+// absence is part of how it stayed absent**: the sentence above read as a design
+// decision rather than as a stale note.
+//
+// Found by the phase 11 demo-vault suite, which is what a committed end-to-end suite
+// is for. Every unit test saw its own layer, and this is the layer where the handler's
+// fields meet the composition root.
+//
+// # What is still deliberately absent
+//
+// `Instance`, `SignOutHref` and `StatusHref` are **not `play.Handler` fields at all**,
+// so there is nothing to set; the tabletop document is served through the same shell as
+// every other route and carries the instance identity from there.
+//
+// # The bounds
+//
+// `ReadTimeout` and `ReadLimit` are left zero on purpose. `play`'s header says zero
+// means "the default", and the defaults are `realtime.MaxTransportReadBytes` and the
+// route's own 90 seconds. Stating them here would be a second place to change them, and
+// a copy of `MaxTransportReadBytes` could be lowered below the codec's own bound
+// without anything noticing — the same silent redefinition of the protocol the
+// constant's own comment is about.
+//
+// **`newPlayRoute` handed the handler two fields and the document needs five.** Phase 9
+// added `Campaigns`, `Systems` and `Snapshot` to `play.Handler` so the play document
+// could render the campaign switcher, the die sheet and the token list, and this
+// function kept its two-field literal. So **every campaign rendered §4.7's empty state
+// for all three** — a die sheet with no roll notation, a token list reading "No tokens
+// have been placed yet" — including `greyhaven` and its three seeded placements.
+//
+// Nothing was red, and that is the interesting part. Each field's own doc comment says
+// a nil value renders the empty state, which is the correct contract and is exactly what
+// made the defect invisible: **an unwired field is indistinguishable from a campaign
+// with nothing on it.** A test asserting "the token list is empty" passes in both
+// worlds. Found by the phase 11 demo-vault suite — which is what a committed
+// end-to-end suite is for, since every unit test saw its own layer and this is the layer
+// where the fields meet the composition root.
+func newPlayRoute(
+	plane *realtimePlane,
+	backing *store.Store,
+	registered plugins,
+	logger *slog.Logger,
+) *play.Handler {
+	return &play.Handler{
+		Hub:       plane.hub,
+		Logger:    logger,
+		Campaigns: backing,
+
+		// **A closure, not a conversion.** `plugins.Systems` and `play.Systems` are two
+		// named types over one signature, and Go will not convert between them
+		// implicitly — the assignment is a compile error, which is the right outcome:
+		// the two packages cannot drift apart in shape without this line saying so.
+		//
+		// The body is the plugin route's own resolver, called rather than copied.
+		// `registered.systemFor(backing)` is the single place that joins
+		// `campaigns.system_id` to the gameplay registry, and a second copy of its
+		// body would be a second answer to the same question.
+		Systems: func(ctx context.Context, campaignID int64) (rules.System, error) {
+			return registered.systemFor(backing)(ctx, campaignID)
+		},
+
+		// The seam `play.SnapshotFunc` documents, closed over the **same** registry the
+		// hub resolves against. A second registry would render a token list from a
+		// state nothing broadcasts and nothing persists.
+		//
+		// `false` for "no state is live" is the designed answer, not a failure: this
+		// document is the render *before* the socket delivers the snapshot, so empty is
+		// the truth for exactly the moment it is called.
+		Snapshot: func(_ context.Context, campaignID int64) (realtime.Document, bool) {
+			state, live := plane.registry.Get(campaignID)
+			if !live {
+				return realtime.Document{}, false
+			}
+
+			return state.Snapshot(), true
+		},
+	}
 }
 
 // realtimeWriter is the registry's `Write` seam: one `campaign_state` row, in a
