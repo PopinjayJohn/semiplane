@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0026 — A cross-campaign wikilink is spelled `[[/campaign/Page]]`, with the leading slash — semiplane</title>
+<meta name="description" content="A leading slash is what makes the relative reading and the cross-campaign reading of a wikilink mutually exclusive, and ADR 0017 needs that.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0026-cross-campaign-wikilinks-are-vault-absolute/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0026 — A cross-campaign wikilink is spelled `[[/campaign/Page]]`, with the leading slash — semiplane">
+<meta property="og:description" content="A leading slash is what makes the relative reading and the cross-campaign reading of a wikilink mutually exclusive, and ADR 0017 needs that.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0026-cross-campaign-wikilinks-are-vault-absolute/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0026 — A cross-campaign wikilink is spelled `[[/campaign/Page]]`, with the leading slash</h1>
+    <p class="lede">A leading slash is what makes the relative reading and the cross-campaign reading of a wikilink mutually exclusive, and ADR 0017 needs that.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#what-is-rendered">What is rendered</a></li>
+        <li><a href="#where-the-guarantee-is-structural">Where the guarantee is structural</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>[ADR 0017]({{ &ldquo;decisions/0017-cross-campaign-links-never-inline/&rdquo; | relURL }}) settles that a
+cross-campaign wikilink renders as a plain hyperlink, is never inlined, and carries the literal
+wikilink text as its label — because the linking page&rsquo;s HTML must be <strong>byte-identical for every
+viewer</strong>, or the two-variant render cache stops existing.</p>
+<p>That requirement has a consequence the record does not spell out. A viewer-independent
+<code>&lt;a href=&quot;/c/{other}/wiki/{path}&quot;&gt;</code> is only possible if <code>{other}</code> and <code>{path}</code> are already known
+at render time. If resolving the reference involved a <em>lookup</em> — find the campaign that has a page
+called <code>Some Page</code> — then whether the lookup could happen would depend on who is asking, and the
+href would vary by viewer. The requirement therefore pushes the campaign name out of the lookup
+and into the source text.</p>
+<p>So the question is the grammar, and the obvious answer is wrong. <code>[[Other/Foo]]</code> looks like a
+cross-campaign link, and it is ambiguous with a relative path: does <code>Other</code> name a campaign, or a
+directory inside this one? Reading the first segment as a campaign makes resolution depend on
+whether a directory called <code>Other</code> happens to exist in this vault — so <code>[[deep/../Goblin]]</code>
+resolves differently in two campaigns that both contain a <code>Goblin.md</code>, and an author cannot predict
+which. Reading it as a path means there is no way at all to name another campaign.</p>
+<h2 id="decision">Decision</h2>
+<p>A cross-campaign reference is <strong>vault-absolute</strong>, written with a leading slash:
+<code>[[/public-post/Some Page]]</code>.</p>
+<p>The leading slash is Obsidian&rsquo;s own spelling for a path from the vault root, and it is what makes
+the two readings disjoint — a reference beginning <code>/</code> can only be vault-absolute, and one that does
+not can only be relative. There is no case where the same text means different things in different
+vaults.</p>
+<p>The consequence is stated rather than discovered: <strong>a reference with a leading slash never resolves
+within the home campaign.</strong> That is the cost, and it is the right one, because the alternative
+costs more.</p>
+<h3 id="what-is-rendered">What is rendered</h3>
+<ul>
+<li>A vault-absolute reference becomes <code>&lt;a href=&quot;/c/{slug}/wiki/{path}&quot;&gt;literal text&lt;/a&gt;</code>, for every
+viewer, identically. No lookup, no title lookup, no inlining. The target&rsquo;s existence is not
+consulted and its absence is not reported — the reader who follows the link and gets a 404 learns
+the same thing a reader would learn in any wiki.</li>
+<li>A <strong>cross-campaign embed</strong> is refused. Rendered as a non-interactive span carrying the reason. The
+refusal covers assets as well as pages, which is stricter than required: an <code>&lt;img&gt;</code> would be the
+safe direction, and a uniform rule is the one that cannot be half-remembered.</li>
+<li>An <strong>unqualified name</strong> that happens to exist in another campaign the viewer may see resolves
+<em>only in the index-time record</em>, never in the markup. It cannot produce a viewer-independent
+href — that is the whole point — so the rendered link points at the home campaign&rsquo;s address and
+the record names the campaign that actually has the page. The broken-link report is the only
+place an unqualified cross-campaign reference surfaces.</li>
+</ul>
+<h3 id="where-the-guarantee-is-structural">Where the guarantee is structural</h3>
+<p>Three mechanisms, none of them a convention:</p>
+<ol>
+<li><code>Resolver.Links</code> and <code>Resolver.Link</code> have <strong>no parameter through which a visible set could
+arrive</strong>. Not &ldquo;they ignore it&rdquo; — the vocabulary is absent. Probing another campaign is not a
+mistake available on the render path; it requires adding a field.</li>
+<li><code>VisibleCampaign</code> carries a slug and an index and <strong>no <code>*Root</code></strong>. Nothing downstream can read
+another campaign&rsquo;s files even if a future change wanted to.</li>
+<li>Nothing in the resolver <strong>returns another page&rsquo;s bytes</strong>. Inlining is an absent capability, not
+a check that could be forgotten.</li>
+</ol>
+<p>The stronger property is the third one: a caller wanting an embed filled goes and renders the
+target itself, through the render cache, for a target the resolver has already established is
+local.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>An author writing <code>[[Other/Foo]]</code> gets a <em>relative</em> link to <code>Other/Foo</code> inside their own
+campaign, and a broken one if no such directory exists. It is not an error and it is not
+reported as one. This is the most likely way to be surprised by this decision, and it is
+CommonMark-and-Obsidian consistent: a relative path is what a relative-looking thing means.</li>
+<li>The page index is still needed, but only for <em>local</em> resolution: a relative path, and a bare
+basename. The cross-campaign case needs no index at all, which is a simplification the
+alternative would have lost.</li>
+<li>The broken-link report for a campaign is complete for local references and incomplete for
+cross-campaign ones by construction. A missing cross-campaign target is invisible to it. This is
+the accepted price of a viewer-independent href and it is stated in the resolver&rsquo;s own docs, so
+the next reader of a report that &ldquo;missed&rdquo; one is not left guessing.</li>
+<li>If the vault-relative form proves too easy to get wrong in practice, the alternative is a
+distinct sigil — <code>[[@campaign:Page]]</code> — which is unambiguous without a prefix. It was rejected
+because it invents syntax where Obsidian already has one, and an author migrating an existing
+vault would have to learn a spelling that appears nowhere in the tool they wrote the vault in.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Read the first segment as a campaign when no such directory exists.</strong> Rejected: resolution then
+depends on the contents of the home vault, so <code>[[deep/../Goblin]]</code> resolves differently in two
+campaigns that both contain <code>Goblin.md</code>. An author&rsquo;s link would change meaning because someone
+else created a directory.</p>
+<p><strong>Look the target up and inline it when it is in a campaign the viewer may see.</strong> Rejected
+directly by ADR 0017. It also destroys the render cache: the variant count would depend on how
+many campaigns the viewer can see, so &ldquo;exactly two variants&rdquo; stops being true.</p>
+<p><strong>Infer the campaign from the link&rsquo;s target when the target is unique across visible campaigns.</strong>
+Rejected for the same reason as the first alternative, with an extra failure: uniqueness is a
+property of the <em>viewer&rsquo;s</em> visible set, so the same link resolves for a GM and breaks for a player.</p>
+<p><strong>A separate link syntax for cross-campaign references.</strong> Rejected as inventing syntax where
+Obsidian has one. The cost is the ambiguity above, and the ambiguity is what the leading slash
+removes for free.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

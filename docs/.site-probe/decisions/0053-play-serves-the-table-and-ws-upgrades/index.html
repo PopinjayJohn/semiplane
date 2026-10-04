@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0053 — `/play` serves the table and `/ws` upgrades, and a control the protocol cannot honour is rendered disabled with its reason — semiplane</title>
+<meta name="description" content="The WebSocket upgrade moves to `/c/{slug}/ws` so `/c/{slug}/play` can serve the document architecture §9 always described, and the action bar&#39;s End turn and Chat controls render disabled with the reason stated rather than inventing a client-side turn.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0053-play-serves-the-table-and-ws-upgrades/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0053 — `/play` serves the table and `/ws` upgrades, and a control the protocol cannot honour is rendered disabled with its reason — semiplane">
+<meta property="og:description" content="The WebSocket upgrade moves to `/c/{slug}/ws` so `/c/{slug}/play` can serve the document architecture §9 always described, and the action bar&#39;s End turn and Chat controls render disabled with the reason stated rather than inventing a client-side turn.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0053-play-serves-the-table-and-ws-upgrades/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0053 — `/play` serves the table and `/ws` upgrades, and a control the protocol cannot honour is rendered disabled with its reason</h1>
+    <p class="lede">The WebSocket upgrade moves to `/c/{slug}/ws` so `/c/{slug}/play` can serve the document architecture §9 always described, and the action bar&#39;s End turn and Chat controls render disabled with the reason stated rather than inventing a client-side turn.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Architecture §9 lists four campaign routes and gives each one a job:</p>
+<pre tabindex="0"><code>/c/{slug}/play                 VTT (members only)   — no session id
+/c/{slug}/ws                   WebSocket upgrade
+/c/{slug}/events               SSE (editors + live chrome)
+</code></pre><p><code>spec.md</code> carries the same table. Phase 7 built the realtime plane and mounted the
+WebSocket at <code>GET /c/{slug}/play</code> — <strong>because at that point there was no document
+to serve there.</strong> The deviation was reasonable when it was made and became
+untenable the moment phase 9 built the document the URL was always reserved for: a
+player who opened <code>/c/{slug}/play</code> in a browser got <code>400</code> from a handshake, and a
+player who got a document would get nothing at <code>/ws</code>, because no such route
+existed.</p>
+<p>So <code>/play</code> was a route that could only ever answer for a browser that could not
+use it.</p>
+<p>Two of the four controls UI §4.9 puts in the compact action bar are for intents
+the protocol does not have. The 5e pack&rsquo;s op set is <code>roll</code>, <code>attack</code>, <code>heal</code>,
+<code>apply_condition</code>, <code>clear_condition</code>, <code>apply_status</code>, <code>remove_token</code> and
+<code>set_hit_points</code>. There is no <code>turn_end</code> and no <code>chat</code>. §4.9 anticipates this
+exactly:</p>
+<blockquote>
+<p><code>roll</code> and turn-end must exist in the plan&rsquo;s §7.1 intent set. If turn-end is not
+an op, the UI cannot ship without a plan amendment — <strong>flag it, do not invent a
+client-side turn flag.</strong></p>
+</blockquote>
+<h2 id="decision">Decision</h2>
+<p><strong><code>play.Mount</code> registers both patterns, and each keeps its own gate.</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">gate</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">campaigns</span><span class="p">.</span><span class="nx">RequirePlay</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">mux</span><span class="p">.</span><span class="nf">Handle</span><span class="p">(</span><span class="s">&#34;GET /c/{slug}/ws&#34;</span><span class="p">,</span><span class="w"> </span><span class="nf">gate</span><span class="p">(</span><span class="nx">handler</span><span class="p">))</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">mux</span><span class="p">.</span><span class="nf">Handle</span><span class="p">(</span><span class="s">&#34;GET /c/{slug}/play&#34;</span><span class="p">,</span><span class="w"> </span><span class="nf">gate</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nf">HandlerFunc</span><span class="p">(</span><span class="nx">handler</span><span class="p">.</span><span class="nx">serveDocument</span><span class="p">)))</span><span class="w">
+</span></span></span></code></pre></div><p>One <code>gate</code> value for both, rather than two calls to <code>campaigns.RequirePlay</code>, and
+the reason is testable rather than stylistic: <code>mutate.sh</code>&rsquo;s gate mutation
+replaces the <strong>assignment</strong>, so dropping it takes <code>/ws</code> and <code>/play</code> together. A
+mutation applied to one call site would be a partial mutation the S-8 matrix could
+not distinguish from a pass, because the matrix asserts both paths.</p>
+<p>The gate is not optional on either route, and on <code>/ws</code> it is the load-bearing
+one: a socket is a standing capability, so a tabletop reachable without
+<code>RequirePlay</code> is a campaign whose live state anybody who can reach the port can
+read and write. This is the route whose missing gate is not a defect anybody would
+notice until it is exploited.</p>
+<p><strong>A control the protocol cannot honour renders present, disabled, and states the
+reason.</strong> <code>End turn</code> and <code>Chat</code> are in the action bar and both are disabled. The
+reason is a <code>visually-hidden</code> paragraph the button&rsquo;s <code>aria-describedby</code> points at,
+and it says something the reader can act on:</p>
+<ul>
+<li><code>End turn</code> — &ldquo;Turns are not tracked on this table yet.&rdquo;</li>
+<li><code>Chat</code> — &ldquo;The chat log is connected; sending needs a chat operation the table
+does not have yet.&rdquo;</li>
+</ul>
+<p>Neither is a client-side flag. There is no <code>isYourTurn</code> in the view model that a
+server could not check, because <code>realtime.Document</code> carries a revision, a paused
+flag and placements, and no turn. A client-side turn flag would be a control whose
+state the server cannot contradict and a reader cannot trust — which is the
+failure §4.9&rsquo;s dependency row exists to prevent, and which S-7.1&rsquo;s &ldquo;clients send
+intent, never state&rdquo; rules out at the protocol.</p>
+<p><strong>The chat reason names the log, not the feature.</strong> An earlier draft said &ldquo;Chat is
+not connected to this table yet&rdquo;, which was true while the panel was unwired and
+became false the moment <code>chat.Panel</code> was mounted into the rail. A stated reason a
+reader can disprove by looking at the panel beside it is worse than no reason,
+because it teaches them the other reasons are unreliable too. What remains true is
+narrower: the log is connected and lines arrive over the event stream; the compose
+form is inert, because <code>chat.PanelView.Compose</code>&rsquo;s zero value renders the
+signed-out paragraph and there is no <code>chat</code> op to send one.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>A socket at the old URL stops working.</strong> Nothing in this repository connected to
+<code>/play</code> for a socket after this change — the two dials in <code>cmd/server</code>&rsquo;s wiring
+tests moved with it — and phase 9 has not shipped, so no deployed instance has a
+client to break. A self-hosted instance that has already run phase 7 from a branch
+would need its client pointed at <code>/ws</code>, which is one line.</p>
+<p><strong>The two disabled controls are the honest state of the protocol, not a gap in the
+UI.</strong> They are visible, explained, and focusable, so a GM looking at a phone
+learns what the table cannot do yet. That is the record&rsquo;s own preference, stated
+as &ldquo;an absent control is worse than a disabled one with a reason&rdquo;.</p>
+<p><strong>Turn order has to be built before End turn means anything.</strong> It is hub state, so
+it belongs beside <code>campaign_state</code> — which makes it a phase 12 question about what
+survives a restart, and a decision about whether a turn is authoritative in memory
+or derived from a campaign row. Recording it here rather than solving it here is
+the point of flagging.</p>
+<p><strong>The document is a second <code>os.Root</code> consumer and a third composition root entry.</strong>
+<code>documentView</code> composes <code>live.Chrome</code>, <code>webplay.Rail</code> and <code>chat.Panel</code>, and each
+renders its own <code>data-chrome</code> hook rather than this route naming one — because
+<code>live.Decide</code> resolves a fragment&rsquo;s target against <code>live.TargetByName</code>, so a
+hand-written hook is refused with <code>unknown_target</code> on every frame, silently.
+<code>TestTheDocumentCarriesEveryHookTheLiveChromePatches</code> is what makes the seam
+exist; nothing else in the tree says the two work items meet.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Leave the socket at <code>/play</code> and serve the document somewhere else</strong> — at
+<code>/c/{slug}/table</code>, say. Rejected: §9 and <code>spec.md</code> both name <code>/play</code> for the
+document, and moving the document instead of the socket trades a URL nobody has
+shipped for one §9 has always reserved. It also splits the two halves of one page
+across two addresses, which is the mistake the scheme&rsquo;s slug-in-the-path design
+exists to prevent.</p>
+<p><strong>Serve the document at <code>/play</code> and the socket at the same path, content-negotiated.</strong>
+Rejected: <code>Upgrade</code> is a header, and a route that answers HTML to a <code>GET</code> and a
+socket to a <code>GET</code> with <code>Upgrade</code> is two answers decided by a request header on one
+URL. The scheme&rsquo;s own reasoning — the slug in the path partitions every cache key
+by visibility — works precisely because each route is one thing.</p>
+<p><strong>Give the client a <code>turn_end</code> intent and let the hub refuse it.</strong> Rejected, and it
+is the alternative §4.9 rules out by name. It puts a turn flag in the client, which
+S-7.1 forbids (&ldquo;clients send intent, never state&rdquo;), and it makes a control whose
+failure the reader cannot see: the button would press, the socket would carry
+something, and nothing would happen for a reason no document states.</p>
+<p><strong>Render no End turn control at all.</strong> Rejected: §4.9 says an absent control is
+worse than a disabled one with a reason, and a player will look for it. A phone
+whose action bar has three controls where the record names four reads as a bug.</p>
+<p><strong>Put the reason in <code>title</code> alone.</strong> Rejected: <code>title</code> is not reachable by
+keyboard and is inconsistently announced. <code>aria-describedby</code> pointing at a
+<code>visually-hidden</code> paragraph is reachable, is read after the name, and is
+assertable over the parsed DOM.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

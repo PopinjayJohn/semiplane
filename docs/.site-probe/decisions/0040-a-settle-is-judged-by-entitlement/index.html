@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0040 — A settle is judged by entitlement, not by a clock the test does not own — semiplane</title>
+<meta name="description" content="Three tests in the settle filter&#39;s suite asserted that a continuously written page never settles. That is a claim about the test&#39;s own goroutine, not about the filter, and no quiet period is long enough to make it enforceable. The fixture now records when it delivered each event and judges every arrival by whether S-4.3 permitted it.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0040-a-settle-is-judged-by-entitlement/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0040 — A settle is judged by entitlement, not by a clock the test does not own — semiplane">
+<meta property="og:description" content="Three tests in the settle filter&#39;s suite asserted that a continuously written page never settles. That is a claim about the test&#39;s own goroutine, not about the filter, and no quiet period is long enough to make it enforceable. The fixture now records when it delivered each event and judges every arrival by whether S-4.3 permitted it.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0040-a-settle-is-judged-by-entitlement/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0040 — A settle is judged by entitlement, not by a clock the test does not own</h1>
+    <p class="lede">Three tests in the settle filter&#39;s suite asserted that a continuously written page never settles. That is a claim about the test&#39;s own goroutine, not about the filter, and no quiet period is long enough to make it enforceable. The fixture now records when it delivered each event and judges every arrival by whether S-4.3 permitted it.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a>
+      <ul>
+        <li><a href="#the-byte-count-is-the-diagnosis">The byte count is the diagnosis</a></li>
+        <li><a href="#three-tests-not-one">Three tests, not one</a></li>
+      </ul>
+    </li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a>
+      <ul>
+        <li><a href="#verification">Verification</a></li>
+      </ul>
+    </li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Phase 7 merged green and left <code>main</code> red. The failure was one assertion:</p>
+<pre tabindex="0"><code>--- FAIL: TestTwoCampaignsDoNotInterfere
+    debounce_test.go:657: a change settled that should not have: noisy upsert shared.md, 4196 bytes read
+</code></pre><p>It is not reproducible on a developer machine. It is not reproducible on this one either, under
+3× CPU oversubscription, under <code>GOGC=1</code>, at <code>GOMAXPROCS=2</code>, or under eight <code>SIGSTOP</code>/<code>SIGCONT</code>
+freezes of 70 ms each. What the measurements do say is that the fixture&rsquo;s own event interval is
+very stable — a maximum of 10 ms idle, 14 ms with near-continuous stop-the-world GC, 15 ms inside
+the full <code>-race</code> tree — against a 40 ms quiet period, a margin of roughly 4×. Reaching 40 ms takes
+something this container does not produce and a throttled CI runner does: a cgroup freeze, a slice
+of steal time, a scheduler stall wide enough to matter.</p>
+<h3 id="the-byte-count-is-the-diagnosis">The byte count is the diagnosis</h3>
+<p><code>4196</code> is not a page. It is <code>len(pageVersion(100))</code>, and version 100 is the <strong>first</strong> version
+<code>TestTwoCampaignsDoNotInterfere</code>&rsquo;s noise generator writes. So the arrival was the earliest version
+that could possibly have been believed — which is what a pause at the start of the burst produces,
+and not what a filter that settles eagerly would produce at an arbitrary point in it.</p>
+<p>That is the whole failure, and it is checkable rather than inferred. A writer that stops delivering
+events for longer than the quiet period, over a file whose size then holds across two samples, is
+the antecedent S-4.3 states. Settling it is the specified behaviour, and the settled page is whole
+— the index receives a complete version, not a torn one. A test asserting that such a page must
+<em>never</em> settle is asserting something stronger than the requirement, and it is asserting it about a
+<strong>goroutine it owns</strong>.</p>
+<p>This is the second recurrence. ADR [0037]({{ &ldquo;decisions/0037-zero-bytes-is-not-a-stable-size/&rdquo; | relURL }})
+records the first, in this test, at this assertion:</p>
+<pre tabindex="0"><code>--- FAIL: TestTwoCampaignsDoNotInterfere (0.25s)
+    debounce_test.go:614: a change settled that should not have: noisy upsert shared.md, 0 bytes read
+</code></pre><p>That one was a real defect and 0037 fixed it. This one is the same <em>symptom</em> with a different
+cause, and 0037&rsquo;s fix could not have addressed it, because 0037 was about what two agreeing samples
+mean and this is about whether they were ever asked for. Its &ldquo;How it presented&rdquo; section already
+records the reproduction difficulty — <em>&ldquo;60 consecutive runs of the two tests at 4× CPU load passed
+clean&rdquo;</em> — and left the general case open.</p>
+<h3 id="three-tests-not-one">Three tests, not one</h3>
+<p>Auditing the suite for the same assumption found three sites, and the one that failed had the
+<strong>second-tightest</strong> margin:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Test</th>
+					<th>Interval between its writer&rsquo;s steps</th>
+					<th>Margin over the quiet period</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>TestBurstOfEventsSettlesOnceAndWhole</code></td>
+					<td>~22 ms (<code>quietPeriod / 2</code>)</td>
+					<td><strong>1.8×</strong></td>
+			</tr>
+			<tr>
+					<td><code>TestTwoCampaignsDoNotInterfere</code></td>
+					<td>~10 ms (<code>sampleGap / 2</code>)</td>
+					<td>4×</td>
+			</tr>
+			<tr>
+					<td><code>TestStableReadTimeoutWhenTheSizeNeverSettles</code></td>
+					<td>~6 ms (<code>sampleGap / 3</code>)</td>
+					<td>6.7×</td>
+			</tr>
+	</tbody>
+</table>
+<p>The burst test sleeps <code>quietPeriod / 2</code> between writes, which is 20 ms against a 40 ms quiet
+period, and its assertion is that the settled version is the last one written. A pause inside the
+burst settles an earlier version, legitimately, and the test reports a version mismatch. Since a
+2.4× slowdown is reachable on an ordinary machine, that test was the more likely of the two to
+fail and had not yet done so.</p>
+<p>The third is different in kind: its writer appends a byte every few milliseconds and delivers <strong>no
+events at all</strong>, so no arrival can be attributed to an event. A pause there makes the size hold,
+S-4.3 settles the page, no <code>content.stable_read_timeout</code> is owed — and the test&rsquo;s
+<code>awaitEvent</code> then waits the full ten seconds and fails with <em>&ldquo;no content.stable_read_timeout event
+within 10s&rdquo;</em>, which points squarely at the filter when the cause was the fixture.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>An arrival is judged by whether S-4.3 entitled the filter to make it, and a test that runs a
+writer on its own goroutine must not assert silence over a wall-clock window.</strong></p>
+<p>The fixture records the instant it delivers each event, per path, and stamps every arrival with the
+instant its sink ran. <code>entitled</code> then answers the only question that matters: was there an
+event-free window at least as long as the quiet period immediately before this arrival?</p>
+<ul>
+<li><strong>No</strong> — the filter emitted without its quiet period. That is the defect S-4.3&rsquo;s first mechanism
+exists to prevent, it is what a filter that armed its timer once would do, and it fails on any
+machine.</li>
+<li><strong>Yes</strong> — the writer stopped, the size held, and the filter did what the specification requires.
+Not a failure, and it does not end the window: the rest of the window is still watched, so a
+later unentitled arrival is still caught.</li>
+</ul>
+<p>The measured window runs from the last event for <strong>that path</strong> to the arrival, which makes it a
+lower bound on what the filter waited — the filter also spends a sample interval confirming, and may
+have re-armed more than once. So a <code>false</code> is sound and a <code>true</code> means only <em>entitled</em>, never
+<em>prompt</em>.</p>
+<p>Three consequences follow, and each was verified by mutation rather than by argument:</p>
+<ol>
+<li><strong><code>silentWhileWriting</code> replaces <code>silent</code></strong> wherever a background writer is running. An entitled
+arrival is logged, not hidden, so a run that loses coverage says so.</li>
+<li><strong>The burst test&rsquo;s cadence widens</strong> from <code>quietPeriod / 2</code> to <code>sampleGap / 2</code> — margin 1.8× to
+4× — and its version assertion becomes sound by construction: it checks that the <strong>first</strong>
+arrival is entitled, and then that <em>some</em> arrival carries version 12, which is guaranteed because
+the burst&rsquo;s last event is version 12&rsquo;s. It no longer asserts which arrival that is, because that
+depends on the machine.</li>
+<li><strong><code>gapRecorder</code> covers the writer that delivers no events.</strong> It measures the longest interval
+between the appender&rsquo;s own steps, and <code>awaitEvent</code> takes it as a premise: once a pause reaches the
+quiet period, the wait ends immediately with a message naming the fixture&rsquo;s premise as void,
+instead of ten seconds later blaming a missing event.</li>
+</ol>
+<p><strong><code>debounce.go</code> is unchanged.</strong> The filter was correct in both CI failures, and the only honest
+response to a test that misreports a correct filter is to fix the test.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong><code>main</code> is green again</strong>, which is what makes the next phase&rsquo;s CI worth reading.</li>
+<li><strong>A settle of a stalled writer is now documented as correct</strong>, which is the converse of 0037. 0037
+decided that two <em>zero</em> samples are not evidence; this decides that two samples taken a whole
+quiet period after the last event <em>are</em>, and that the test suite must be able to tell the two
+situations apart rather than reporting both as failure.</li>
+<li><strong>The fixture&rsquo;s coverage now degrades visibly.</strong> On a machine that pauses the writer, the affected
+tests assert less and log that they did. This is a real cost and it is bounded: an unentitled
+arrival still fails everywhere, always.</li>
+<li><strong>The margin is still a margin.</strong> Entitlement does not remove the possibility of a pause; it makes
+a pause harmless instead of fatal. The cadence change is what buys the headroom.</li>
+<li><strong>No new event, no new signal, no production behaviour change.</strong> <code>observability.AllEventNames()</code>
+stays at 24, so [0032]({{ &ldquo;decisions/0032-index-signals-beyond-the-architecture-list/&rdquo; | relURL }})
+needed no amendment. This is a test-only change to <code>internal/content/debounce_test.go</code> plus this
+record.</li>
+<li><strong>The failure message now carries a cause.</strong> The reported line was
+<code>a change settled that should not have: noisy upsert shared.md, 4196 bytes read</code>. The same defect
+now reports
+<code>a change settled 52.453µs after its last event, which is shorter than the 40ms quiet period</code>,
+which distinguishes &ldquo;the filter jumped ahead&rdquo; from &ldquo;the writer paused&rdquo; without reading the source.</li>
+</ul>
+<h3 id="verification">Verification</h3>
+<p>Each assertion was checked by mutation, because an assertion that cannot fail is not a gate:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Mutation</th>
+					<th>Caught by</th>
+					<th>Message</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>Touch</code> does not restart a live deadline</td>
+					<td><code>TestBurstOfEventsSettlesOnceAndWhole</code></td>
+					<td><code>settled 22.58ms after its last event, which is shorter than the 40ms quiet period</code></td>
+			</tr>
+			<tr>
+					<td>No quiet period <strong>and</strong> no second sample</td>
+					<td><code>TestTwoCampaignsDoNotInterfere</code></td>
+					<td><code>settled 52.453µs after its last event … noisy upsert shared.md, 4196 bytes read</code></td>
+			</tr>
+			<tr>
+					<td>One sample is enough</td>
+					<td><code>TestStableReadTimeoutWhenTheSizeNeverSettles</code></td>
+					<td>no timeout event owed</td>
+			</tr>
+			<tr>
+					<td>Pending map keyed by path alone</td>
+					<td><code>TestTwoCampaignsDoNotInterfere</code></td>
+					<td><code>no settled change within 10s</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>The second row is the reported failure reproduced deliberately, with the cause attached. The third
+mutation is worth naming separately: removing the quiet period <em>alone</em> is caught by nothing, because
+the size-stability check masks it while a writer is active. It takes removing both mechanisms to
+produce an unentitled settle, which is a fair description of how much redundancy this filter has.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Make the test&rsquo;s quiet period long enough that no machine stalls for it.</strong> Rejected: there is no
+such value. A goroutine can be descheduled for a GC cycle, a cgroup freeze or a hypervisor
+preemption, and the failure ADR 0037 could not reproduce across 60 loaded runs is the direct
+evidence. Choosing a bigger number buys a lower probability and keeps the unsound assertion.</p>
+<p><strong>Skip the assertion when the fixture detects its own premise was broken.</strong> Rejected as the shape
+AGENTS.md warns about — a gate that can be skipped by not running the check. On a slow runner, where
+the premise <em>is</em> broken, the assertion would never execute, so the coverage would be absent exactly
+where the machine is least able to give it up. Entitlement keeps the assertion running and narrows
+only what it tolerates.</p>
+<p><strong>Report the fixture&rsquo;s pauses as failures, with an accurate message.</strong> Rejected: it makes a red
+<code>main</code> a function of the runner&rsquo;s load, which is the problem being fixed. A defect is a defect; a
+slow machine is not. The pause is reported on the log instead, where a human reads it.</p>
+<p><strong>Make the filter more conservative — refuse to settle a path whose writer ever paused.</strong> Rejected
+outright: a writer that stops is a writer that finished, a sync client between chunks is a writer
+that stopped, and refusing to settle those trades a bounded, whole page for an unindexed one plus a
+<code>stable_read_timeout</code> line for every healthy save. That is the failure ADR 0037 already reasoned
+about from the other side.</p>
+<p><strong>Fix the tests by removing the background writer and driving events from a table.</strong> Rejected: the
+tests need a <em>concurrent</em> writer, because the property under test is what the filter does while
+events keep arriving. A precomputed table of timestamps would have to be replayed through a real
+clock, which is the fake clock this file&rsquo;s header already rejects — and on this evidence that
+rejection was right.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

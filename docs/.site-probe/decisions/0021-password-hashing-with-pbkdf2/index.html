@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0021 — A password is stored as PBKDF2 at OWASP&#39;s work factor, and carries its own iteration count — semiplane</title>
+<meta name="description" content="Password hashing is PBKDF2-HMAC-SHA256 at 600,000 iterations with a per-hash salt, encoded so the iteration count travels with the hash.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0021-password-hashing-with-pbkdf2/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0021 — A password is stored as PBKDF2 at OWASP&#39;s work factor, and carries its own iteration count — semiplane">
+<meta property="og:description" content="Password hashing is PBKDF2-HMAC-SHA256 at 600,000 iterations with a per-hash salt, encoded so the iteration count travels with the hash.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0021-password-hashing-with-pbkdf2/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0021 — A password is stored as PBKDF2 at OWASP&#39;s work factor, and carries its own iteration count</h1>
+    <p class="lede">Password hashing is PBKDF2-HMAC-SHA256 at 600,000 iterations with a per-hash salt, encoded so the iteration count travels with the hash.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>semiplane stores a human-chosen password and must survive having its database file
+stolen: a stolen laptop, a backup on a shared volume, a support ticket attachment, a
+snapshot in a provider&rsquo;s object store. A plain hash of the password is worthless against
+that, and so is a salted hash of a <em>fast</em> function — a GPU does billions of SHA-256 per
+second, so salt alone buys nothing against an attacker who has the hash.</p>
+<p>Two costs pull against each other. Verification happens on every login, so the work factor
+is paid by every player who logs in. Attack happens once, offline, and is paid by the
+attacker. The right answer is a deliberately slow function, with the work factor set by
+someone who measured what a modern GPU does rather than by someone optimising for their
+test suite.</p>
+<p>The second problem is temporal, and it is the one that gets skipped. The recommended work
+factor is a moving target: OWASP has revised it before and will again. A hash that does not
+record the parameters it was created with cannot be re-verified after the factor is raised.
+The two obvious workarounds are both bad — one strands every existing account, the other
+means a deploy can never raise the factor without a migration that rewrites every row while
+holding the plaintext it is trying to protect.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>PBKDF2-HMAC-SHA256 at 600,000 iterations, a 16-byte per-hash salt from <code>crypto/rand</code>,
+a 32-byte derived key, and an encoded form that carries the iteration count.</strong></p>
+<ul>
+<li>The encoded hash is a single self-describing string:
+<code>pbkdf2-sha256$&lt;iterations&gt;$&lt;salt-b64&gt;$&lt;key-b64&gt;</code>. Verification reads the count out of
+the string, never from a constant, so an old row keeps verifying at its own cost.</li>
+<li>Verification compares with <code>crypto/subtle</code> <strong>after</strong> a length check. A constant-time
+comparison over slices of different length leaks the length and panics otherwise; the
+length check is what makes the comparison safe, so it is not an optimisation.</li>
+<li><code>pbkdf2MaxIterations</code> caps what the parser accepts, at 10,000,000. An honest hash never
+exceeds the work factor this build mints, so a larger number is a corrupted or hostile
+row, and accepting it would turn every login into a multi-second stall — a denial of
+service that reads like a slow disk.</li>
+<li>Raising the work factor is a constant change and nothing else. New hashes get the new
+count; old hashes keep verifying and get re-minted with the next successful login.</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>The test suite is slow. This is the expected consequence of the decision and the next
+reader will be tempted to drop the count to make a table-driven test finish quickly. The
+tests that do not need the real work factor take a lower one through an unexported
+<strong>parameter</strong>, never a package variable — a variable would let one test leak a lowered
+factor into another and quietly weaken the assertion that matters.</li>
+<li>There is no dependency to upgrade. That is the whole reason for PBKDF2 over Argon2id,
+which is the better primitive and is not in the standard library: a self-hosted project
+gains a transitive supply-chain surface with every added module, and this is a decision
+that can be made once and then not maintained.</li>
+<li>A login on a slow single-board CPU takes longer than on a laptop. At 600,000 iterations
+this is hundreds of milliseconds, which is acceptable for a login and would not be for
+an authenticated request — which is exactly why sessions exist (0022).</li>
+<li>Verification is not constant-time with respect to <em>failure</em>: a row that does not exist
+fails faster than a row whose password is wrong. That difference is a user-enumeration
+signal, and it is handled where it belongs — the login route answers both identically.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Argon2id, the current OWASP first recommendation.</strong> The better primitive: memory-hard, so
+it resists GPU attack by construction rather than by iteration count. Rejected because it is
+not in the standard library, and semiplane&rsquo;s dependency policy is &ldquo;prefer the standard
+library&rdquo; precisely because a self-hosted install is a supply-chain decision made by one
+person who did not write the dependency. Recorded here as a known shortfall rather than
+hidden: if semiplane ever grows a dependency for a reason that outweighs this, Argon2id is
+the migration, and the encoded format above has room for a second algorithm prefix.</p>
+<p><strong>bcrypt.</strong> Long the default, and its 72-byte input limit truncates a long passphrase
+silently — two passphrases sharing a 72-byte prefix are the same account. Also a
+dependency.</p>
+<p><strong>A slow hash with no stored parameters.</strong> Workable until the moment the factor is raised.
+Rejected because it makes the cost of a stolen database permanently fixed at the moment it
+was cheapest to steal.</p>
+<p><strong>Salt only, with a fast hash.</strong> Salt defeats precomputed dictionaries and rainbow tables.
+It does nothing against an attacker who has the hash, which is the case that matters.</p>
+<p><strong>Comparisons with <code>==</code>.</strong> A byte-by-byte early exit leaks, through timing, how much of a
+guess was correct. Cheap to get right and cheap to get wrong on a later refactor, so the
+comparison is asserted by a test rather than left to review.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

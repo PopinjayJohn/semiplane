@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0010 — coder/websocket, not gorilla — semiplane</title>
+<meta name="description" content="gorilla/websocket carries an advisory for a weak PRNG in its mask key and panics on concurrent writes.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0010-websocket-library/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0010 — coder/websocket, not gorilla — semiplane">
+<meta property="og:description" content="gorilla/websocket carries an advisory for a weak PRNG in its mask key and panics on concurrent writes.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0010-websocket-library/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0010 — coder/websocket, not gorilla</h1>
+    <p class="lede">gorilla/websocket carries an advisory for a weak PRNG in its mask key and panics on concurrent writes.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The realtime plane needs WebSockets, and there are two production Go implementations. They are
+close in quality, which makes this a decision about advisories.</p>
+<p><strong>gorilla/websocket</strong> carries advisory <strong>GO-2026-6278</strong>: the masking key is generated from a weak
+pseudorandom source. It also panics on concurrent writes to a connection, which makes every
+caller responsible for a write mutex that the library&rsquo;s API invites you to forget.</p>
+<h2 id="decision">Decision</h2>
+<p><strong><code>coder/websocket</code>, the maintained fork of nhooyr&rsquo;s library.</strong></p>
+<p>Two reasons, in order of weight:</p>
+<ol>
+<li><strong>No advisory in the masking path.</strong> WebSocket masking exists to stop a malicious page on a
+shared connection from poisoning a proxy&rsquo;s cache. A weak mask key weakens a security
+property, in the library whose entire job is the connection. The fork fixes it.</li>
+<li><strong><code>context</code> is a first-class parameter.</strong> Every operation takes a <code>context.Context</code>, which
+composes with the shutdown story in
+[0004]({{ &ldquo;decisions/0004-single-process-constraint/&rdquo; | relURL }}) and removes the goroutine
+that nhooyr&rsquo;s API previously required for per-connection deadlines.</li>
+</ol>
+<p>The concurrent-write problem is real and worth naming explicitly: the hub serialises writes per
+connection. Broadcasting a delta to fifty clients is fifty writes, and if two of them race, the
+one that loses must not panic. That serialisation lives in the hub and is covered by the
+<code>go test -race</code> requirement, not delegated to the library.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><code>Origin</code> is checked <strong>explicitly on upgrade</strong>, not inferred. Same-origin is the rule; anything
+else is refused before the handshake completes.</li>
+<li>Authentication on the WebSocket upgrade is <strong>identical to HTTP</strong>. Same session lookup, same
+membership check. A websocket that authenticates differently is a websocket that
+authenticates worse.</li>
+<li>Every connection gets a read deadline. A peer that stops reading is detected and closed —
+<code>ws.stale</code> is a gauge, because a leaked connection is silent otherwise.</li>
+<li>The library is less widely used than gorilla. That is a maintenance-risk trade taken
+deliberately, not an oversight.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>gorilla/websocket.</strong> The incumbent, and for years the only serious choice. Rejected on the
+advisory plus the concurrent-write panic. If the advisory is ever resolved with no behavioural
+change, this is the record to revisit — but not before.</p>
+<p><strong><code>nhooyr.io/websocket</code> (the original).</strong> Effectively unmaintained; <code>coder/websocket</code> is its
+continuation. Naming it separately because older documents and blog posts reference it, and
+installing it today gets a library that will not receive security fixes.</p>
+<p><strong>Server-sent events plus a POST endpoint for commands.</strong> No WebSocket dependency at all, and
+simpler to proxy. Rejected because it costs a second HTTP connection per client for every frame
+of a game that moves tokens continuously, against a browser&rsquo;s ~6-connection-per-origin ceiling
+under HTTP/1.1. SSE is used where it fits — the editor&rsquo;s change notice and rendered sidebar
+fragments — and WebSocket carries state. The split is deliberate and is documented in §7.5 of
+the UI specification.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

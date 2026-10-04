@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0007 — FTS5, unicode61, and deliberately not porter — semiplane</title>
+<meta name="description" content="An external-content FTS5 table over pages, tokenised without stemming, because TTRPG proper nouns stem badly.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0007-fts5-tokenizer/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0007 — FTS5, unicode61, and deliberately not porter — semiplane">
+<meta property="og:description" content="An external-content FTS5 table over pages, tokenised without stemming, because TTRPG proper nouns stem badly.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0007-fts5-tokenizer/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0007 — FTS5, unicode61, and deliberately not porter</h1>
+    <p class="lede">An external-content FTS5 table over pages, tokenised without stemming, because TTRPG proper nouns stem badly.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Search runs over <code>pages.body_plain</code> — plain text derived from the rendered markdown, with
+secret callout content excluded outright (see §5.6.5 of the architecture record; that exclusion
+is what stops a search snippet leaking a secret to a player).</p>
+<p>The tokenizer is a product decision, not an implementation detail. It changes what a GM finds.</p>
+<p>SQLite&rsquo;s FTS5 ships several tokenizers. The default English one applies the Porter stemming
+algorithm, which folds related word forms together: <code>swing</code> and <code>swinging</code> and <code>swung</code> become
+one term.</p>
+<h2 id="decision">Decision</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="n">VIRTUAL</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">pages_fts</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">fts5</span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">body_plain</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="o">=</span><span class="s1">&#39;pages&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">content_rowid</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">tokenize</span><span class="o">=</span><span class="s1">&#39;unicode61 remove_diacritics 2&#39;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p><strong><code>unicode61</code>, with diacritics folding, and no <code>porter</code> stemmer.</strong></p>
+<p>The reasoning is specific to this domain. TTRPG proper nouns stem <em>badly</em>:</p>
+<ul>
+<li><code>Svartalfheim</code> and <code>svartalf</code> — a stemmer merges a place name with its adjective.</li>
+<li><code>Gandalf</code> and <code>Gand</code> — <code>gand</code> is a real English word, so the fold is semantically wrong.</li>
+<li><code>Tiamat</code> and <code>Tiam</code> — the fold loses the name.</li>
+<li><code>Kenku</code> and <code>kenku</code> fine, but <code>Rakshasa</code> and <code>Rakshas</code> are not what anyone typed.</li>
+</ul>
+<p>Every one of those is a case where a search for the correct spelling returns nothing, and it
+returns nothing <em>silently</em>. A GM searching for their NPC&rsquo;s name finds nothing and concludes the
+search is broken, rather than concluding they are wrong about stemming.</p>
+<p>Folding diacritics is the opposite trade and is kept: a GM typing <code>Svartalfheim</code> without the
+diacritic should find it, because that is a keyboard, not a spelling mistake.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Plural and past-tense queries do not match. <code>goblins</code> will not find <code>goblin</code> unless the FTS
+query is written with a prefix (<code>goblin*</code>). The query builder uses prefix matching on the last
+term for exactly this reason.</li>
+<li>An external-content FTS table is a <strong>view</strong> over <code>pages</code>. It stores no copy of the text.</li>
+<li>External-content tables <strong>cannot be <code>ALTER</code>ed</strong>. Any bulk change goes through
+<code>INSERT INTO pages_fts(pages_fts) VALUES('rebuild')</code>.</li>
+<li><strong>Every query joins <code>campaigns</code> on visibility.</strong> A bare <code>SELECT</code> over FTS returns private page
+titles to an anonymous user. This is asserted by a test, because it is the kind of omission
+that passes review.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Porter stemming (the FTS5 default).</strong> The conventional choice for prose search, and correct
+for it. Rejected because the corpus is not prose — it is a table of named entities, where the
+name is the key.</p>
+<p><strong>Trigram tokenizer (<code>tokenize='trigram'</code>).</strong> Excellent for substring and partial-word search,
+which would fix the plural problem outright. Rejected for v1: it roughly triples index size,
+loses ranking quality, and makes <code>remove_diacritics</code> unavailable. Worth revisiting if the
+prefix-query compromise proves annoying in practice — it would be a migration of a virtual
+table, which the architecture record already tells us is drop-and-recreate.</p>
+<p><strong>A separate search engine (Meilisearch, Elasticsearch).</strong> Better ranking, fuzzy matching,
+faceting. Rejected decisively: it adds a service to run and back up, which breaks the
+one-process premise in [0004]({{ &ldquo;decisions/0004-single-process-constraint/&rdquo; | relURL }}), and
+it would need its own index anyway, with the same content-versus-database consistency problem
+this record exists to avoid.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

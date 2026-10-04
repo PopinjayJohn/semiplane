@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0024 — Authorisation is a gate on the route, not a check inside the handler — semiplane</title>
+<meta name="description" content="The S-8 access matrix is enforced by one middleware that resolves a campaign&#39;s tier, and by three named gates routes mount; no handler re-derives it.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0024-authorisation-gates-mount-not-per-handler/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0024 — Authorisation is a gate on the route, not a check inside the handler — semiplane">
+<meta property="og:description" content="The S-8 access matrix is enforced by one middleware that resolves a campaign&#39;s tier, and by three named gates routes mount; no handler re-derives it.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0024-authorisation-gates-mount-not-per-handler/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0024 — Authorisation is a gate on the route, not a check inside the handler</h1>
+    <p class="lede">The S-8 access matrix is enforced by one middleware that resolves a campaign&#39;s tier, and by three named gates routes mount; no handler re-derives it.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#why-the-gates-are-not-tier-constants">Why the gates are not tier constants</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>S-8 is a table: instance admin, campaign GM, campaign player, anonymous. <code>domain.ResolveAccess</code>
+holds it as one pure function, which is already the right shape — it is testable, total, and
+free of I/O, so the whole matrix can be asserted in a table test without a database.</p>
+<p>The gap is between that function and a request. Something has to look the campaign up by the
+slug in the path, look the requestor&rsquo;s membership up, call <code>ResolveAccess</code>, and then decide
+what to do with the answer. That something could be a handler, and there are about thirty
+routes in the phase plan.</p>
+<p>Written per handler, it goes wrong in three specific ways, and each is hard to spot in
+review:</p>
+<ul>
+<li><strong>A 403 on a private campaign confirms the campaign exists.</strong> <code>notFoundHandler</code> exists to
+make an unmatched route and a hidden campaign answer identically. A handler that answers
+403 to a non-member breaks that equivalence, and the leak is one status code wide.</li>
+<li><strong>An anonymous request and a database failure must be the same answer.</strong> If a handler
+propagates a store error as a 500 but renders a missing campaign as a 404, the difference
+is an oracle: a scanner learns which slugs exist by watching which requests produce 500s
+under load.</li>
+<li><strong><code>public</code> grants read and nothing else, and that is easy to half-remember.</strong> A route
+guarded by &ldquo;is the campaign public or am I a member&rdquo; admits a non-member&rsquo;s play attempt.</li>
+</ul>
+<p>None of these is a mistake a careful author avoids. They are the residue of writing the same
+decision thirty times.</p>
+<h2 id="decision">Decision</h2>
+<p>Authorisation is a <strong>middleware that resolves, plus a named gate that a route mounts</strong>.</p>
+<p><code>campaigns.Resolve(store)</code> reads the <code>{slug}</code> path value, loads the campaign, loads the
+requestor&rsquo;s membership when there is one, calls <code>domain.ResolveAccess</code>, and puts an <code>Access</code>
+value on the request context. <code>campaigns.RequireRead</code>, <code>RequirePlay</code> and <code>RequireEdit</code> are
+the three gates, each a <code>Guard</code> bound to one of the three capability predicates
+<code>domain.Tier</code> already exposes.</p>
+<p>A route is mounted behind them:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">mux</span><span class="p">.</span><span class="nf">Handle</span><span class="p">(</span><span class="s">&#34;/c/&#34;</span><span class="p">,</span><span class="w"> </span><span class="nx">campaigns</span><span class="p">.</span><span class="nf">Resolve</span><span class="p">(</span><span class="nx">campaignStore</span><span class="p">)(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">middleware</span><span class="p">.</span><span class="nf">Chain</span><span class="p">(</span><span class="nx">campaignMux</span><span class="p">,</span><span class="w"> </span><span class="nx">campaigns</span><span class="p">.</span><span class="nx">RequireRead</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">))</span><span class="w">
+</span></span></span></code></pre></div><p><code>mountCampaignRoutes</code> is the single list a route is added to, so adding one without a gate is
+not expressible.</p>
+<p>Three consequences are worth stating, because they are the parts a later reader is tempted
+to undo:</p>
+<ul>
+<li><strong>No access is 404, not 403.</strong> The body and status are identical to an unmatched route. A
+reader who cannot see a campaign learns nothing from the difference, which is the property
+the <code>notFoundHandler</code> comment claims.</li>
+<li><strong>Some access but not the required capability is 401 when anonymous, 403 otherwise.</strong>
+S-14.4 permits either for an anonymous request. 401 is chosen because it is the answer that
+tells a reader signing in will help, and reaching a capability gate at all means the
+campaign is not itself a secret — it is public, or the reader is a member of it.</li>
+<li><strong>A membership read failure downgrades to read-only; a campaign read failure is a 500.</strong> The
+first fails toward less access, which is free: a private campaign is a 404 either way and a
+public one stays readable. The second must not be a 404, because reporting a broken database
+as an absent campaign tells an operator their database is healthy when it is serving errors.</li>
+</ul>
+<p>The gates are <code>var</code>s of function type rather than functions, so a mount list reads as a claim
+about the route: <code>RequireEdit</code> says what it needs, where <code>Guard(domain.Tier.CanEdit)</code> makes
+the reader look up what that means.</p>
+<h3 id="why-the-gates-are-not-tier-constants">Why the gates are not tier constants</h3>
+<p><code>Guard</code> takes <code>...func(domain.Tier) bool</code> rather than a <code>domain.Tier</code> to compare against,
+because the tiers are not a total order for this purpose. <code>CanRead</code>, <code>CanPlay</code> and <code>CanEdit</code>
+are three capabilities with three membership tests, and each already exists in <code>domain</code> as the
+single implementation of the matrix. A gate taking a tier would push toward a <code>t &gt;= TierGM</code>
+comparison, and <code>Tier</code> is an <code>int</code> — so any conversion could produce a value outside the set,
+and <code>t &gt;= TierGM</code> would make that value the most privileged one in it. Every predicate is an
+explicit membership test, so a tier this build does not recognise grants nothing.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Every campaign-scoped route inherits the matrix by being mounted. The failure mode of
+forgetting is a compile error, not a review comment.</li>
+<li>The matrix has one enforcement point, and the table test in <code>campaigns_test.go</code> covers all
+twelve cells of the S-8 table across three gates.</li>
+<li><code>Resolve</code> is a read on every campaign-scoped request. It is two indexed single-row queries,
+and P4&rsquo;s index maintenance is what keeps the second one cheap. A cache here would be a
+second source of truth about a membership, and memberships change by an explicit GM action.</li>
+<li>Adding a fourth capability means adding a predicate to <code>domain.Tier</code> and a fourth named gate
+here. That is a change to the S-8 table, which is the point: it should require saying so.</li>
+<li><code>mountCampaignRoutes</code> is empty in this phase. The wiki surface is P3 and the write path P6,
+and neither is mounted ahead of its gate.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Check <code>tier.CanEdit()</code> inside each handler.</strong> Rejected. It is the shape that produces a
+matrix with one copy per call site, and a reviewer reading <code>if !access.Tier.CanEdit()</code> has to
+remember the matrix to review it. A named gate in a mount list is the same decision with the
+reasoning already done.</p>
+<p><strong>A single <code>Authorise(capability)</code> middleware taking the capability as an argument.</strong> Rejected
+in favour of three named gates. The middleware form pushes the choice to the call site, which
+is the same call site the decision was supposed to move away from. The named gates make the
+wrong thing a compile error and the right thing the shortest possible line.</p>
+<p><strong>Answer 403 for an anonymous request on a capability gate.</strong> Permitted by S-14.4, and
+rejected. 403 says &ldquo;you are known and you may not&rdquo;; for a reader who has not signed in yet,
+that is the wrong diagnosis and sends them to look for a permission they do not have. 401 with
+a <code>Cookie</code> challenge is the answer that names the fix.</p>
+<p><strong>Filter the campaign list by visibility rather than by membership.</strong> Rejected, and it is what
+the store&rsquo;s <code>CampaignsForUser</code> comment already records: a public campaign the reader is not a
+member of is reachable by its slug, and listing it in their campaign list would claim they
+hold a role in a campaign they have no role in. Membership is the list.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

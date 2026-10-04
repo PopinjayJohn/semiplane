@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0006 — The content root is the source of truth — semiplane</title>
+<meta name="description" content="Markdown files in an Obsidian vault are the content. SQLite is a rebuildable index plus live game state.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0006-content-root-is-source-of-truth/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0006 — The content root is the source of truth — semiplane">
+<meta property="og:description" content="Markdown files in an Obsidian vault are the content. SQLite is a rebuildable index plus live game state.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0006-content-root-is-source-of-truth/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0006 — The content root is the source of truth</h1>
+    <p class="lede">Markdown files in an Obsidian vault are the content. SQLite is a rebuildable index plus live game state.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#placements-are-never-written-to-files">Placements are never written to files</a></li>
+        <li><a href="#what-this-costs">What this costs</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>There are two writers to campaign content and no shared lock between them: the web editor, and
+whatever the GM does in Obsidian — which includes three sync providers, on any number of
+devices, at any time.</p>
+<p>This is not a problem to be solved. It is the intended shape. The GM keeps their campaign in an
+Obsidian vault because that is where they already keep it, with the plugins and backlinks and
+sync they already rely on. A product that required content to live only inside semiplane would
+be a worse product.</p>
+<p>The cost is that the server cannot assume it is the only writer, and cannot hold a lock that
+Obsidian respects — Obsidian is a separate process that has never heard of semiplane.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>The filesystem is the source of truth. The database is a rebuildable index plus
+<code>campaign_state</code>.</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Stored in</th>
+					<th>What</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>The <code>.md</code> file</td>
+					<td>Every piece of content. Title, prose, front matter, token stats, scenes, handouts, journals.</td>
+			</tr>
+			<tr>
+					<td><code>pages</code>, <code>pages_fts</code></td>
+					<td>An index. Delete it and rebuild from the filesystem; the content is unaffected.</td>
+			</tr>
+			<tr>
+					<td><code>campaign_state</code></td>
+					<td>Live game state that has no home in a file. One row per campaign.</td>
+			</tr>
+			<tr>
+					<td><code>page_revisions</code></td>
+					<td>History. The only thing here that is not derivable from the vault.</td>
+			</tr>
+			<tr>
+					<td><code>secrets_revealed</code></td>
+					<td>Who revealed a secret, when, and whether a sync reverted it.</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="placements-are-never-written-to-files">Placements are never written to files</h3>
+<p>The one rule this record exists to protect: <strong>live placement state goes in
+<code>campaign_state</code>, never in front matter.</strong> A token&rsquo;s current hit points, position, and
+conditions are runtime values.</p>
+<p>If current HP lived in a page&rsquo;s front matter, every damage event would rewrite the file. That
+would collide head-on with Obsidian&rsquo;s sync, which is simultaneously delivering a copy the GM
+made five minutes ago — and would produce a permanent conflict storm in a shared vault.</p>
+<p>Game <em>definitions</em> are files, written by the GM, stable: a token&rsquo;s maximum HP, AC, portrait,
+size. Game <em>placements</em> are runtime. The architecture record&rsquo;s §4.2 table is the authority.</p>
+<h3 id="what-this-costs">What this costs</h3>
+<ul>
+<li><strong>Backups are two artifacts that can desync.</strong> The content root <em>and</em> a consistent SQLite
+snapshot — taken with the <code>.backup</code> API or <code>VACUUM INTO</code>, never a raw file copy while the
+process is running. The vault is the source of truth for pages; the database is an index
+plus game state.</li>
+<li><strong>A deleted database loses game state and history.</strong> Content survives, because it is files.
+The reverse — losing the vault — loses everything, and there is no server-side copy of it.</li>
+<li><strong>The server can be wrong about a page and the file is right.</strong> Every design decision in the
+content pipeline follows from this: render caches key on content hash rather than mtime,
+because sync paths preserve or coarsen mtime and 1-second filesystem granularity lets
+distinct writes collide.</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>The file system is not an export format. It is the format. There is no import path, because
+there is nothing to import <em>from</em>.</li>
+<li>A campaign root can be opened in any text editor. A plugin that mishandles a file produces a
+broken file, not lost content.</li>
+<li>The watcher is load-bearing rather than an optimisation. Nothing renders on demand from disk;
+the pipeline is event-driven, and a missed watch event means stale content until something
+else triggers a re-read.</li>
+<li>Obsidian Sync is <strong>untrusted input</strong>: shared vaults, community plugins, compromised devices.
+Every path in front matter resolves inside <code>os.Root</code>, and all YAML is parsed with limits.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Content in the database, files as an export.</strong> Rejected outright — it makes the Obsidian
+vault a second-class copy, reinstates the sync conflict storm, and means the thing users are
+told is authoritative is actually a derivative.</p>
+<p><strong>A file lock between the two writers.</strong> Rejected because it cannot work: Obsidian is unaware
+of the lock and will overwrite regardless. Conflict resolution is an HTTP optimistic
+precondition, not a lock — see §6 of the architecture record.</p>
+<p><strong>Git for content history.</strong> Rejected: the architecture record&rsquo;s §4 note is accurate that this
+is awkward with two writers and content living outside the repository. <code>page_revisions</code> covers
+the web-editor case; the vault&rsquo;s own sync provider covers the rest.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

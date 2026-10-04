@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0019 — Tailwind as a pinned standalone binary, with the manifest hash committed — semiplane</title>
+<meta name="description" content="The CSS toolchain is a downloaded executable verified against a committed digest of its own release manifest, and `make check` builds CSS and templ before compiling Go.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0019-tailwind-standalone-pinned/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0019 — Tailwind as a pinned standalone binary, with the manifest hash committed — semiplane">
+<meta property="og:description" content="The CSS toolchain is a downloaded executable verified against a committed digest of its own release manifest, and `make check` builds CSS and templ before compiling Go.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0019-tailwind-standalone-pinned/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0019 — Tailwind as a pinned standalone binary, with the manifest hash committed</h1>
+    <p class="lede">The CSS toolchain is a downloaded executable verified against a committed digest of its own release manifest, and `make check` builds CSS and templ before compiling Go.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#one-committed-hash-not-four">One committed hash, not four</a></li>
+        <li><a href="#the-gate-builds-the-frontend-first">The gate builds the frontend first</a></li>
+        <li><a href="#generated-output-is-not-committed">Generated output is not committed</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Phase 1 is the point where the frontend toolchain has to exist, because every
+later phase inherits the shape of the gate. Getting it wrong here means a
+toolchain failure is diagnosed through eleven unrelated files, six phases later.</p>
+<p>The toolchain is two things: the <strong>templ</strong> compiler, and a <strong>Tailwind</strong> build.
+templ installs from the Go module proxy like every other Go tool here, so it is
+unremarkable. Tailwind is not — the upstream recommendation is Node, and
+[0001]({{ &ldquo;decisions/0001-go-as-implementation-language/&rdquo; | relURL }}) is a
+decision to ship one static binary with no runtime to install. That requirement
+is met by the <strong>standalone</strong> release: a prebuilt executable per platform with
+Node linked in.</p>
+<p>Which means the build now downloads and executes a ~110MB binary from the
+internet. That is a supply-chain decision whether or not anyone calls it one,
+and it deserves a record rather than a line in a Makefile.</p>
+<p>There is also a build-ordering constraint that has to be settled now.
+<code>internal/web</code> embeds the built stylesheet, so <code>go build</code> cannot succeed until
+<code>make css</code> has run. A gate that does not run it produces a build error about a
+missing <code>embed</code> pattern, in a package that legitimately has no source yet.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Tailwind is the pinned standalone binary, verified against a committed SHA256
+of its release manifest. <code>make check</code> runs <code>css</code> and <code>templ</code> before <code>build</code>.</strong></p>
+<h3 id="one-committed-hash-not-four">One committed hash, not four</h3>
+<p>The release publishes <code>sha256sums.txt</code> covering every platform asset. The
+Makefile commits <strong>that file&rsquo;s</strong> digest:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-make" data-lang="make"><span class="line"><span class="cl"><span class="nv">TAILWIND_VERSION</span>         <span class="o">:=</span> v4.3.3
+</span></span><span class="line"><span class="cl"><span class="nv">TAILWIND_MANIFEST_SHA256</span> <span class="o">:=</span> 527b4fcd96950f9ae8f83bbbff27c61e4ff3596cb0b2eb760f9b3516de5d3c56
+</span></span></code></pre></div><p><code>tools/install-tailwind.sh</code> verifies in two steps: the manifest against the
+committed digest, then the downloaded binary against its line in the verified
+manifest. Four committed per-platform digests would be weaker, not stronger —
+they would be four values nobody re-derives from upstream, and a compromised
+release would ship four matching binaries and four matching hashes.</p>
+<p>The alternative — committing the binary, or vendoring the Node toolchain — is
+rejected for the reason in 0001: it makes the artifact depend on a machine
+state the operator has to reproduce.</p>
+<h3 id="the-gate-builds-the-frontend-first">The gate builds the frontend first</h3>
+<p><code>check</code> is now: format diff, <code>css</code>, <code>templ</code>, <code>build</code>, <code>vet</code>, <code>lint</code>, <code>test</code>.
+<code>build</code> additionally asserts the stylesheet exists and, if it does not, says
+<code>run: make css</code> rather than letting the embed fail with <code>pattern dist: no matching files found</code>.</p>
+<p>CI installs templ and Tailwind in a <strong>step of their own, before <code>make ci</code></strong>. Not
+a separate job, and not folded into the gate: a step failure names the
+toolchain, whereas a folded-in failure reports as a vet or lint error against
+whatever file happened to import the embed.</p>
+<h3 id="generated-output-is-not-committed">Generated output is not committed</h3>
+<p><code>internal/web/static/dist/</code> and every <code>*_templ.go</code> are gitignored. A generated
+file in a diff means the gate was not run — the same rule
+[0008]({{ &ldquo;decisions/0008-forward-only-migrations/&rdquo; | relURL }}) applies to
+shipped migrations, and for the same reason: a committed generated file is a
+second copy of something with a source, and it drifts.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>The gate needs the network to bootstrap <code>.toolbin/</code>, once per checkout.
+After that it is offline. This is the one part of <code>make ci</code> that does.</li>
+<li><code>.toolbin/</code> is repository-local, mirroring the <code>GOBIN</code> pattern already in
+<code>ci.yml</code>, so a developer&rsquo;s personal <code>$HOME/go/bin</code> is never load-bearing.</li>
+<li>Upgrading Tailwind is a two-line diff in the Makefile, and it fails loudly if
+the tag&rsquo;s manifest does not hash to the committed value. A re-published tag
+is a real event; the error message says to update both pins together.</li>
+<li><code>make clean</code> removes <code>.toolbin/</code> and the generated assets, so a clean tree
+genuinely is clean.</li>
+<li>A contributor on an unsupported platform cannot build the CSS. The supported
+set is Linux, macOS and Windows on x64 and arm64, which is the whole published
+asset list; the script fails with the uname it did not recognise rather than
+downloading something plausible.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Node plus <code>npm install</code>.</strong> The upstream default, and the only option that
+gets automatic updates. Rejected because it adds a second language toolchain to
+a project whose entire premise is one static binary, and because <code>node_modules</code>
+in a Go repository is a supply-chain surface with no version pinning story as
+good as a SHA256.</p>
+<p><strong>A pure-Go Tailwind port (<code>tailwind-go</code>).</strong> No download, no Node, one binary.
+Rejected on the evidence the architecture record already weighed: the port lists
+a single importer, and Tailwind v4&rsquo;s CSS-first <code>@theme</code> and <code>@source</code> are the
+features the token layer is built on. Adopting a port to avoid a download would
+be trading a verifiable artifact for an unmaintained one.</p>
+<p><strong>Committing the built stylesheet.</strong> Removes the network from the gate and makes
+a CSS change a two-step commit. Rejected because the stylesheet is derived
+output with a source, and a committed copy is one more thing that can be stale.
+It also reintroduces exactly the review problem <code>check</code> exists to prevent: a
+diff whose generated half nobody reads.</p>
+<p><strong>A Makefile that runs the download on every <code>make check</code>.</strong> Always current,
+always slow, and it turns a lint fix into a network round-trip. The bootstrap is
+a separate <code>make tailwind</code> target that is a no-op once <code>.toolbin/</code> is populated.</p>
+<p><strong>Verifying only the binary against a committed per-platform digest.</strong> Four
+lines instead of one, and it is what most build scripts do. Rejected because
+none of the four is checked against upstream, so a bad release is trusted on the
+strength of a value this repository wrote down itself.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

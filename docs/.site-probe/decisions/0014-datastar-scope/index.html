@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0014 — Datastar for live chrome only — semiplane</title>
+<meta name="description" content="SSE patches rendered DOM fragments. It never carries content delivery and it never carries the map.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0014-datastar-scope/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0014 — Datastar for live chrome only — semiplane">
+<meta property="og:description" content="SSE patches rendered DOM fragments. It never carries content delivery and it never carries the map.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0014-datastar-scope/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0014 — Datastar for live chrome only</h1>
+    <p class="lede">SSE patches rendered DOM fragments. It never carries content delivery and it never carries the map.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#what-never-flows-over-it">What never flows over it</a></li>
+        <li><a href="#the-connection-budget">The connection budget</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>A live tabletop needs several things updating in real time: the initiative tracker, the chat
+log, the dice log, the connection indicator. Server-sent events are the natural transport, and
+it is tempting to make them the default mechanism for anything that changes.</p>
+<p>Doing so would break a property the whole content pipeline depends on: <strong>rendered page content is
+cacheable and stable within a session.</strong> Filesystem markdown does not change because a token
+moved. Shipping it over a reactive transport would mean it could not be cached, and would mean
+every reader of a page holds a connection open to receive content that is not changing.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Datastar patches DOM over SSE, for genuinely reactive fragments only. Content delivery is
+always ordinary HTTP with an <code>ETag</code>.</strong></p>
+<p>SSE appears in exactly two places:</p>
+<ol>
+<li><strong>Live game chrome</strong> — <code>/c/{slug}/events</code>, carrying rendered sidebar fragments.</li>
+<li><strong>The editor&rsquo;s external-change notice</strong> — &ldquo;this page changed on disk&rdquo;, so a GM editing in
+the browser knows when Obsidian has moved underneath them.</li>
+</ol>
+<h3 id="what-never-flows-over-it">What never flows over it</h3>
+<ul>
+<li><strong>Campaign content.</strong> Ordinary HTTP, <code>ETag</code>, cacheable. Filesystem markdown is
+session-stable, so treating it as live would cost a connection per open page and gain
+nothing.</li>
+<li><strong>Search.</strong> Submit-to-navigate over <code>GET /c/{slug}/search?q=</code>, <code>ETag</code>-cacheable, with the
+result count in the <code>&lt;h1&gt;</code>. A client-side search renderer is prohibited outright — it cannot
+reproduce the server&rsquo;s FTS tokenisation (see
+[0007]({{ &ldquo;decisions/0007-fts5-tokenizer/&rdquo; | relURL }})) and would produce different results
+for the same query.</li>
+<li><strong>The map.</strong> PixiJS owns one <code>&lt;div&gt;</code> and everything inside it. templ renders the shell and the
+sidebar; Datastar patches the DOM <em>around</em> the canvas. The canvas is a structured-data
+consumer, not a DOM consumer.</li>
+</ul>
+<h3 id="the-connection-budget">The connection budget</h3>
+<p>Browsers allow roughly six concurrent HTTP/1.1 connections per origin, and <strong>every SSE stream
+holds one permanently.</strong> So the play page opens exactly one SSE and exactly one WebSocket — two
+of six — and the shell opens none. Content pages open none.</p>
+<p>This is why the map must not be an SSE-driven element, and why search is not type-ahead. Both
+would multiply permanent connections per user.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Content pages stay cacheable, shareable, and free of open connections. That is the point.</li>
+<li>The play page&rsquo;s sidebar needs both transports, because the sidebar wants rendered HTML while
+the canvas wants structured deltas. One hub, two egress representations of the same state.</li>
+<li>Search cannot feel like an instant-as-you-type experience, and that is accepted deliberately.</li>
+<li>Moving to HTTP/2 removes the connection ceiling entirely. A deployment recommendation, not a
+code change.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>WebSocket for everything, including content.</strong> One transport, one connection. Rejected: it
+would make cacheable content uncacheable to get a connection-count saving that is not currently
+a problem.</p>
+<p><strong>Full client-side reactivity (a SPA framework owning the document).</strong> Better DX for the
+reactive parts, and the standard answer for dashboards. Rejected for the same reason as
+[0013]({{ &ldquo;decisions/0013-templ/&rdquo; | relURL }}): the document here has a deliberate
+accessibility contract, a specific answer about live regions, and a canvas the server must not
+touch. A framework that owns the document owns all three.</p>
+<p><strong>Polling instead of SSE.</strong> Cheaper infrastructure, no permanent connections. Rejected on
+latency for chat and dice at a table, where a round-trip per second is visible to everyone.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

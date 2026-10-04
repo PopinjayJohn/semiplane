@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0036 — `pages.title` is not redacted, and a title may carry secret text — semiplane</title>
+<meta name="description" content="S-5.11 scopes redaction to `body_plain`, so a front-matter `title:` is indexed verbatim — and a title is the one place a secret is most likely to be written by accident.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0036-page-titles-are-not-redacted/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0036 — `pages.title` is not redacted, and a title may carry secret text — semiplane">
+<meta property="og:description" content="S-5.11 scopes redaction to `body_plain`, so a front-matter `title:` is indexed verbatim — and a title is the one place a secret is most likely to be written by accident.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0036-page-titles-are-not-redacted/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0036 — `pages.title` is not redacted, and a title may carry secret text</h1>
+    <p class="lede">S-5.11 scopes redaction to `body_plain`, so a front-matter `title:` is indexed verbatim — and a title is the one place a secret is most likely to be written by accident.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#why-this-is-worse-than-it-looks">Why this is worse than it looks</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>[0031]({{ &ldquo;decisions/0031-body-plain-is-derived-from-the-source/&rdquo; | relURL }}) made <code>body_plain</code> a function
+of the <strong>source</strong> rather than of rendered HTML, which is what lets it exclude <code>[!secret]</code> callout content in
+every reveal state. That phase did the exclusion for one column.</p>
+<p><code>pages</code> has two text columns. The other is <code>title</code>, and migration <code>0007-pages-and-search.sql</code>&rsquo;s
+comment is precise about what it promises:</p>
+<blockquote>
+<p><code>body_plain</code> — the searchable text, and the <em>redacted</em> text: <code>[!secret]</code> callout content is excluded
+from it in every reveal state (S-11.1). A search snippet is built from this column.</p>
+</blockquote>
+<p>S-5.11 says the same thing and no more: <strong>&ldquo;Secret text never enters the FTS index. <code>body_plain</code> excludes
+callout content in <em>every</em> reveal state.&rdquo;</strong> Both name one column. Neither says a word about <code>title</code>,
+because both were written thinking about prose, and a title is not prose.</p>
+<p>Verified on a running instance, before this decision:</p>
+<pre tabindex="0"><code>$ printf -- &#39;---\ntitle: The passphrase is hunter2\n---\n\nbody\n&#39; &gt; vault/Secrettitle.md
+$ sqlite3 semiplane.db &#34;SELECT path, title FROM pages WHERE path LIKE &#39;%Secret%&#39;&#34;
+Secrettitle.md | The passphrase is hunter2
+</code></pre><p>The indexer writes <code>doc.FrontMatter.Title</code> into <code>title</code> unredacted, in every reveal state, for every
+viewer including an anonymous one on a public campaign. Three surfaces carry it: the <strong>search index</strong>
+(the FTS5 table indexes <code>title</code> as well as <code>body_plain</code>), the <strong>nav tree</strong> the wiki route builds from
+<code>pages.title</code>, and the <strong>page&rsquo;s own <code>&lt;h1&gt;</code></strong>.</p>
+<h2 id="why-this-is-worse-than-it-looks">Why this is worse than it looks</h2>
+<p>The instinct is that a title is metadata, not content, and metadata is not the thing S-5.11 is about.
+That instinct is wrong on this project&rsquo;s own terms, for three reasons.</p>
+<p><strong>A title is the most likely place for a secret to be written by accident.</strong> A GM titling a handout
+<code>The Duke's passphrase</code> is doing something entirely ordinary. So is titling a page <code>Anna's phone number</code>
+and one <code>GM only: the vault combination</code>. Nothing about writing a secret into a title looks like writing a
+secret into prose, which is exactly the property that makes prose the place people expect redaction and
+titles the place they do not.</p>
+<p><strong>Redaction is omission, not hiding.</strong> ADR 0029 and S-5.6: a redacted value is <em>removed entirely</em> — not
+<code>display:none</code>, not a comment, not a class — because every one of those ships the text in the HTML, where
+any player can recover it from view-source. That argument applies with full force to a column that is
+served to more readers than the page body is: a search index row is handed to every searcher, and a nav
+row to everyone who can read the campaign.</p>
+<p><strong>The exposure is wider than the page.</strong> A <code>[!secret]</code> callout in the body of a page that is otherwise
+GM-only is protected by the access gate on that page. The <em>title</em> of that page appears in a search result
+list that a player can read for a different campaign, on an instance where several campaigns are visible
+at once.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>A front-matter <code>title:</code> is not a place a secret may be written, and this is a convention rather than a
+mechanism.</strong></p>
+<p><code>pages.title</code> continues to hold the title verbatim. Nothing is stripped and no new column is added,
+because:</p>
+<ul>
+<li><strong>Stripping is not possible without knowing what is secret.</strong> The title is one line of front matter
+with no callout structure, so there is no boundary to redact <em>to</em>. A rule that redacted titles would
+have to redact <em>all</em> titles containing a word from a blocklist, and a blocklist that guesses at secrets
+is worse than no rule: it produces a UI that silently drops a GM&rsquo;s real title and still leaks the next
+one.</li>
+<li><strong>The FTS index already excludes callout bodies</strong>, so a secret <em>in prose</em> is safe. The gap is
+specifically the one place with no marker to key on.</li>
+<li><strong>A title is rendered, always, everywhere.</strong> It is the <code>&lt;h1&gt;</code>, the nav label, the search hit, and the
+browser tab. There is no tier in which it is hidden from a reader who can see the page.</li>
+</ul>
+<p>So the enforcement is on the <strong>writer</strong> and on the <strong>index</strong>: any title a page declares is indexed and
+rendered as written, and a GM is told that a title is public to every reader who can see the page.
+<code>secretFrontMatter</code> — the documented convention a campaign uses to keep a secret out of the title — is
+handled by not putting secrets in titles.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>A GM who titles a page after a secret leaks it</strong>, and the leak is durable: it is in the index, in the
+nav tree, and in search results, for as long as the page exists. Phase 10&rsquo;s redaction work covers the
+body and the callouts; this is the case it does not and cannot cover by omission, because a title has no
+omission to make.</p>
+<p><strong>This is recorded as a limitation, not fixed</strong>, and a reviewer reading ADR 0029&rsquo;s &ldquo;omission, not hiding&rdquo;
+should read this as the boundary of that rule rather than an exception to it.</p>
+<p><strong>The alternative — indexing a redacted placeholder — was rejected</strong> because a placeholder is a second
+answer to &ldquo;what is this page called&rdquo;, and a nav tree full of &ldquo;Untitled&rdquo; is a worse product than one that
+is wrong about a secret. Choosing to fail toward a visible title rather than a silent one is consistent
+with how the rest of this codebase resolves an unknowable.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Redact any title matching a secret-shaped pattern.</strong> Rejected: pattern-matching secrets is a guess, and
+a guess that fires produces a broken title while a guess that misses produces the leak. The failure modes
+are not symmetric.</p>
+<p><strong>Store a redacted title alongside the real one, and pick per viewer.</strong> Rejected: it reintroduces a
+second <code>ETag</code> variant for every page, which is precisely the cost ADR 0016 exists to avoid, and it makes
+the nav tree a per-reader document — which would require <code>Vary</code> on the shell and undo ADR 0035&rsquo;s
+byte-identity result.</p>
+<p><strong>Drop <code>title</code> from the FTS index.</strong> Rejected: it removes the leak but makes every page unfindable by
+name, which is the single most common way a reader looks for a page. A worse product to fix a worse bug.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

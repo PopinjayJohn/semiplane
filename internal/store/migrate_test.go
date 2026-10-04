@@ -233,3 +233,263 @@ func TestStoreOpenMigrates(t *testing.T) {
 		t.Errorf("insert into campaign_state: %v; store.Open did not apply every migration", err)
 	}
 }
+
+// TestMigrateAppliesToThePreviousVersion is the upgrade-path assertion: a
+// database migrated by the previous phase's build is at version 10, and the
+// new migration must apply on top of it cleanly.
+//
+// The previous version is simulated rather than checked out, because the
+// runner has no "apply only these" mode: the full set is applied, then the
+// newest migration's bookkeeping row is deleted and its table dropped, which
+// leaves the database in exactly the state a version-10 build would have
+// left it. The assertion is then that Migrate applies 0011 and nothing else —
+// a runner that re-applied an earlier migration would fail on a CREATE TABLE,
+// and one that applied 0011 twice would fail on the primary key.
+func TestMigrateAppliesToThePreviousVersion(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("initial Migrate() error = %v, want nil", err)
+	}
+
+	// Roll back to version 10: drop the newest table and its bookkeeping row.
+	if _, err := db.ExecContext(t.Context(), "DROP TABLE secrets_revealed"); err != nil {
+		t.Fatalf("drop secrets_revealed: %v", err)
+	}
+
+	if _, err := db.ExecContext(t.Context(),
+		"DELETE FROM schema_migrations WHERE name = ?", "secrets-revealed",
+	); err != nil {
+		t.Fatalf("delete bookkeeping row: %v", err)
+	}
+
+	// The database is now at version 10. Migrate must apply exactly 0011.
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate() at the previous version error = %v, want nil", err)
+	}
+
+	applied := appliedVersions(t, db)
+
+	if _, ok := applied["secrets-revealed"]; !ok {
+		t.Error("secrets-revealed is unapplied after Migrate at the previous version")
+	}
+
+	// And the table is back.
+	var name string
+
+	row := db.QueryRowContext(t.Context(),
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", "secrets_revealed")
+
+	if err := row.Scan(&name); err != nil {
+		t.Errorf("secrets_revealed is missing after Migrate at the previous version: %v", err)
+	}
+}
+
+// TestMigrateShippedSetIsExactlyTheExpectedSet is the assertion that the
+// shipped migrations are unmodified and complete.
+//
+// The forward-only rule (AGENTS.md: "Never edit a shipped migration — add a
+// new one") is a process rule, and this is the practical enforcement available
+// to a test: the embedded migration set is exactly the expected set, so an
+// addition, a rename, or a removal is caught. A modification of a shipped
+// migration's *body* is not caught by this test — the name set is unchanged —
+// and that gap is stated rather than hidden: the guard is the process rule
+// plus the review that enforces it, and a test that claimed to catch body
+// edits would be a test that cannot fail.
+//
+// The table-existence check is the other half: a migration whose CREATE TABLE
+// was deleted would still record its name in schema_migrations (the SQL would
+// be a comment-only no-op), so the name set alone would pass. Asserting the
+// table exists is what catches a migration that was gutted rather than removed.
+func TestMigrateShippedSetIsExactlyTheExpectedSet(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate() error = %v, want nil", err)
+	}
+
+	applied := appliedVersions(t, db)
+
+	want := []string{
+		"schema-migrations",
+		"campaign-state",
+		"users",
+		"auth-sessions",
+		"campaigns",
+		"campaign-members",
+		"pages-and-search",
+		"page-revisions",
+		"audit-log",
+		"campaign-rule-modules",
+		"secrets-revealed",
+		// An ALTER rather than a CREATE, so the table-existence check below is
+		// the wrong assertion for it — the column is. It is named here because
+		// the *name set* is what this test holds, and a migration that was
+		// removed rather than added would leave the set short.
+		"secrets-revealed-ordinal",
+	}
+
+	if len(applied) != len(want) {
+		t.Errorf("applied %d migrations, want %d: %v", len(applied), len(want), applied)
+	}
+
+	for _, name := range want {
+		if _, ok := applied[name]; !ok {
+			t.Errorf("migration %q is unapplied: %v", name, applied)
+		}
+	}
+
+	// The table the newest migration creates must exist. A migration whose
+	// CREATE TABLE was deleted would still be recorded as applied (the SQL
+	// would be a comment-only no-op), so the name set alone would pass.
+	var name string
+
+	row := db.QueryRowContext(t.Context(),
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", "secrets_revealed")
+
+	if err := row.Scan(&name); err != nil {
+		t.Errorf("secrets_revealed is missing after Migrate(): %v", err)
+	}
+
+	// And the column the newest migration adds, for the same reason. A migration
+	// whose `ALTER TABLE` line was deleted would record its name and leave the
+	// column absent, which is precisely the failure the name set cannot see --
+	// and it is a silent one, because the repair path reads a column that does not
+	// exist only through a query that would fail at run time on a real campaign.
+	if !columnExists(t, db, "secrets_revealed", "ordinal") {
+		t.Error("secrets_revealed.ordinal is missing after Migrate()")
+	}
+}
+
+// TestTheOrdinalColumnIsNullableAndUnbackfilled holds the one property of 0012
+// that matters and that the migration file's own comment argues for.
+//
+// A `DEFAULT 0` or a backfill would assert that every historical secret sat at the
+// top of its page, and `content.Reassociate` would then re-point those rows onto
+// whatever callout now holds position 0 -- a GM's disclosure moving to a different
+// secret. So `NULL` has to mean "not recorded" and stay distinguishable from `0`,
+// which means **no default and no NOT NULL**, and this asserts both at the schema
+// level rather than trusting the SQL text.
+//
+// The two halves are separately falsifiable: a DEFAULT 0 fails the first (a row
+// written without an ordinal reads back as 0) and a NOT NULL fails the second (the
+// insert cannot be made at all).
+func TestTheOrdinalColumnIsNullableAndUnbackfilled(t *testing.T) {
+	t.Parallel()
+
+	db := openRawDB(t)
+
+	if err := store.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate() error = %v, want nil", err)
+	}
+
+	// A campaign to hang the row off, because `campaign_id` is a foreign key and
+	// a ledger row is meaningless without one.
+	//
+	// Seeded with raw SQL rather than `seedCampaign`, because that helper takes a
+	// `*store.Store` and `store.Open` applies the migration itself -- which would
+	// mean this test could not tell whether *its* `Migrate` call did the work.
+	if _, err := db.ExecContext(t.Context(),
+		`INSERT INTO campaigns (slug, name, content_root, visibility, system_id,
+			ruleset_version, created_at)
+		 VALUES ('ordinal-fixture', 'ordinal-fixture', '/tmp/ordinal-fixture',
+			'private', '5e-2024', '1', 0)`,
+	); err != nil {
+		t.Fatalf("seed a campaign: %v", err)
+	}
+
+	var campaignID int64
+
+	if err := db.QueryRowContext(t.Context(),
+		"SELECT id FROM campaigns WHERE slug = ?", "ordinal-fixture",
+	).Scan(&campaignID); err != nil {
+		t.Fatalf("read the campaign id back: %v", err)
+	}
+
+	// Insert without naming the ordinal at all.
+	if _, err := db.ExecContext(t.Context(),
+		`INSERT INTO secrets_revealed (campaign_id, path, anchor, revealed_by, revealed_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		campaignID, "lore/vault.md", "traitor", 1, 1_700_000_000,
+	); err != nil {
+		t.Fatalf("insert a row without an ordinal: %v", err)
+	}
+
+	var (
+		ordinal sql.NullInt64
+		present bool
+	)
+
+	row := db.QueryRowContext(t.Context(),
+		`SELECT ordinal FROM secrets_revealed WHERE campaign_id = ? AND anchor = ?`,
+		campaignID, "traitor")
+
+	if err := row.Scan(&ordinal); err != nil {
+		t.Fatalf("read the ordinal back: %v", err)
+	}
+
+	present = ordinal.Valid
+
+	// The whole point: a row written without one reads back as *absent*, not as
+	// position 0.
+	if present {
+		t.Errorf("ordinal reads back as %d, want NULL. A DEFAULT 0 asserts that "+
+			"every secret sat at the top of its page, and content.Reassociate "+
+			"would then re-point the row onto whatever callout now holds "+
+			"position 0 -- one GM's disclosure moved to a different secret",
+			ordinal.Int64)
+	}
+}
+
+// columnExists reports whether a table has a column.
+//
+// `PRAGMA table_info` rather than a `SELECT` against the column, because a SELECT
+// against a missing column is a *runtime* error and a PRAGMA row is simply absent --
+// so this reports the absence as an answer rather than as a failure, which is what a
+// test asking "does it exist" needs.
+func columnExists(t *testing.T, db *sql.DB, table, column string) bool {
+	t.Helper()
+
+	rows, err := db.QueryContext(t.Context(), "PRAGMA table_info("+table+")")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(%s): %v", table, err)
+	}
+
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close the PRAGMA rows: %v", err)
+		}
+	}()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			dfltValue  sql.NullString
+			primaryKey int
+		)
+
+		if err := rows.Scan(
+			&cid,
+			&name,
+			&columnType,
+			&notNull,
+			&dfltValue,
+			&primaryKey,
+		); err != nil {
+			t.Fatalf("scan a PRAGMA row: %v", err)
+		}
+
+		if name == column {
+			return true
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatalf("walk the PRAGMA rows: %v", err)
+	}
+
+	return false
+}

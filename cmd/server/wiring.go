@@ -17,6 +17,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/events"
 	pluginroutes "github.com/semiplane/semiplane/internal/httpapi/plugins"
 	"github.com/semiplane/semiplane/internal/httpapi/search"
+	"github.com/semiplane/semiplane/internal/httpapi/secrets"
 	"github.com/semiplane/semiplane/internal/httpapi/theme"
 	"github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/realtime"
@@ -264,6 +265,28 @@ func (lookup themeNoticeLookup) ThemeNotice(
 func newThemeRoute(roots *content.Registry, logger *slog.Logger) *theme.Handler {
 	return &theme.Handler{
 		Roots:  roots,
+		Logger: logger,
+	}
+}
+
+// newSecretRoute builds the campaign-scoped reveal handler over the store.
+//
+// `*store.Store` is passed as the `secrets.Ledger` interface directly, and there is
+// no adapter, for the reason `newSearchRoute` gives for its own interface: the
+// adapter would be a second place to get the campaign scope right, and the campaign
+// scope is what this route's authorization rests on. A row written for the wrong
+// campaign is a disclosure recorded against the wrong reader's history.
+//
+// `Roots` is the same `*content.Registry` every other campaign route takes, so path
+// confinement is the same `os.Root` per campaign and not a second implementation.
+func newSecretRoute(
+	roots *content.Registry,
+	ledger *store.Store,
+	logger *slog.Logger,
+) *secrets.Handler {
+	return &secrets.Handler{
+		Roots:  roots,
+		Ledger: ledger,
 		Logger: logger,
 	}
 }

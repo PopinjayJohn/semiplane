@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0004 — One process, and what that forecloses — semiplane</title>
+<meta name="description" content="Authoritative game state lives in memory. Two instances behind a load balancer will silently diverge.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0004-single-process-constraint/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0004 — One process, and what that forecloses — semiplane">
+<meta property="og:description" content="Authoritative game state lives in memory. Two instances behind a load balancer will silently diverge.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0004-single-process-constraint/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0004 — One process, and what that forecloses</h1>
+    <p class="lede">Authoritative game state lives in memory. Two instances behind a load balancer will silently diverge.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>semiplane holds live tabletop state — token positions, current hit points, conditions,
+initiative order — in memory, and persists it to <code>campaign_state</code> on a trailing debounce of
+roughly two seconds after the last mutation.</p>
+<p>The WebSocket hub is process-local. A client connected to instance A receives deltas applied by
+instance A&rsquo;s in-memory state. A client connected to instance B receives deltas applied by
+instance B&rsquo;s copy. Nothing coordinates them.</p>
+<p><strong>Two instances behind a load balancer will silently diverge.</strong> Not fail loudly — diverge. Each
+client sees a coherent, plausible, wrong game. This is the worst failure shape available,
+because nothing errors and a table plays on.</p>
+<p>It is worth being precise about why. The tempting assumption is that SQLite&rsquo;s single-writer
+limit is the constraint, and that swapping in PostgreSQL would fix it. It would not. The
+constraint is <strong>state ownership</strong>: whichever instance owns a token&rsquo;s position owns the truth,
+and with more than one owner there is no truth. The debounced write cadence (§7.3 of the
+architecture record) exists precisely so that the write volume never approaches SQLite&rsquo;s limit,
+so SQLite&rsquo;s limit is not what binds — memory ownership is.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>One process. One instance. Always.</strong></p>
+<p>Not &ldquo;one process by default&rdquo; and not &ldquo;one process until you need more&rdquo;. There is no clustering
+code, no leader election, no sticky-session requirement to remember, and no configuration knob
+that would permit a second instance to start.</p>
+<p>The constraint is recorded in <code>AGENTS.md</code> rather than only here, because an agent reading the
+repository will not necessarily read a dated design record, and this is exactly the kind of
+constraint that looks like an oversight.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong>Deployment is one process behind whatever you already run.</strong> systemd, Docker, a reverse
+proxy — any of them, as long as there is one of them.</li>
+<li><strong>HTTP/2 is recommended, not required.</strong> The design record notes that the browser&rsquo;s ~6
+concurrent HTTP/1.1 connection ceiling per origin is what constrains concurrent SSE streams.
+HTTP/2 removes it. That is a deployment recommendation, not a code change.</li>
+<li><strong>No horizontal scaling without a shared broker.</strong> If a real deployment needs it, the broker
+comes <em>first</em> — before anything else — and it is a different architecture: the in-memory
+state moves behind it, or the authoritative model moves to a single designated writer with
+everyone else reading from it. Neither is a configuration change, and neither is additive to
+what is here.</li>
+<li><strong>A restart resumes from the last debounced state.</strong> The crash floor is roughly two seconds
+of gameplay. A table that restarts mid-combat resumes from the last write, which is the
+correct and acceptable trade for the simplicity.</li>
+<li><strong>Upgrades are stop-start.</strong> There is no rolling upgrade, because there is nothing to roll.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Run multiple instances with a shared SQLite file on a network filesystem.</strong> Rejected. SQLite&rsquo;s
+locking assumes a single host; over NFS or similar the locking guarantees do not hold, and the
+result is corruption rather than divergence — strictly worse.</p>
+<p><strong>PostgreSQL and move authoritative state into it.</strong> This removes the in-memory ownership and
+is the right answer at a much larger scale. Rejected for now on cost: an operator has to run
+and back up a second service, which breaks the one-process deployment story that is the
+product&rsquo;s premise. If a deployment outgrows one instance, this is the first option to revisit.</p>
+<p><strong>A shared state broker (NATS, Redis Streams) in front of one authoritative writer.</strong> The
+middle path: one writer owns state, replicas serve static content and proxy game traffic.
+Rejected as speculative — it is a real distributed-systems project with real failure modes, and
+building it before there is a deployment that needs it means building it untested against
+reality. It is named here so the next person to hit the ceiling starts from an answer rather
+than a search.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

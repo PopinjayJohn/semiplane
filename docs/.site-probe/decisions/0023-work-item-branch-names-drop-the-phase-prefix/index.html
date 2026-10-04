@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0023 — Work-item branch names drop the `phase/` prefix — semiplane</title>
+<meta name="description" content="A branch named `a/b` and a branch named `a/b/c` cannot both exist in git, so work-item branches are `NN-slug/&lt;work-item&gt;` rather than `phase/NN-slug/&lt;work-item&gt;`.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0023-work-item-branch-names-drop-the-phase-prefix/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0023 — Work-item branch names drop the `phase/` prefix — semiplane">
+<meta property="og:description" content="A branch named `a/b` and a branch named `a/b/c` cannot both exist in git, so work-item branches are `NN-slug/&lt;work-item&gt;` rather than `phase/NN-slug/&lt;work-item&gt;`.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0023-work-item-branch-names-drop-the-phase-prefix/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0023 — Work-item branch names drop the `phase/` prefix</h1>
+    <p class="lede">A branch named `a/b` and a branch named `a/b/c` cannot both exist in git, so work-item branches are `NN-slug/&lt;work-item&gt;` rather than `phase/NN-slug/&lt;work-item&gt;`.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p><code>AGENTS.md</code> documented the branch topology as:</p>
+<pre tabindex="0"><code>main
+└── phase/NN-slug
+    ├── phase/NN-slug/&lt;work-item&gt;
+</code></pre><p>It was in the plan, in <code>AGENTS.md</code>, and it looked obviously fine. Phases 0 and 1 both
+merged as a single branch with no children, so the topology was never exercised. Phase 2
+was the first phase to actually fan out, and the first <code>git branch</code> of a work item failed:</p>
+<pre tabindex="0"><code>fatal: cannot lock ref &#39;refs/heads/phase/02-identity/domain-types&#39;:
+&#39;refs/heads/phase/02-identity&#39; exists; cannot create
+&#39;refs/heads/phase/02-identity/domain-types&#39;
+</code></pre><p>This is not a permissions problem, a dirty repository, or a stale ref. Git stores a loose
+branch as a <strong>file</strong> whose path is the branch name, and packs loose refs otherwise. For
+<code>phase/02-identity</code> to exist, <code>refs/heads/phase/02-identity</code> is a regular file. For
+<code>phase/02-identity/domain-types</code> to exist, <code>refs/heads/phase/02-identity</code> must instead be a
+<strong>directory</strong> containing a file named <code>domain-types</code>.</p>
+<p>A single path cannot be both. Git enforces this rather than resolving it, and it is the
+same constraint that makes a tag <code>v1</code> and a tag <code>v1.1</code> mutually exclusive. <code>git branch</code>
+rejects the create; <code>git worktree add</code> propagates the same failure, which is what Agent
+Manager reported as a worktree creation failure.</p>
+<p>The <code>phase/</code> prefix was the only thing in the way. <code>refs/heads/phase</code> is a directory either
+way, and there is nothing wrong with nesting beneath it — the conflict is specifically
+between a branch and its own descendant.</p>
+<h2 id="decision">Decision</h2>
+<p>A work-item branch <strong>drops the <code>phase/</code> prefix</strong>:</p>
+<pre tabindex="0"><code>main
+└── phase/NN-slug                    one per phase, one PR to main
+    └── NN-slug/&lt;work-item&gt;          one per sub-agent, one PR to the phase branch
+</code></pre><p><code>phase/02-identity/domain-types</code> becomes <code>02-identity/domain-types</code>. The phase slug is
+still in the name, so the branch still sorts and reads as a child of its phase, and the
+&ldquo;cut from the phase branch, never from <code>main</code>&rdquo; rule is unchanged — it is a naming
+convention, not a ref-namespace workaround that changes where the commit comes from.</p>
+<p>The phase branch itself keeps the <code>phase/</code> prefix. It has no children, so it is
+unaffected.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>The topology in <code>AGENTS.md</code> and in the delivery plan is corrected. The plan is a dated
+record and is not edited; this record and the <code>AGENTS.md</code> correction are the correction.</li>
+<li><code>02-identity/...</code> and <code>phase/02-identity</code> share a slug but no ref path, so there is no
+conflict. Verified before adopting the name, not after.</li>
+<li>A reader comparing a branch name against the plan will see a difference. That is why
+<code>AGENTS.md</code> now says this in the topology section itself, with a link here, and why the
+rule says never to tidy the name back. A future agent that &ldquo;corrects&rdquo; the naming to
+match the older diagram reintroduces an outage that costs a full fan-out to discover.</li>
+<li>The cost is cosmetic: a work-item branch does not literally start with <code>phase/</code>, so a
+<code>git branch --list 'phase/*'</code> no longer finds work in progress. <code>git branch --list '*/&lt;slug&gt;/*'</code> does, and the phase branch remains the thing that merges to <code>main</code>.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Keep <code>phase/NN-slug/&lt;work-item&gt;</code> and rename the phase branches</strong> (for example
+<code>p02-identity</code>, or <code>02-identity</code> outright, dropping <code>phase/</code> everywhere). This removes the
+conflict too, and it is arguably more regular — one prefix rule instead of two. It was
+rejected because the phase branch names are already in <code>AGENTS.md</code>, in the delivery plan&rsquo;s
+thirteen-row phase table, in merged history, and in the branch-protection configuration a
+repository administrator has set up. Renaming the thing that actually merges to <code>main</code> is
+a much larger change than renaming the children, and the children are the part that has
+not shipped yet.</p>
+<p><strong>Nest one level deeper</strong> (<code>phase/NN-slug/children/&lt;work-item&gt;</code>). This works, because
+<code>phase/NN-slug/children/</code> never has to be a file. It was rejected as pure noise: the extra
+level encodes nothing, since the parent is already unambiguous from the phase slug.</p>
+<p><strong>Store the work-item branches only as remote refs, or use tags, or use a detached
+<code>HEAD</code> per worktree.</strong> All three dodge the namespace. All three were rejected: they make
+the work invisible to <code>git branch</code>, they lose the association with the phase branch, and
+the one-instance-per-worktree property that makes a worktree reviewable is exactly what
+the branch name is for.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

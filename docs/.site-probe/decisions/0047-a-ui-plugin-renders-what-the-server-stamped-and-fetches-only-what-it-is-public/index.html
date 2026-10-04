@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0047 — A UI plugin renders what the server stamped, and fetches only what is public — semiplane</title>
+<meta name="description" content="The two reference UI plugins, and the two boundaries that make them safe to ship. The dice roller renders the `Resolution` the hub returned and can roll nothing itself; the link preview reads only `http`/`https` URLs whose resolved address is public unicast, refuses every redirect hop on the same terms, and has no handle of any kind on campaign content. Both are declared inert until the pipeline and the composition root wire them.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0047-a-ui-plugin-renders-what-the-server-stamped-and-fetches-only-what-it-is-public/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0047 — A UI plugin renders what the server stamped, and fetches only what is public — semiplane">
+<meta property="og:description" content="The two reference UI plugins, and the two boundaries that make them safe to ship. The dice roller renders the `Resolution` the hub returned and can roll nothing itself; the link preview reads only `http`/`https` URLs whose resolved address is public unicast, refuses every redirect hop on the same terms, and has no handle of any kind on campaign content. Both are declared inert until the pipeline and the composition root wire them.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0047-a-ui-plugin-renders-what-the-server-stamped-and-fetches-only-what-it-is-public/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0047 — A UI plugin renders what the server stamped, and fetches only what is public</h1>
+    <p class="lede">The two reference UI plugins, and the two boundaries that make them safe to ship. The dice roller renders the `Resolution` the hub returned and can roll nothing itself; the link preview reads only `http`/`https` URLs whose resolved address is public unicast, refuses every redirect hop on the same terms, and has no handle of any kind on campaign content. Both are declared inert until the pipeline and the composition root wire them.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>[0042]({{ &ldquo;decisions/0042-the-plugin-registry-is-explicit-and-a-ui-plugin-can-only-emit-known-ops/&rdquo; | relURL }}) built the two registries and stated two gaps on their own types: a page type is unreachable until somebody mounts it, and a render hook is inert until <code>internal/content</code> asks the registry what it holds. It also said what a UI plugin is <em>handed</em> — a <code>Reader</code> and an <code>Emitter</code>, and nothing else — without naming a single plugin that ships.</p>
+<p>This record is about the two plugins that do ship, and about what happened when each one&rsquo;s obvious failure mode was written down first.</p>
+<p><strong>§10.6&rsquo;s roller row is &ldquo;renders the server&rsquo;s result&rdquo;</strong>, which is easy to satisfy wrongly. A form, a POST, a <code>dice.Request</code> — the path of least resistance ends with the handler rendering a number, and the number came from somewhere. The only place it can honestly come from is the hub: <code>realtime.Hub.Dispatch</code> resolves an intent against the campaign&rsquo;s system and returns a <code>Resolution</code> carrying a version. Rendering anything else is a number with no version beside it, which is a roll nobody can audit and nobody can re-derive. But §10.6 also says a UI plugin must be <em>deterministic</em>, and the two rules together look contradictory until you notice the resolution is the third thing: it is not local (the hub stamped it), and it is not non-deterministic (the system&rsquo;s own seeded source drew it).</p>
+<p><strong>§10.6&rsquo;s preview row is &ldquo;read-only; the rule data comes from a gameplay module, never from the UI&rdquo;</strong> — and read-only turns out to be the easy half. The hard half is that &ldquo;the URL a page linked to&rdquo; is attacker input arriving through Obsidian Sync, and a helper that fetched whatever it was handed would fetch <code>/c/greyhaven/wiki/Vault</code> and hand a private page&rsquo;s rendered HTML to whoever wrote the link. That is S-8&rsquo;s access matrix answered by a path that never went through a gate, and it needs no attacker at all: a GM pasting an internal link is enough. The same request against <code>http://169.254.169.254/</code> is the ordinary SSRF, and one against a name with an <code>A</code> record pointing at <code>10.0.0.5</code> is the same request wearing a name.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>The roller renders the <code>Resolution</code> and can roll nothing.</strong> <code>dice.Request.Frame()</code> builds a <code>*realtime.ClientIntent</code> with <code>Op: &quot;roll&quot;</code>, and the route hands it to <code>realtime.Hub.Dispatch</code> with an actor built by <code>realtime.NewActor</code> from <strong>gate-resolved access only</strong>. What is rendered is <code>dice.AnswerOutcome(resolution)</code>, reduced to the applied frame&rsquo;s own fields: <code>Seq</code>, <code>Placement</code>, <code>Version</code>, <code>Op</code>, <code>By</code>. There is no dice parser in this package and <code>crypto/rand</code> is nowhere in its import graph — asserted by a test that parses the source rather than by review, because &ldquo;I did not write a random source&rdquo; is exactly the claim a later contributor would break without noticing. The system&rsquo;s mutation payload is <strong>not</strong> read: a test plants <code>{&quot;last_roll&quot;:{&quot;total&quot;:413377}}</code> in the frame&rsquo;s <code>Args</code> and requires that nothing renders it, because S-12.3 and §10.6.1 both say the UI tier transports a system&rsquo;s opaque payload and never interprets it.</p>
+<p><strong>The one number on the page is the version, and the mutation was made by someone else&rsquo;s code.</strong> A refusal is a <strong>200 with the reason rendered</strong>, not a 4xx: the reader&rsquo;s action was understood and answered, and &ldquo;the Table declined&rdquo; is a result. <code>ReadRefusal</code> reads <strong>both</strong> shapes a refusal arrives in — the <code>realtime.ResolutionFor</code> frame and <code>plugin.RejectionError</code> — because ADR 0042&rsquo;s production resolver reports the latter and a reader that only knew the frame shape would render a fault page for every refusal a real build produces. That is a bug the tests found by construction, not by inspection, and it is why the fixture uses the real <code>plugin.Reject</code> rather than a hand-rolled error.</p>
+<p><strong>The preview&rsquo;s shape policy always applies; its address policy applies unless the caller supplied a transport.</strong> <code>checkURL</code> (scheme, host, credentials) runs for <strong>every</strong> caller, because nothing about it depends on the transport. <code>checkAddress</code> (a <em>typed</em> non-public address, refused before any I/O) and <code>dialPublicOnly</code> (a <em>name</em> that resolves to one, refused on the resolved address) run for <code>New()</code> — which is what <code>cmd/server</code> wires. <code>NewOver(client)</code> gives up both halves of the address policy and exists because a test needs an <code>httptest.Server</code>, which is on <code>127.0.0.1</code>. The switch is one field, read in one place, and the doc comment says which half a caller lost; a production caller using it has accepted that a link to <code>169.254.169.254/</code> would be fetched.</p>
+<p><strong>The refusal is on the resolved address, not the URL string, and every redirect hop is re-checked.</strong> <code>http://internal/</code> and <code>http://127.0.0.1/</code> and a public name resolving to <code>10.0.0.5</code> are four spellings of one request and only the last is distinguishable without resolving, so the hook is <code>Transport.DialContext</code> — the only place in <code>net/http</code> where the answer exists. The allowlist is positive: <code>IsGlobalUnicast</code> plus the explicit reserved-space predicates plus <code>100.64.0.0/10</code>, because a denylist of the addresses somebody has thought of becomes an SSRF the day the next range is reserved. <code>followRedirects</code> re-runs both checks per hop, because a <code>302</code> from a public host to the metadata address passes every check that ran before it.</p>
+<p><strong>The package holds no handle to campaign content.</strong> <code>Unfurler</code> has an <code>*http.Client</code> and two booleans; <code>Preview</code> is three strings, each one the <strong>remote</strong> page&rsquo;s own <code>title</code>, <code>og:description</code> and <code>og:image</code>. There is no parameter through which a caller could ask for a path, and a test parses the package&rsquo;s imports to prove there is no <code>*os.Root</code> — the claim as a type-graph property rather than as a review promise. The refusal carries <strong>no URL and no address</strong>: a link&rsquo;s target is author input and a refusal message is a log line, so <code>Class</code> reduces every error to one fixed word. Every refusal answers <strong>204 with no body</strong>, and the reason is that a 404 would tell a scanner which private addresses this instance will not reach — S-8&rsquo;s existence-oracle reasoning applied to the host rather than to a campaign.</p>
+<p><strong>The hook is total, and the degradation is the design.</strong> A render hook cannot fail — <code>templ.Component</code> has no error return — so a hook that fetched would have to swallow the refusal and render something. <code>Render</code> therefore takes an <strong>already-read</strong> preview and <code>Hook</code> takes none: the fetch and the render are separate calls, and &ldquo;the hook is total&rdquo; and &ldquo;a refusal is visible&rdquo; are both true because they are not the same function. Three states, and only the first two have an <code>href</code>: a preview in the payload names its own URL; with no preview and text that is itself an external URL, the anchor points at the text; with neither, the text renders as a <code>&lt;span&gt;</code>, because an <code>&lt;a href=&quot;&quot;&gt;</code> is a focus stop that announces a sentence and goes nowhere.</p>
+<p><strong>Plugin markup uses the shell&rsquo;s hand-written classes and no Tailwind utilities.</strong> <code>app.css</code>&rsquo;s <code>@source</code> globs cover <code>components/**</code>, <code>httpapi/**</code> and <code>domain/**</code> — <strong>not</strong> <code>web/plugins/**</code> — so a utility class in a plugin&rsquo;s template is a class the stylesheet never sees, and the page renders unstyled while every other gate passes. The plugins therefore compose <code>.stack</code>, <code>.card</code>, <code>.button</code>, <code>.form</code>, <code>.field</code>, <code>.notice</code>, <code>.target</code> and <code>.skip-link</code> from <code>shell.css</code>, and <code>.target</code> is read from <code>ui.TargetClass</code> rather than spelled, because the stylesheet decides what the class means and a second spelling would be a second answer to <code>--target-min</code>.</p>
+<p><strong>Every rule has a fixture that fails it, and the fixtures were checked by mutation.</strong> Eleven mutations were run: removing <code>dialPublicOnly</code> from the transport fails <code>TestNewBuildsATransportWithTheDialHookInstalled</code> and <code>TestTheDialHookRefusesEveryReservedRange</code>; dropping the CGNAT branch of <code>isPublic</code> fails three tests; dropping <code>resolveImage</code>&rsquo;s address branch fails <code>TestResolveImageAppliesTheURLPolicy</code> on loopback and the metadata endpoint; deleting either half of <code>ReadRefusal</code> fails <code>TestARefusalIsReadFromEitherShape</code> and four other tests; blanking <code>ui.TargetClass</code> fails the widget audit and the route audit; deleting the hook&rsquo;s <code>externalLink</code> gate fails <code>TestAPreviewForOneURLIsNeverRenderedBesideAnother</code>; reading a total out of the frame&rsquo;s <code>Args</code> fails <code>TestTheRenderedResultIsTheHubsFrame</code>; and forging the actor fails <code>TestTheActorCannotBeForgedFromRequestBytes</code> and <code>TestTheRouteAppliesNoRoleListOfItsOwn</code>. Two mutations found real gaps and were fixed: the class check was <code>strings.Contains(attr, &quot;target&quot;)</code>, which passes on <code>class=&quot;untargeted&quot;</code>, and the name audit did not exist.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>Three seams outside this work item&rsquo;s paths, and a reader who assumes they are wired will find inert code.</strong> <code>RenderHook</code> has <strong>no call site</strong>: nothing in <code>internal/content</code> asks the registry for a hook, so the link preview&rsquo;s card appears on no page until the pipeline&rsquo;s owner wires it. That is ADR 0042&rsquo;s stated gap, still open, and the hook&rsquo;s contract is chosen to be safe while inert — the degradation above is what makes registering it early correct rather than premature. Second, <code>internal/httpapi/router.go</code> must call <code>pluginsroutes.Mount</code> inside <code>mountCampaignRoutes</code>, with the patterns <strong>derived from the registry</strong> rather than written a second time; a route written in both places is a route that can be changed in one of them, which is the stylesheet-import failure in a URL. Third, <code>cmd/server</code> must build <code>Handler.UI</code>, <code>Handler.Hub</code>, <code>Handler.Preview</code> and <code>Handler.Systems</code> — and <code>Systems</code> is the one worth arguing for, because it is what makes the roller display the campaign&rsquo;s <strong>own</strong> notation (§10.4) rather than a hardcoded one, and a campaign whose system is missing renders without notation rather than with the wrong notation.</p>
+<p><strong><code>app.css</code> needs one more <code>@source</code> glob for <code>web/plugins/**</code>, and that edit belongs to the integrator.</strong> Until it exists, the plugins are correct and unstyled-by-utility, which is a state no gate catches — the same failure mode as the missing stylesheet import, one layer up. The classes in use are all already defined, so the route renders correctly today; the glob is what lets a <em>future</em> plugin use a utility without a page that looks unstyled.</p>
+<p><strong>The a11y claim is the work item&rsquo;s own, and the guard cannot enforce it for a route package that is not listed.</strong> <code>A11Y_ROUTE_PKGS</code> is a <code>$(wildcard …)</code> over four named directories, so creating <code>internal/httpapi/plugins/</code> did <strong>not</strong> add it — an explicit list plus a wildcard over nothing. The package ships six tests matching <code>A11Y_TESTS</code> (<code>EveryRoute*</code>, <code>SkipLink</code>, <code>Target</code>) with the three negative controls AGENTS.md requires: each audit is run over a fixture built to violate exactly that rule and must report something <strong>that mentions the thing it is about</strong>; each is run over a document it is satisfied with and must be silent; and each must pass over the route&rsquo;s three real documents. Adding the package to <code>A11Y_ROUTE_PKGS</code> is a Makefile edit, which is the integrator&rsquo;s.</p>
+<p><strong>Notation is the system&rsquo;s answer, and its absence is not an error.</strong> <code>Handler.Systems</code> is a <code>func(campaignID) rules.System</code> rather than a registry, because the question is per-campaign. <code>dnd5e</code> supplies the grammar; a campaign whose system is not registered renders the roller with no notation and a page that is still correct, because a wrong notation is worse than none.</p>
+<p><strong>Two copy decisions are load-bearing and are stated where they are made.</strong> The refusal copy says &ldquo;the Table&rdquo; and never &ldquo;the world&rdquo; or &ldquo;the session&rdquo; — the vocabulary audit walks the parsed tree including comments and attribute <em>names</em>, so a retired word in a <code>data-</code> attribute fails the same test as one in prose. And the preview&rsquo;s image carries <code>referrerpolicy=&quot;no-referrer&quot;</code> while the anchor does not: the image is fetched without the reader asking, which would otherwise send a private campaign&rsquo;s page URL as the <code>Referer</code>, and a reader who follows the link should still send a referrer to a site they chose to visit.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Let the roller compute the total.</strong> Rejected, and the reason §10.6&rsquo;s row is a rule at all: a total this process invented has no version beside it, so a disputed roll cannot be reconstructed and a GM cannot tell a recorded roll from a displayed one. The test that plants a total in the frame&rsquo;s <code>Args</code> and requires it to stay unread is the direct expression of that.</p>
+<p><strong>Check the preview&rsquo;s URL string and skip the dial hook.</strong> Rejected: a name is attacker input, <code>internal.example.com</code> is as likely to be a name as an address, and <code>CheckRedirect</code> alone is the classic bypass — a <code>302</code> to a private address passes every check that ran before the hop. The cost is stated rather than hidden: a check at the dial cannot refuse a <em>name</em> before it is resolved, so a hostile name still costs one DNS lookup. That is name resolution, not a fetch of the target, and it is the price of not shipping a resolver-based bypass.</p>
+<p><strong>Refuse a same-origin link by comparing hosts in the handler.</strong> Rejected: the route package would need to know its own externally-visible host, which is behind a reverse proxy in the ordinary self-hosted deployment, and <code>http://localhost:8080</code> and <code>http://127.0.0.1:8080</code> are two spellings of one host. Refusing at the dial covers every spelling, and covers the metadata address and the RFC 1918 ranges with the same code.</p>
+<p><strong>Render a preview card and hide it when the fetch failed.</strong> Rejected: <code>templ.Component</code> cannot fail, so a fetching hook has to swallow the refusal — and swallowing means the page cannot distinguish &ldquo;this link has no preview&rdquo; from &ldquo;this link was refused&rdquo;, which is precisely the disclosure S-12.3 forbids. Splitting <code>Render</code> from <code>Unfurl</code> means the refusal reaches a log and the reader gets a plain link.</p>
+<p><strong>Write the plugins as <code>.templ</code> files in <code>internal/web/components</code>.</strong> Rejected: <code>internal/web/components/**</code> is not this work item&rsquo;s, and a plugin is not a shell primitive — it is compiled in, it renders inside somebody else&rsquo;s document, and it has no shell document of its own. <code>html/template</code> inside <code>internal/web/plugins/</code> keeps the plugin&rsquo;s markup and its claims in one directory, and the <code>templ.Component</code> it returns is the same type the registry holds either way.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0032 — Six signals beyond the architecture record&#39;s list — semiplane</title>
+<meta name="description" content="§13.2 fixes the observability contract and phase 4 adds six names to it, because the alternative was a hole in S-12.3 rather than a smaller surface.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0032-index-signals-beyond-the-architecture-list/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0032 — Six signals beyond the architecture record&#39;s list — semiplane">
+<meta property="og:description" content="§13.2 fixes the observability contract and phase 4 adds six names to it, because the alternative was a hole in S-12.3 rather than a smaller surface.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0032-index-signals-beyond-the-architecture-list/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0032 — Six signals beyond the architecture record&#39;s list</h1>
+    <p class="lede">§13.2 fixes the observability contract and phase 4 adds six names to it, because the alternative was a hole in S-12.3 rather than a smaller surface.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#why-typed-given-that-this-is-a-record-about-event-names">Why typed, given that this is a record about event names</a></li>
+        <li><a href="#why-five-and-why-op-is-not-part-of-the-name">Why five, and why <code>op</code> is not part of the name</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The
+[architecture overview]({{ &ldquo;design/architecture/&rdquo; | relURL }}) §13.2 fixes the
+observability contract: a set of named signals, with three never below error, and the rule that
+every event carries <code>campaign_id</code> and, where applicable, <code>path</code>, and <strong>no event carries secret
+content, file contents, or dice results</strong> (S-12.3).</p>
+<p>Phase 4 builds the page indexer, which fails in ways §13.2 does not name. A settled change cannot
+be applied. A file the walk found is not in the index. A page is indexed but its front matter did
+not interpret. A rename left the old row behind. A directory rename moved a subtree.</p>
+<p>Three answers were available, and two of them are the ones a reader would expect.</p>
+<p><strong>Emit nothing.</strong> The indexer would be the one subsystem in the content pipeline with no
+telemetry, in a project whose stated position is that &ldquo;something stopped working and the process
+still answers <code>/healthz</code>&rdquo; is the failure mode that matters. The four cases above are all instances
+of exactly that: a GM saves a page, the save returns 200, and the page is absent from search until
+the next rescan. From outside, that is indistinguishable from a save that worked.</p>
+<p><strong>Fold them into the §13.2 names.</strong> <code>index.change_failed</code> becomes <code>content.render_error</code>, which is
+the closest fit and is wrong: it reports that a page would not render, when in fact the page
+renders perfectly and the <em>index</em> is behind. A signal whose name misdescribes its cause is worse
+than a missing one, because it sends an operator to look at the renderer.</p>
+<p><strong>Add to the list.</strong> This is a deviation from a published record.</p>
+<h2 id="decision">Decision</h2>
+<p>Six event names are added, and the deviation is recorded here rather than by editing §13.2.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Name</th>
+					<th>Level</th>
+					<th>Counted</th>
+					<th>Meaning</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>index.change_failed</code></td>
+					<td>error</td>
+					<td>yes</td>
+					<td>A settled change could not be applied</td>
+			</tr>
+			<tr>
+					<td><code>index.page_skipped</code></td>
+					<td>warn</td>
+					<td>yes</td>
+					<td>A file the walk found is not in the index</td>
+			</tr>
+			<tr>
+					<td><code>index.page_degraded</code></td>
+					<td>warn</td>
+					<td>yes</td>
+					<td>Indexed, but its front matter was inert (S-3.3)</td>
+			</tr>
+			<tr>
+					<td><code>index.rename_source_left</code></td>
+					<td>warn</td>
+					<td>yes</td>
+					<td>A rename left the old row; the prune removes it</td>
+			</tr>
+			<tr>
+					<td><code>index.renamed</code></td>
+					<td>debug</td>
+					<td>no</td>
+					<td>A subtree moved; routine work</td>
+			</tr>
+	</tbody>
+</table>
+<p>And one on the watcher&rsquo;s side, added by the same phase for the same reason:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Name</th>
+					<th>Level</th>
+					<th>Counted</th>
+					<th>Meaning</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>content.settle_failed</code></td>
+					<td>warn</td>
+					<td>yes</td>
+					<td>The settle filter could not <code>stat</code> a path for a reason other than its absence</td>
+			</tr>
+	</tbody>
+</table>
+<p>That one is worth its own paragraph, because it is the case where the alternative was
+the worst kind of quiet. S-4.3&rsquo;s confirmation requires two <code>stat</code> samples, and a <code>stat</code>
+fails for three different reasons that must not be confused: <strong>the path is gone</strong> (a
+settled removal, delivered as <code>OpRemove</code>), <strong>the path cannot be read</strong> (a permission
+change, an EIO, a mount that vanished), and the second is <em>not</em> a removal. Treating them
+as the same thing means a page silently stops being indexed and nothing in the log says
+so — which from outside is indistinguishable from a vault nobody is editing. The
+settle filter reports the second case and drops the path; the next rescan repairs it.</p>
+<p>The deviation is accepted on two conditions. First, every one of them is emitted through
+<code>observability.Index</code>, a typed surface in the one package that decides what a log line may carry —
+<strong>not</strong> through <code>slog</code> at the call site. Second, the decision is visible in one more place: the
+<code>AllEventNames</code> list and its test, which is a deliberate count rather than a set, so a sixth
+addition without a record fails the build.</p>
+<h3 id="why-typed-given-that-this-is-a-record-about-event-names">Why typed, given that this is a record about event names</h3>
+<p>The indexer was written first, against no such surface, and it emitted through <code>slog</code> at seven call
+sites. That works, and it is how this repository&rsquo;s other signals were written before
+<code>internal/observability</code> existed. It is also the hole S-12.3 is written against.</p>
+<p><code>EventAttributes</code> exists so that there is no field a page body could be passed through. A call site
+that logs directly has <code>slog.Any</code> and <code>slog.String</code> and no such constraint — <code>slog.Any(&quot;detail&quot;, raw)</code> compiles, ships, and carries a <code>[!secret]</code> callout body into a log aggregator, which is the
+one thing S-12.3 forbids. A record that said &ldquo;add these five names, wherever convenient&rdquo; would have
+recorded the hole rather than closed it. Emitting them through the surface is the condition that
+makes them safe, so it is part of the decision rather than an implementation detail of it.</p>
+<h3 id="why-five-and-why-op-is-not-part-of-the-name">Why five, and why <code>op</code> is not part of the name</h3>
+<p>The indexer distinguishes seven internal failure shapes and emits five signals. The difference is
+that the operation is an <strong>attribute</strong> on <code>index.change_failed</code>, not part of its name: a remove that
+failed and a rename that failed are one signal an operator alerts on.</p>
+<p>The alternative — a name per failure shape — makes the <em>dashboard</em> the unit of counting. The
+question an operator actually has is &ldquo;is the index keeping up&rdquo;, and seven counters that each answer
+&ldquo;did this one thing happen&rdquo; is seven queries to answer it, with the failure mode that the seventh
+is the one that is broken.</p>
+<p><code>index.renamed</code> is the fifth and the only uncounted one. It is routine work: a sync client moving a
+directory is the indexer succeeding. Were it counted it would share a panel with the four failures,
+and a rising line would mean two opposite things depending on which of the five it was.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>S-12.3 holds for these signals by construction, not by review.</strong> <code>observability.Index</code> classifies
+the error rather than logging its text — <code>errorClass</code> reduces an error to a sentinel name, an errno,
+or a dynamic type — because a Markdown or YAML parser quotes the line it choked on, and on a wiki
+page that line is routinely a <code>[!secret]</code> callout body. <code>TestIndexNeverCarriesFileContents</code> asserts
+this through every emitter, including an <code>*fs.PathError</code> whose <code>Path</code> field is the page body,
+which is the shape most likely to leak.</p>
+<p><strong>The <code>event</code> key gains five values.</strong> Anything matching on <code>event</code> must tolerate them. Nothing in
+the repository does; the counters are rendered on <code>/readyz</code> and nothing parses them yet.</p>
+<p><strong><code>AllEventNames</code> is now 23, of which 18 are §13.2&rsquo;s.</strong> The count is asserted in a test, and
+<code>TestAllEventNamesAreUniqueAndComplete</code> is the only place a deviation from this record becomes
+visible to a build.</p>
+<p><strong>A caller wanting a new index signal must come back here.</strong> That is the cost, and it is the point:
+the list is short because adding to it is visible.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>No new names; emit through <code>slog</code> at the call site.</strong> Rejected. It is what the indexer did first,
+and it puts S-12.3 outside the type that enforces it. The observable failure is a log aggregator
+holding secret callout bodies, which is the one consequence this project calls release-gating
+(architecture §12, §14).</p>
+<p><strong>Reuse <code>content.render_error</code> for every index failure.</strong> Rejected above: the name misdescribes the
+cause and sends an operator to the renderer instead of the index.</p>
+<p><strong>One <code>index.failed</code> for all five cases.</strong> Rejected. It merges &ldquo;a write returned 200 and never
+reached the index&rdquo; with &ldquo;one file in a vault of five hundred is over the size cap&rdquo;, and they want
+opposite responses: the first is an incident, the second is a vault to look at. Merging them also
+means a dashboard cannot separate them, which is the argument above.</p>
+<p><strong>Amend §13.2 itself.</strong> Not available. The design records are immutable and this plan follows that
+rule; see the &ldquo;Known staleness&rdquo; list in the
+[design records index]({{ &ldquo;design/&rdquo; | relURL }}), which exists for exactly this.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

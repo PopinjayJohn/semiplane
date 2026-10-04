@@ -15,6 +15,7 @@ import (
 	playroutes "github.com/semiplane/semiplane/internal/httpapi/play"
 	pluginroutes "github.com/semiplane/semiplane/internal/httpapi/plugins"
 	searchroutes "github.com/semiplane/semiplane/internal/httpapi/search"
+	secretroutes "github.com/semiplane/semiplane/internal/httpapi/secrets"
 	themeroutes "github.com/semiplane/semiplane/internal/httpapi/theme"
 	wikiroutes "github.com/semiplane/semiplane/internal/httpapi/wiki"
 	"github.com/semiplane/semiplane/internal/observability"
@@ -113,6 +114,7 @@ func NewRouter(
 	playRoute *playroutes.Handler,
 	pluginRoute *pluginroutes.Handler,
 	themeRoute *themeroutes.Handler,
+	secretRoute *secretroutes.Handler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
@@ -153,7 +155,7 @@ func NewRouter(
 	mountCampaignRoutes(
 		campaignMux,
 		wikiRoute, assetRoute, searchRoute, editRoute, eventsRoute, playRoute,
-		pluginRoute, themeRoute,
+		pluginRoute, themeRoute, secretRoute,
 	)
 
 	if backing != nil {
@@ -248,6 +250,7 @@ func mountCampaignRoutes(
 	playRoute *playroutes.Handler,
 	pluginRoute *pluginroutes.Handler,
 	themeRoute *themeroutes.Handler,
+	secretRoute *secretroutes.Handler,
 ) {
 	if wikiRoute != nil {
 		wikiroutes.Mount(mux, wikiRoute)
@@ -275,6 +278,20 @@ func mountCampaignRoutes(
 
 	if pluginRoute != nil {
 		pluginroutes.Mount(mux, pluginRoute)
+	}
+
+	// The reveal endpoint. **After `editRoute` and not beside it**, and the reason
+	// is that it is the one campaign route that is not a page read or a page save:
+	// it writes a one-byte disclosure and records who made it, so it carries its own
+	// authorization story and its own audit trail rather than the editor's. Placing
+	// it next to `editRoute` would invite a reader to assume they are the same
+	// write, and they are not — `editRoute` moves a whole document under `If-Match`,
+	// and this route moves one byte and touches `secrets_revealed`.
+	//
+	// Nil-tolerant like every route above it, so a caller that does not build a
+	// ledger does not have to build a handler.
+	if secretRoute != nil {
+		secretroutes.Mount(mux, secretRoute)
 	}
 
 	// Last, and the order is documentation rather than behaviour — `net/http`'s

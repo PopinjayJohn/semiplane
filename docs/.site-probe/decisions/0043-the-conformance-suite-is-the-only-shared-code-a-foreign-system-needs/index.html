@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0043 — The conformance suite is the only shared code a foreign system needs — semiplane</title>
+<meta name="description" content="`internal/domain/rules/conformance` is a published suite every `rules.System` must pass, taking a `rules.System` and four explicit seams and nothing else; `internal/domain/systems/notfive` is a complete system sharing nothing with 5e, and three AST audits make that claim falsifiable rather than documented.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0043-the-conformance-suite-is-the-only-shared-code-a-foreign-system-needs/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0043 — The conformance suite is the only shared code a foreign system needs — semiplane">
+<meta property="og:description" content="`internal/domain/rules/conformance` is a published suite every `rules.System` must pass, taking a `rules.System` and four explicit seams and nothing else; `internal/domain/systems/notfive` is a complete system sharing nothing with 5e, and three AST audits make that claim falsifiable rather than documented.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0043-the-conformance-suite-is-the-only-shared-code-a-foreign-system-needs/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0043 — The conformance suite is the only shared code a foreign system needs</h1>
+    <p class="lede">`internal/domain/rules/conformance` is a published suite every `rules.System` must pass, taking a `rules.System` and four explicit seams and nothing else; `internal/domain/systems/notfive` is a complete system sharing nothing with 5e, and three AST audits make that claim falsifiable rather than documented.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>§10.4 makes the generalisation claim in one sentence — <em>&ldquo;a plugin sharing nothing
+with 5e — say Pathfinder — ships one complete standalone pack and its own resolver
+hooks, and implements <code>System</code> without touching <code>internal/domain/rules</code>, the engine, or
+semiplane itself. The only shared code is the interface, the intent and mutation types,
+and the shared conformance suite (§14)&rdquo;</em> — and S-14.9 turns it into the requirement that
+decides whether phase 8 generalised or merely grew:</p>
+<blockquote>
+<p><strong>A system sharing nothing with 5e passes the conformance suite without touching
+<code>internal/domain/rules</code>. This is the test that proves the plugin system generalises.</strong></p>
+</blockquote>
+<p>The half of that sentence which is easy is the second one. A suite that takes a
+<code>rules.System</code> and asserts five properties is straightforward to write, and it is the kind
+of code that reads as generalisation while proving nothing: run it against a 5e engine
+once and it is green, and a reviewer has no way to tell whether the suite is general or
+merely familiar. The two ways it goes wrong are both invisible. A suite can hold helpers
+the 5e engine happens to use — a <code>Context</code> accessor nobody else can, a helper in
+<code>rules</code> that only makes sense for d20 — and a system that shares nothing with 5e will not
+be able to call them, so the suite would not even be <em>runnable</em> on the case it was written
+for. Or a suite can be right in general and wrong in detail, catching the five properties
+in the shapes the first system happened to have.</p>
+<p>Both are the failure this repository has already paid for three times, in
+<code>make a11y</code>: the wiki route held 23 tests and the assets route 49, not one of them a
+§10.2 audit, and the gate was green because <code>A11Y_PKGS</code> named three packages and
+<code>go test -run</code> exits 0 when the pattern matches nothing. The lesson recorded in
+<code>AGENTS.md</code> is not &ldquo;write the tests&rdquo;. It is that <strong>a test&rsquo;s name is what makes the gate
+find it</strong>, and that renaming one to match a pattern is not the fix — so this work item&rsquo;s
+first question was not what to assert but how an assertion that <em>cannot fail</em> would be
+told apart from one that can.</p>
+<p>Three constraints shape what follows, and two of them come from
+[0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }}).</p>
+<p><strong>The contract&rsquo;s shape is settled and this work item cannot change it.</strong> <code>Apply</code> returns
+<code>[]Mutation</code> and takes the state by value; <code>Context</code> is four fields; <code>Validate</code> is a
+function. The suite is typed against that shape and adds nothing to it, which is what
+makes it possible to write without touching <code>internal/domain/rules</code>.</p>
+<p><strong>Four of §14&rsquo;s five properties cannot be observed from a <code>rules.System</code> alone</strong>, and this
+is the constraint the design turns on. Determinism, panic containment and unknown-<code>kind</code>
+tolerance are observable — the suite resolves an intent and compares. §7.2&rsquo;s GM-only rule
+is not: <em>which</em> operations are GM-only is a system&rsquo;s own answer, and the contract has no
+opinion (<code>rules.Op</code> is a string precisely so §10.2&rsquo;s &ldquo;a gameplay plugin defines the
+operation vocabulary&rdquo; is true). And §10.8&rsquo;s <code>ruleset_version</code> row is not observable at all:
+whether a campaign may resume is a <em>deployment&rsquo;s</em> decision, because the fingerprint
+encoding is <code>realtime</code>&rsquo;s and the column is <code>campaigns.ruleset_version</code>, and a campaign-level
+rule about it belongs in
+[0018]({{ &ldquo;decisions/0018-ruleset-version-fingerprint/&rdquo; | relURL }}) rather than in a rule
+resolution.</p>
+<p><strong>The wire vocabulary is <code>realtime</code>&rsquo;s and <code>domain</code> cannot reach it.</strong> <code>internal/domain</code>
+imports nothing from the project and <code>realtime</code> owns a database. §7.2&rsquo;s rule is not &ldquo;refuse
+a player&rdquo; — it is &ldquo;refuse a player in a way the client can be told&rdquo;, and the word is
+<code>not_permitted</code>, which <code>realtime.Core</code> orders ahead of <code>unknown_op</code> deliberately because the
+second answers &ldquo;is anything allowed&rdquo; about the server rather than &ldquo;is this allowed&rdquo; about
+the player, and on the wire that ordering is a role oracle anybody on the campaign can read.
+A suite that cannot name a wire word cannot check that ordering.</p>
+<h2 id="decision">Decision</h2>
+<p><strong><code>internal/domain/rules/conformance</code> is the suite, and its API is a <code>rules.System</code> plus
+four seams. <code>Config</code> takes those four and nothing else.</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Seam</th>
+					<th>What it is</th>
+					<th>Why the suite cannot do it</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>Scenario</code></td>
+					<td>one typical resolution: the tabletop, the intent, the rule context</td>
+					<td>a system&rsquo;s <code>Args</code> are its own encoding; the suite would have to know it</td>
+			</tr>
+			<tr>
+					<td><code>GMOnly</code></td>
+					<td>the ops §7.2 reserves to the GM, <strong>required non-empty</strong></td>
+					<td>§10.2 makes the vocabulary the system&rsquo;s answer, not the contract&rsquo;s</td>
+			</tr>
+			<tr>
+					<td><code>Classify</code></td>
+					<td>the composition root&rsquo;s error → wire-word map</td>
+					<td><code>realtime.RejectReason</code> is eight words on a wire this package cannot import</td>
+			</tr>
+			<tr>
+					<td><code>Resume</code></td>
+					<td><code>Fingerprint(system, house)</code> and <code>Check(system, house, persisted)</code></td>
+					<td>the encoding is <code>realtime</code>&rsquo;s and the column is a store column</td>
+			</tr>
+	</tbody>
+</table>
+<p>The set is <strong>closed at four, and that is the whole design.</strong> A fifth seam is what a suite
+grows when it starts guessing instead of asking, and every guess is a rule a foreign system
+cannot act on. The suite&rsquo;s stance is the opposite: it asserts only what the interface can
+promise and takes everything else as an argument. A knob that can be left at its zero value
+is a knob that will be, and a suite that passes on defaults is a suite nobody has
+configured.</p>
+<p><strong>A suite that could find nothing is refused rather than run.</strong> <code>New</code> returns
+<code>ErrNoGMOnlyOps</code> for an empty <code>GMOnly</code>, <code>ErrNoScenario</code> for a tabletop with no content or
+an intent the wire would never have produced, <code>ErrNoClassify</code> and <code>ErrNoResume</code> for the
+missing seams, and <code>ErrGMOnlyScenario</code> when the scenario&rsquo;s own operation is also declared
+GM-only — which would make the role audit require one resolution to be both refused and
+allowed. All of them satisfy the <code>ErrIncompleteSuite</code> umbrella, so an author wiring a suite
+asks one question. <code>Runs</code> is the exception and it is <strong>a constant, not a field</strong>: S-14.6
+names one hundred, a <code>Config</code> field would be one an author sets to two to make a flaky test
+pass, and the failure that hides is the one the audit exists for.</p>
+<p><strong>Two of the five audits assert a property of the <em>configuration</em> rather than of the
+system, and say so.</strong> The determinism audit refuses to certify a scenario that produces no
+mutation, because a resolution that changes nothing is reproducible whether or not the
+resolver is deterministic. The role audit builds its probe intents <strong>with no arguments</strong>
+and checks the GM run for <em>not</em> saying <code>not_permitted</code> rather than for succeeding, because
+the suite cannot build a valid intent for an op whose parameters only that system
+understands — demanding success would be demanding a second fixture per GM-only op, and
+demanding that the role is what decides is the claim itself.</p>
+<p><strong>The containment boundary is production code that lives here, and the audit that certifies
+it induces the panic itself.</strong> <code>Contain</code> is the <code>recover()</code> §10.8&rsquo;s table requires, and the
+composition root&rsquo;s adapter should call it rather than write a sixth copy. It is in the
+suite because the only system that will panic on request is one the suite broke itself, and
+a boundary whose behaviour is only ever exercised by its author&rsquo;s good behaviour is a
+boundary that has never been tested: <code>recover</code> would be a line nothing ever reached, and
+deleting it would change no test&rsquo;s outcome. The probe is the system under certification
+with <code>Apply</code> replaced, which is also the most honest fixture available — a plugin shipping a
+data pack it did not validate is exactly that, with everything else correct. The audit
+policies its own fixture: a probe that stopped panicking would produce a finding rather
+than a pass.</p>
+<p><strong>The two refusals of §10.8&rsquo;s table are told apart by interchangeability, and the check
+includes the root.</strong> A handler routes a refusal with <code>errors.Is</code> and nothing finer, so two
+refusals a handler cannot separate are two refusals a GM cannot be told apart, whatever
+their messages say. <code>errors.Is</code> in one direction is not enough, because the drift error here
+is the whole message-bearing error rather than a sentinel, and a deployment wrapping one
+sentinel in two different sentences would pass a comparison no handler could make. So the
+deepest error each wraps is compared as well: <code>realtime</code> answers with a <code>*DriftError</code>,
+which has an <code>Is</code> and no <code>Unwrap</code>, against something wrapping <code>ErrRulesetUnreadable</code>, and
+those are different objects; a deployment answering both with <code>ErrRulesetDrift</code> has the same
+root twice.</p>
+<p><strong>The wire&rsquo;s eight words are copied, and the audit claims membership rather than
+equality.</strong> The words are restated in the suite because <code>domain</code> imports nothing from the
+project and <code>realtime</code> owns a database — and the claim is deliberately weaker than a mirror
+would be: every refusal has to map into a word this package <em>knows</em>, not that the word is
+one <code>realtime</code> has. A plugin whose errors map to <code>not_permitted</code>, <code>invalid_args</code> or
+<code>no_such_placement</code> passes even after a ninth word is added upstream, because the adapter the
+author already wrote does the mapping. What fails is an error that becomes its own sentence,
+which no client can be told and which quotes whatever the system choked on. A suite asserting
+set equality would fail every plugin&rsquo;s certification for a reason no plugin could act on;
+that asymmetry is the design.</p>
+<p><strong><code>internal/domain/systems/notfive</code> is the counterexample, and it is a loom.</strong> Spools of
+thread, <code>spin</code> / <code>weave</code> / <code>dye</code> with <code>unwind</code> and <code>recut</code> reserved to the GM, a <code>2x12</code>
+notation, content kinds <code>spool</code> / <code>bolt</code> / <code>dye_lot</code>, and a payload of two structs. No d20,
+no ability scores, no conditions, no data pack, no engine. It <strong>draws</strong> — every operation
+takes its number from <code>call.Rand</code> under a label derived from the operation and the target —
+because a system with no randomness would pass S-14.6 trivially and the determinism audit
+over it would prove nothing. Its only draw is an <em>index into a declared palette</em>, which is
+§10.3&rsquo;s &ldquo;the protocol never assumes d20&rdquo; demonstrated rather than asserted.</p>
+<p><strong>S-14.9 is falsifiable in three separate ways, because they fail differently.</strong></p>
+<ol>
+<li><strong>The import set is exact and closed</strong>, every entry with the reason it is permitted
+rather than merely allowed. Closed because an allowlist would still admit a 5e package
+the day one exists; a closed set admits nothing until somebody edits the table, and the
+edit is a review comment about a counterexample to S-14.9. The audit is over <strong>parsed</strong>
+imports, not the file&rsquo;s text, because <code>math/rand/v2</code> and <code>math/rand</code> are one character
+apart. It runs over the whole package&rsquo;s non-test files, because a dependency split across
+two files is one dependency and a per-file audit certifies whichever file is short. It also
+objects to a <em>permitted</em> import the file never uses, because the table is a claim about
+what this package needs.</li>
+<li><strong>Every <code>rules.X</code> selector is on an allowlist</strong> of what implementing nine methods
+requires. Imports are a coarse instrument: importing something and not using it satisfies
+them, and what a shared assumption looks like is a selector. The base of a selector chain
+is resolved, so a method expression such as <code>rules.Context.Rand</code> — which parses as a
+selector whose <code>X</code> is another selector — is seen rather than walked past.</li>
+<li><strong>No identifier and no string literal carries 5e&rsquo;s vocabulary.</strong> Fragments, matched
+case-insensitively with separators removed, because the vocabulary&rsquo;s whole problem is that
+it arrives in every spelling a Go identifier can take. <strong>Comments are excluded, and the
+exclusion is a decision with a test in both directions</strong> — the package&rsquo;s comments are full
+of &ldquo;not a d20 system&rdquo;, and a comment is documentation rather than vocabulary in use.</li>
+</ol>
+<h2 id="consequences">Consequences</h2>
+<p>A system author outside this repository writes one test, supplies four seams, and is
+certified. <code>notfive</code>&rsquo;s test is the worked example, and it is the file to copy.</p>
+<p>Every audit is reachable one at a time — <code>Suite.Determinism</code>, <code>Suite.UnknownKind</code>,
+<code>Suite.Version</code>, <code>Suite.Role</code>, <code>Suite.Containment</code> — which is what an author uses to pin one
+in a focused test and what the suite&rsquo;s own meta-test uses to prove each can fail. That
+meta-test requires <strong>both</strong> halves per row: the broken configuration produces a finding <em>and
+every finding it produces is that audit&rsquo;s</em>, and the intact configuration produces none. The
+second half is the one that does the work; without it, every row would pass just as happily
+against a suite that rejected everything.</p>
+<p><strong>Three of this item&rsquo;s tests did not fail when the thing they guard was broken, and each
+produced a change.</strong> Mutation verification is not a formality here; it found the argument for
+three of the five audits&rsquo; teeth, and the reasons are the reasons this repository keeps
+relearning. Reducing <code>Runs</code> to two survived, because the fixture — a resolver carrying its
+own <code>*rand.Rand</code> — diverges on the <em>second</em> call, so an audit comparing two runs would catch
+it; the fixture that makes the number executable is one that agrees for two resolutions and
+diverges on the third. Removing the role audit&rsquo;s requirement that a player&rsquo;s refusal map to
+<code>not_permitted</code> survived, because the fixtures broke the role in the two directions that
+produce <em>no</em> refusal at all and none that produce the <em>wrong word</em>; the oracle case needed
+its own fixture. And removing the containment boundary&rsquo;s discard of a failed resolution&rsquo;s
+mutations survived, because the branch was <strong>dead code</strong>: <code>mutations</code> is only ever assigned
+by the one statement at the bottom of <code>Resolve</code>, so a panic cannot leave a partial list in
+it and an error was already answered with <code>nil</code>. It is deleted rather than kept as a
+belt-and-braces a reader cannot point at, and the two paths that <em>can</em> be broken each have a
+test that turns red when they are.</p>
+<p>The state-identity assertion is a <strong>guard on another package</strong>, and it is the one place this
+work item verifies a mutation in code it does not own. <code>Apply</code> returns its changes, the state
+arrives by value and <code>rules.State</code> keeps its fields unexported, so a resolver that writes to
+every object it reads corrupts nothing — which is S-10.2, holding because of a <em>type</em>. The
+cost of a type-level guarantee is that an edit to the type can undo it with nothing here
+noticing, so <code>TestAScribblingResolverChangesNothingItWasHanded</code> exists and was verified by
+neutering <code>cloneObject</code> in <code>internal/domain/rules/state.go</code>: the test goes red and nothing
+else does. That mutation is applied, run and reverted; <code>rules</code> is not this item&rsquo;s file.</p>
+<p><strong>There is a second boundary, and it disagrees with this one about the panic&rsquo;s value.</strong>
+P1b&rsquo;s <code>internal/plugin</code> landed a <code>recover()</code> of its own in <code>settle</code>, and it is the right
+one to be there — it is wider than <code>Contain</code> (it also contains a codec panic) and it records
+the recovered value&rsquo;s <strong>type</strong> rather than the value, deliberately, on S-12.3&rsquo;s reasoning that
+a panic value is whatever a plugin panicked with. <code>Contain</code> keeps the value and prints it, for
+the other half of that reasoning: a panic value is a string or an error about a plugin&rsquo;s own
+code path, not an answer to a roll. Two boundaries with two policies is a hazard, and the two
+are not interchangeable, so the honest statement is narrower than &ldquo;the adapter should call
+<code>Contain</code>&rdquo;: <code>plugin.settle</code> is the product&rsquo;s boundary and stays; <code>Contain</code> is the one for
+anywhere a system is resolved <strong>without</strong> the adapter — a conformance run, a UI-tier
+dispatch, a future second adapter — and it is here because it is tested on every run. Which
+of the two panic policies wins is a phase decision, not this item&rsquo;s, and this record does not
+pretend to settle it.</p>
+<p><strong><code>Classify</code> is the seam the registry has to fill, and P1b&rsquo;s <code>wireReason</code> is half of it.</strong>
+<code>internal/plugin</code>&rsquo;s adapter deliberately holds no operation table — its own comment says a
+list of GM-only ops there &ldquo;would be a second answer to a question <code>realtime.Core</code> already had
+to fake&rdquo; — so a plugin&rsquo;s GM-only set is the plugin&rsquo;s declaration and the suite&rsquo;s <code>GMOnly</code> is
+where it goes. <code>wireReason</code> already maps the contract&rsquo;s refusals onto the eight words, and
+falls through to <code>server_error</code> for anything it does not recognise: which is exactly right for
+an unrecognised failure and exactly wrong for a plugin&rsquo;s own <code>not_permitted</code>, so the
+composition root has to extend it per plugin. That is a one-line switch, it is the only place
+in the product that holds both a <code>rules.System</code> and a <code>realtime.RejectReason</code>, and it is the
+reason <code>Classify</code> is a required seam rather than a convenience.</p>
+<p><strong>A finding never quotes a mutation&rsquo;s payload.</strong> The determinism audit compares answers as a
+digest and prints op, target and payload <em>length</em>, so two runs differing only in payload
+bytes are distinguishable without a resolved roll reaching a CI log — S-12.3 is about the
+second and the first is what makes the comparison exact. Nothing here is an observability
+event: <code>observability.EventAttributes</code> has no field a <code>Finding</code> could be passed through,
+which is the structural half of the rule and the reason this package needs no import of
+<code>internal/observability</code> to keep it.</p>
+<p>Two things are deliberately not here. <code>rules.Validate</code> already checks what the contract can
+check, so the suite does not repeat it, and <code>notfive</code>&rsquo;s test asserts <code>Validate</code> accepts the
+loom separately. And the suite has <strong>no house-rule module of its own</strong>: ADR 0018&rsquo;s exclusion
+is asserted by toggling the same module twice through <code>Resume</code>, which is the shape ADR 0018
+already settled and the reason the fingerprint&rsquo;s exclusion belongs in <code>realtime</code>&rsquo;s
+<code>FingerprintOf</code> rather than here.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Let a system pass the suite by calling helpers in <code>internal/domain/rules</code>.</strong> Rejected: it
+is the failure, not the alternative. A helper the suite needs is a helper every system
+needs, so it belongs on the interface; a helper only 5e needs belongs in the 5e package.</p>
+<p><strong>Publish the suite as a Go module a plugin imports.</strong> Rejected, and worth recording because
+it is the obvious shape: S-10.1 makes plugins <strong>compiled-in</strong> modules registered explicitly
+at the composition root, and a published module would be runtime third-party code of exactly
+the kind §10.1 rules out. The suite is a package in this repository and the &ldquo;published&rdquo; in
+§14&rsquo;s sentence means <em>written down and documented for an author outside it</em>, which is what
+the package comment and <code>notfive</code>&rsquo;s test are.</p>
+<p><strong>Have the suite infer the GM-only operations from the vocabulary.</strong> Rejected: there is no
+vocabulary to read. A <code>System</code> declares the ops it resolves nowhere in the interface, and
+guessing which are reserved would make the audit test the suite&rsquo;s guess.</p>
+<p><strong>Assert set equality against <code>realtime</code>&rsquo;s <code>RejectReason</code> values.</strong> Rejected, and the
+asymmetry is the argument: two copies drifting apart is a failure the suite cannot see, and
+a suite that could would fail every plugin&rsquo;s certification when a ninth word was added, for
+a reason no plugin could act on. Membership is the property an adapter can actually rely on.</p>
+<p><strong>Have the suite check <code>rules.Validate</code> too, so one call certifies everything.</strong> Rejected:
+<code>Validate</code> is the registry&rsquo;s call at startup, it is about the <em>contract</em> rather than the
+<em>system&rsquo;s behaviour</em>, and folding it into the suite would make &ldquo;the suite passed&rdquo; mean two
+things — one of which a registry already guarantees.</p>
+<p><strong>Put the suite outside <code>internal/</code>, so an outside author could import it.</strong> Rejected: the
+suite takes <code>rules.System</code>, which is an <code>internal/</code> type. An exported copy would be a second
+contract that could drift from the first, which is the &ldquo;second answer to a question&rdquo; fault
+<code>AGENTS.md</code> is explicit about.</p>
+<p><strong>Let the unknown-<code>kind</code> audit require <code>Derive</code> to tolerate it too.</strong> Rejected as
+over-specification: §14&rsquo;s separate row covers view rendering and the renderer is semiplane&rsquo;s,
+and the loom&rsquo;s <code>Derive</code> happens to skip an unreadable row because a list view gets that for
+free rather than because the suite asked.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

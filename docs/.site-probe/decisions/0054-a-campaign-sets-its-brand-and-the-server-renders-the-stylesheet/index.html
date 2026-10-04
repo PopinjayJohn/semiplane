@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0054 — A campaign sets its brand, and the server renders the stylesheet — semiplane</title>
+<meta name="description" content="UI §4.12&#39;s theme layer: a `theme.yaml` manifest in the content root, `/c/{slug}/theme.css` generated from a closed vocabulary, two contrast floors measured against each theme&#39;s own page, and a refusal that keeps the last known-good sheet while a fault answers 500. `theme.brand_invalid` is recorded here as the twenty-fifth signal beyond §13.2, and the six seams this work item cannot wire are named rather than assumed.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0054 — A campaign sets its brand, and the server renders the stylesheet — semiplane">
+<meta property="og:description" content="UI §4.12&#39;s theme layer: a `theme.yaml` manifest in the content root, `/c/{slug}/theme.css` generated from a closed vocabulary, two contrast floors measured against each theme&#39;s own page, and a refusal that keeps the last known-good sheet while a fault answers 500. `theme.brand_invalid` is recorded here as the twenty-fifth signal beyond §13.2, and the six seams this work item cannot wire are named rather than assumed.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0054 — A campaign sets its brand, and the server renders the stylesheet</h1>
+    <p class="lede">UI §4.12&#39;s theme layer: a `theme.yaml` manifest in the content root, `/c/{slug}/theme.css` generated from a closed vocabulary, two contrast floors measured against each theme&#39;s own page, and a refusal that keeps the last known-good sheet while a fault answers 500. `theme.brand_invalid` is recorded here as the twenty-fifth signal beyond §13.2, and the six seams this work item cannot wire are named rather than assumed.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The two design records disagree with each other before either disagrees with the code. Plan §10.1
+defines the theme layer as &ldquo;plain files in the campaign content root — CSS, header background,
+fonts&rdquo;; revision 1 of the UI specification specified system stacks and no webfont at all; §4.12
+resolves the conflict in the record&rsquo;s own words — &ldquo;the theme layer is real, and it is
+token-constrained&rdquo; — and then states the mechanism: a <em>manifest</em>, validated by the server, from
+which <code>/c/{slug}/theme.css</code> is generated. This record is about what &ldquo;token-constrained&rdquo; has to
+mean before it is true, and about the two directions a failure can take.</p>
+<p>§4.12.1 splits the custom-property namespace in two. On the left, four names a campaign may set:
+<code>--brand-accent</code>, <code>--brand-accent-ink</code>, <code>--brand-header-image</code>, and the two font slots. On the
+right, the accessibility contract: <code>--text-*</code>, <code>--border*</code>, <code>--focus-ring</code>, <code>--callout-*</code>,
+<code>--type-scale</code>, <code>--space-scale</code>, <code>--target-min</code>, <code>--dur-*</code>, <code>--radius-*</code>. The record&rsquo;s argument
+for the right-hand column is that &ldquo;no gate could catch it across every campaign&rdquo;, which is an
+argument for making the column a property of the <em>writer</em> of the stylesheet rather than a rule a
+reviewer enforces — a campaign that sets <code>--focus-ring</code> breaks SC 1.4.11 on pages no test in this
+repository will ever load.</p>
+<p>The manifest is front matter&rsquo;s situation exactly: Obsidian sync writes it, so it is untrusted
+input, and it gets front matter&rsquo;s treatment. Alias-expansion limits, every path resolved inside
+<code>os.Root</code>, a 16 KiB cap (<code>MaxManifestBytes</code>), a token-name length bound because the name reaches
+a log line, and refusals that quote no byte of the file back (S-12.3).</p>
+<p>The failure directions are where the design record is most specific and where the cost of getting
+it wrong is a GM&rsquo;s afternoon. §4.12.3 says the last known-good theme stays in effect, that
+<code>theme.brand_invalid</code> is logged at error level, and that the campaign overview shows a GM a
+notice — then closes with the sentence the whole layer is aimed at: &ldquo;A rejected theme degrades to
+the default. It never ships an unreadable UI.&rdquo; That is one failure direction. The other is the
+file failing to <em>read</em>, which is not a rejection of anything: it is a fault in this process
+looking at a file that may be perfectly good, and answering &ldquo;no theme&rdquo; for it would be a lie
+served to every reader of the campaign.</p>
+<p>Two things in this layer were measured rather than reasoned about, and both shaped a decision
+below. A closed <code>os.Root</code> reports no error and no entries, and <code>content.classify</code> has exactly two
+answers — <code>ErrNotExist</code>, and <code>ErrOutsideRoot</code> for everything else — so a root this process has
+closed arrives as a path outside the campaign, which a naive classifier answers with <strong>200 and
+the core sheet</strong> for a campaign whose content is gone. And the route serves no document at all,
+so §10.2&rsquo;s audit has to assert an <em>absence</em>, which is the kind of claim an audit cannot
+demonstrate about itself without fixtures built to violate it.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>The generator iterates a closed vocabulary; nothing filters a deny-list.</strong> <code>campaignVocabulary</code>
+and <code>fontSlots</code> are the only loops in <code>generate</code>, so there is no code path through which
+<code>--focus-ring</code> can reach the output — not a check that catches it, a loop that cannot name it.
+<code>TestTheGeneratedStylesheetCarriesNoProtectedVariable</code> reads the forbidden set out of the
+<em>product&rsquo;s</em> stylesheets rather than out of a copy here, so a token added to <code>tokens.css</code> is
+protected in this package without this package being told. A raw <code>.css</code> in a content root is an
+ordinary vault file: the assets route serves it because a page may embed one, and no response
+this route produces names it — <code>TestTheGeneratedSheetNeverNamesAStylesheetInTheVault</code> checks
+every sheet the route can write, core and refused and font-bearing alike. <code>ownership.go</code> holds
+§4.12.1&rsquo;s table as data and <code>ownership_test.go</code> holds that table against the built stylesheet,
+because a table written in a comment rots in the direction nobody notices.</p>
+<p><strong>The brand pair is two floors, measured against each theme&rsquo;s own page.</strong> <code>--brand-accent</code> must
+clear 4.5:1 against <code>--brand-accent-ink</code> — SC 1.4.3, and the ink sits <em>on</em> the accent — and 3:1
+against <code>--bg</code>, which is SC 1.4.11&rsquo;s non-text floor. Against <strong>both</strong> pages: §4.12.3 names <code>--bg</code>
+without naming a theme, and a mid-tone that clears 3:1 on the light page fails on the dark one,
+so the accent is checked twice and refused once. Only <code>#rgb</code> and <code>#rrggbb</code> are accepted, and the
+seven-character grammar is load-bearing rather than pedantic — a floor cannot be evaluated
+against <code>var(--x)</code> or <code>navy</code>, so a value the validator cannot <em>compute</em> is a refusal with a
+reason that fits instead of a floor it declines to check. The pair is both-or-neither.</p>
+<p><strong>A refusal and a fault are different answers, and only one of them keeps the sheet.</strong> Five cases
+in <code>Handler.sheet</code>: no manifest → the core sheet, because withdrawal is a decision and not a
+failure; a manifest that validates → the generated sheet, remembered; over the cap or unreadable
+as YAML → the remembered sheet plus one error line; content refused — a floor, a protected name,
+a malformed key, a path outside the root, an alias bomb, a font slot that is neither <code>prose</code> nor
+<code>ui</code> → the remembered sheet plus one error line; and a manifest this process could not <em>read</em> →
+500. The retention is <code>lastGood</code>, keyed by campaign id rather than slug because the id is what
+the validator is salted with, so one campaign&rsquo;s remembered sheet cannot answer another campaign&rsquo;s
+request. <code>Handler.Notice</code> is the accessor §4.12.3&rsquo;s third requirement needs and answers nothing a
+gate has not already admitted — the caller gates, as ADR 0024 has it.</p>
+<p><strong>The event is <code>theme.brand_invalid</code>, and it is recorded here rather than by editing §13.2.</strong>
+<code>observability.AllEventNames()</code> holds 25 names where the architecture record&rsquo;s table lists 18:
+ADR 0032 recorded six, and this is the twenty-fifth. It is error level, its attributes are the
+campaign&rsquo;s id, its slug and one fixed sentence naming the rule that broke, and nothing a campaign
+wrote is among them — a manifest is attacker-reachable and S-12.3 forbids putting its bytes in a
+log aggregator. It is also the only signal in this package fired by a <em>refusal</em> rather than by a
+fault, which is what makes its attribute set the narrowest in the file.</p>
+<p><strong>The sheet is generated per request, from memory, and is byte-identical for every reader.</strong> A
+strong <code>ETag</code> over the generated bytes, salted with the campaign id — ADR 0016&rsquo;s answer to two
+responses sharing one validator — <code>private, no-cache</code>, and a zero modification time so that
+<code>http.ServeContent</code> writes no <code>Last-Modified</code> that could disagree with the validator. <code>Vary: Cookie</code> is set on bytes that do not vary, for the reason the assets route gives: this route&rsquo;s
+<em>refusals</em> vary by reader, and a stored response with no <code>Vary</code> matches any request. What is
+asserted is the bytes — <code>TestTheSheetIsByteIdenticalForEveryReaderAndPreference</code> holds the sheet
+across readers and <code>sp_ui</code> values, because a test of the header&rsquo;s absence cannot see the
+variation it was protecting.</p>
+<p><strong>The product&rsquo;s half of the cascade is <code>theme.css</code>, and it is weaker than the generated sheet on
+purpose.</strong> The generated declarations live under <code>:root[data-theme]</code>, specificity (0,2,0), so a
+campaign&rsquo;s brand outranks every default in <code>theme.css</code> while being unable to reach anything in
+<code>tokens.css</code>: the cascade expresses the same direction as the two floors. What <code>theme.css</code> holds
+is what a campaign may not change — the scrim that keeps <code>--brand-header-image</code> from deciding the
+contrast of the text above it (opacity 0.05, 0.03 under TV, <code>isolation: isolate</code> and
+<code>z-index: -1</code> so the image is behind the header rather than under it), the header wash, and the
+system-stack fallback the fonts sit on. It carries no <code>@media</code> naming <code>min-width</code>, <code>orientation</code>,
+<code>pointer</code> or <code>hover</code>, because TV is a mode and not a width (ADR 0034); its only queries are the
+two preferences §6.7 requires in <em>every</em> mode, <code>forced-colors</code> — which drops the image and the
+scrim — and reduced motion, which drops both transitions.</p>
+<p><strong>The route serves no document, so §10.2&rsquo;s audit is the absence, and the absence is proved by
+fixtures.</strong> Four responses — the core sheet, the generated sheet, the gate&rsquo;s JSON 404, the
+plain-text 500 — are each run against four rules (<code>ContentTypeIsNotHTML</code>, <code>NoHeading</code>,
+<code>NoLandmark</code>, <code>NoFocusStop</code>) plus §10.6&rsquo;s <code>TargetClass</code>. The vocabulary rule reads the <strong>bytes</strong>
+rather than the parsed tree: <code>html.Parse</code> on <code>text/css</code> builds a document the browser never has,
+and the AGENTS.md rule about parsing the DOM exists so a word hidden in a comment or an
+<code>aria-label</code> is not missed — a byte scan sees the comment, which is the stronger check here
+rather than the weaker one it would be in markup. Every rule was shown failing by mutating the
+route, and each mutation was restored: a <code>text/html</code> content type; a failure body carrying
+<code>&lt;h1&gt;</code>, <code>&lt;main&gt;</code> and <code>&lt;a href&gt;</code>; the same body with <code>class=&quot;target&quot;</code>, which is why <code>NoFocusStop</code>
+and <code>TargetClass</code> are separate rules; the word &ldquo;world&rdquo; in a failure body; <code>assertNoHeading</code> given
+an immediate <code>return</code>, which turns control 1 red while control 2 stays green — silence is what a
+vacuous rule produces, so the two controls are not interchangeable; and the vocabulary rule
+narrowed to the parsed tree&rsquo;s visible text, which stops three fixtures being rejected at once.
+The mutations and their observed failures are recorded in the two test files&rsquo; headers.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>Six seams sit outside this work item&rsquo;s paths, and a reader who assumes they are wired finds
+inert code.</strong> First, <code>internal/web/static/css/app.css</code> needs <code>@import &quot;./theme.css&quot;;</code> — the
+import belongs to the integrator, and until it lands the sheet is a file nothing loads. It fails
+toward the product rather than toward an unstyled shell, and <code>TestTheBrandTokensAreInTheBuiltStylesheet</code>
+derives the tokens the product must declare from <code>app.css</code>&rsquo;s own import lines, so the assertion
+strengthens by itself the moment the line lands. Second, <code>./internal/httpapi/theme</code> belongs in
+<code>A11Y_ROUTE_PKGS</code> in the <code>Makefile</code>, which is also the integrator&rsquo;s under the one-integrator rule;
+the package ships the test names <code>A11Y_TESTS</code> searches for (<code>EveryRoute</code>, <code>Structural</code>,
+<code>Vocabulary</code>, <code>Target</code>) and the negative controls the gate&rsquo;s own guard requires. Third, the shell
+must emit <code>&lt;link rel=&quot;stylesheet&quot; href=&quot;/c/{slug}/theme.css&quot;&gt;</code> in a campaign document, and the
+shell&rsquo;s <code>&lt;link&gt;</code> list is a template&rsquo;s business — this route asserts what its own output never
+names, not what a template links. Fourth, <strong>§4.12.3&rsquo;s third requirement has an accessor and no
+surface</strong>: <code>Handler.Notice</code> returns the token and the reason to any caller, and no campaign
+overview exists to show it, so today a GM whose theme was refused learns it from an error-level
+log line. Fifth, validation runs when the sheet is read rather than &ldquo;at registration, and again
+whenever the watcher sees the manifest change&rdquo; — reading-time follows the file wherever a sync
+client puts it with no hook to install, and a registration-time check belongs to whoever owns
+registration. Sixth, <code>content.Root</code> has no liveness probe, so <code>rootIsLive</code> walks the root with
+<code>fs.SkipAll</code> — one <code>Stat</code>, and the only liveness-distinguishing operation <code>content.Root</code>
+exposes — because <code>classify</code> cannot tell &ldquo;outside the root&rdquo; from &ldquo;the root is closed&rdquo;; a <code>Root.Live()</code>
+is the right answer and this walk is the workaround until it exists.</p>
+<p><strong>Adding an overridable token is two edits, and stopping at one is a build failure.</strong> The
+vocabulary and the product&rsquo;s own declaration of the name are both required:
+<code>TestEveryCampaignTokenIsDeclaredByTheProduct</code>, <code>TestEveryBrandTokenTheProductDeclaresIsInTheCampaignVocabulary</code>
+and <code>TestNoCampaignTokenIsAlsoProtected</code> fail between them if only one of the two lands. That is
+deliberate: the failure direction §4.12.1 cares about is a name being <em>declared</em> without being
+owned, and the three tests answer three different questions about the same pair.</p>
+<p><strong>Fonts come from the generated sheet and never from <code>theme.css</code>.</strong> <code>@font-face</code> has no place in
+the product&rsquo;s half of the cascade, because a face is a campaign&rsquo;s file resolved through <code>os.Root</code>
+and rewritten to <code>/c/{slug}/assets/…</code>; the system stack is composed in Go from <code>font.go</code>&rsquo;s
+<code>systemStacks</code> and is always retained as §4.12.1 requires, so a refused or missing face degrades
+to a stack rather than to nothing. The face&rsquo;s <code>slot</code> (<code>prose</code> or <code>ui</code>) names the token it
+declares, which is why <code>faceFor</code> reads the slot and not the first entry: two faces in one
+manifest land in two tokens, and <code>TestTwoFacesLandInTheirOwnSlots</code> is what a single-face fixture
+cannot see.</p>
+<p><strong><code>Mount</code> registers nothing when it is handed a nil handler.</strong> <code>router.go</code> builds each campaign
+route&rsquo;s handler as a field, and a field can legitimately be nil in a read-only wiring or in a
+test; returning early keeps the mount list a list of calls rather than a list of
+<code>handler != nil</code> branches, and a mount list that has to be edited to add a route is a mount list
+somebody forgets. The pattern is a literal <code>GET /c/{slug}/theme.css</code> rather than a wildcard: the
+route reads one fixed filename and the request&rsquo;s only input is the slug, and a wildcard would
+make its URL space a function of a campaign&rsquo;s directory listing.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Filter protected names out of a campaign&rsquo;s declarations.</strong> Rejected, and the reason is the same
+one ADR 0047 gives for a denylist of addresses: a filter is a list of names somebody has thought
+of, and the next token added to <code>tokens.css</code> is not in it. The failure would be a protected
+variable silently settable — precisely what §4.12.1 exists to prevent — with every test in this
+package green, because the filter would be doing exactly what it was written to do. Iterating the
+vocabulary inverts the property: the question a reviewer asks is no longer &ldquo;did we list them all&rdquo;
+but &ldquo;is there a loop that could name one&rdquo;.</p>
+<p><strong>Let a campaign ship <code>.css</code> and sanitise it after rendering.</strong> Rejected: there is no
+declarations-level allowlist equivalent to bluemonday&rsquo;s for HTML, <code>--focus-ring: red</code> is one
+declaration rather than one tag, and a sanitiser that misses one property breaks 1.4.11 across
+every campaign with no gate anywhere — the same asymmetry that makes
+<code>html.WithUnsafe()</code> a security boundary makes CSS sanitising a research problem. The manifest is
+also the smaller surface by construction: four names, a hex grammar, and paths that must resolve
+inside the campaign root.</p>
+<p><strong>Write <code>theme.css</code> to disk when the manifest changes and serve it as a file.</strong> Rejected: a file
+on disk is a second answer to what the manifest says, and keeping it in step needs a writer, a
+watcher hook and a cleanup path — the shape of the <code>front_matter</code> column ADR 0027 refuses, one
+level up. Generating per request keeps one answer, and the sheet is two colours and a URL: the
+measured cost is a <code>sha256</code> over a few kilobytes, which is cheaper than the disagreement it
+cannot have.</p>
+<p><strong>Inline the campaign&rsquo;s declarations into the document.</strong> Rejected on caching granularity and on
+what is coming: a <code>&lt;style&gt;</code> in the shell makes the brand a property of every page&rsquo;s bytes, so one
+GM&rsquo;s colour edit invalidates every cached page instead of one subresource; and
+<code>shell.Resolver</code>&rsquo;s doc comment records that a strict <code>Content-Security-Policy</code> is expected, under
+which an inline block needs a nonce or a hash — campaign bytes in a response header. A
+subresource that fails to load leaves the page unbranded and correct; an inline block that fails
+to parse leaves a parser error in the document.</p>
+<p><strong>Validate only at registration.</strong> Rejected: the manifest&rsquo;s ordinary writer is a sync client, and
+registration is one moment in a file&rsquo;s life. The check has to follow the file, which is why it
+runs where the sheet is produced and remembers the last sheet that passed.</p>
+<p><strong>Refuse to serve a campaign whose brand pair misses a floor.</strong> Rejected, and §4.12.3 settles it:
+this is the same fail-toward-safety direction as the reconciliation cap&rsquo;s — a GM who sets an
+unreadable accent keeps a readable UI and a notice naming the pair, while a route that refused
+would take the campaign&rsquo;s whole appearance hostage over a contrast ratio. The notice is what makes
+the degradation a fixable state rather than a silent one, which is why its absence (seam four
+above) is the gap worth closing first.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

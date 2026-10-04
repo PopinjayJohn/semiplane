@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0051 — OpenCode is the only agent, and its directory is the committed one — semiplane</title>
+<meta name="description" content="The repo carried two agent configs and one agent&#39;s directory, with `.opencode/skills` a symlink into `.kilo/skills` and a `.gitignore` rule holding that symlink out of diffs. Everything an agent reads now lives under `.opencode/`, and `kilo.json` is gone.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0051 — OpenCode is the only agent, and its directory is the committed one — semiplane">
+<meta property="og:description" content="The repo carried two agent configs and one agent&#39;s directory, with `.opencode/skills` a symlink into `.kilo/skills` and a `.gitignore` rule holding that symlink out of diffs. Everything an agent reads now lives under `.opencode/`, and `kilo.json` is gone.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0051 — OpenCode is the only agent, and its directory is the committed one</h1>
+    <p class="lede">The repo carried two agent configs and one agent&#39;s directory, with `.opencode/skills` a symlink into `.kilo/skills` and a `.gitignore` rule holding that symlink out of diffs. Everything an agent reads now lives under `.opencode/`, and `kilo.json` is gone.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The repository was developed with Kilo and then adopted for OpenCode, and the
+adoption was deliberately partial. <code>kilo.json</code> stayed the committed agent
+config; <code>.opencode/opencode.jsonc</code> was committed beside it as its mirror. The
+mirror was not independent — its <code>skills</code> array pointed at <code>./.kilo/skills</code>, and
+a local <code>.opencode/skills</code> symlink existed so tooling that expects a
+<code>.opencode/skills</code> path would find one. That symlink was untracked, and
+<code>.gitignore</code> carried a rule to keep it that way:</p>
+<pre tabindex="0"><code># OpenCode resolves the skills through .opencode/opencode.jsonc, which points at
+# the committed .kilo/skills. The local symlink is a convenience for tooling that
+# expects a .opencode/skills path, not a tracked file.
+.opencode/skills
+</code></pre><p>So the repo described three locations for one set of files. <code>.kilo/skills</code> held
+them, <code>.opencode/skills</code> pointed at them, and <code>opencode.jsonc</code> named the first
+while the agent&rsquo;s own discovery convention names the second. Everything else —
+three skills, four design records, the ignored-worktree path — lived under
+<code>.kilo/</code>.</p>
+<p>The mirroring also bought a second permission map. <code>kilo.json</code>&rsquo;s <code>permission</code>
+object and <code>opencode.jsonc</code>&rsquo;s <code>permissions</code> array were the same policy written
+in two dialects, and two answers to &ldquo;what may this agent do&rdquo; is one more than a
+repository can check.</p>
+<h2 id="decision">Decision</h2>
+<p><strong><code>.opencode/</code> is the only agent directory, and it holds the committed files.</strong></p>
+<ul>
+<li><code>.kilo/plans</code> moved to <code>.opencode/plans</code>. Four dated design records, published
+verbatim by the <code>design-record</code> shortcode.</li>
+<li><code>.kilo/skills</code> moved to <code>.opencode/skills</code>, which is OpenCode&rsquo;s native project
+skill location. This is the load-bearing part of the change: the files are now
+where discovery looks, not behind a pointer.</li>
+<li><code>kilo.json</code> is deleted. <code>.opencode/opencode.jsonc</code> is the repository&rsquo;s only
+agent config and the only permission map in the tree.</li>
+<li><code>.gitignore</code>&rsquo;s <code>.opencode/skills</code> rule is removed, because the path is now
+tracked content rather than a local convenience, and <code>.kilo/worktrees/</code>
+becomes <code>.opencode/worktrees/</code>.</li>
+</ul>
+<p><strong>The design records are not rewritten.</strong> Their bodies still say <code>.kilo/plans/</code>
+and <code>kilo.json</code>, and the two records published on <code>/design/architecture/</code> and
+<code>/design/ui-ux/</code> will render those paths verbatim. That is the intended outcome.
+AGENTS.md makes the design records immutable and names the remedy for a record
+that has been overtaken: this record, plus an entry in the design index&rsquo;s &ldquo;Known
+staleness&rdquo;. Editing a record to agree with the present would destroy the one
+property that makes it worth keeping.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>A checkout resolves its own skills with nothing outside it.</strong> <code>.opencode/skills</code>
+is an ordinary tracked directory, so <code>git worktree add</code> produces a worktree whose
+skills exist. The symlink it replaces was invisible to every Git command, and a
+symlink that is invisible is a symlink whose deletion is invisible too.</p>
+<p><strong><code>skills</code> in <code>opencode.jsonc</code> is now redundant.</strong> <code>.opencode/skills</code> is
+discovered without it. It is kept as an explicit statement of what the repo
+ships, and it names the same directory discovery already finds, so it is a
+description rather than a second door. Removing it would also be correct; leaving
+it is what makes the intent legible to a reader who has not read this record.</p>
+<p><strong><code>make site-plans</code> is unchanged apart from its source.</strong> <code>PLAN_SRC</code> follows the
+move to <code>.opencode/plans</code>, and the records are still <em>copied</em> into
+<code>docs/assets/plans/</code> rather than mounted. Hugo sandboxes <code>os.ReadFile</code> to the
+project root, so <code>../.opencode/plans/...</code> returns empty rather than erroring —
+the silent-empty-page failure the shortcode exists to prevent. See the comment
+in <code>docs/hugo.toml</code>.</p>
+<p><strong>Every phase-9 worktree picks this up when its branch merges.</strong> Branches cut
+before this record still carry <code>.kilo/</code> and <code>kilo.json</code>, and a worktree on one of
+them resolves its skills through the old path. That is correct: the config is
+per-branch, and a branch that has not taken the migration should not pretend it
+has.</p>
+<p><strong>The published design records now describe a directory that does not exist.</strong>
+The banner above each one already says a record may describe behaviour the code
+does not have. This is the same class of statement applied to a path.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Keep <code>.kilo/</code> as the committed location and the symlink as the pointer.</strong>
+Rejected. It works, which is what made it tempting, and the cost is a class of
+failure with no diff attached to it: the agent reads three skills that are not in
+its checkout, through a path no commit mentions, and the first symptom is a
+skill that will not load. The same layout also needed a <code>.gitignore</code> rule whose
+only job was to hide a file the config depended on.</p>
+<p><strong>Keep both agent configs and mirror forward.</strong>
+Rejected. The mirror already existed and had already drifted in the shape the
+dialects allow — an <code>enabled: false</code> in one file and a <code>disabled: true</code> in the
+other, permission maps ordered by different rules. Two files that must agree,
+cannot be diffed against each other, and are only checked by whoever edits last.</p>
+<p><strong>Rewrite the records&rsquo; internal paths.</strong>
+Rejected, and this is the decision the record exists to prevent being made again
+by accident. It compiles, it looks tidy, and it converts a dated record into a
+living document — after which nobody can tell what was decided when, and the
+&ldquo;Known staleness&rdquo; list loses the one entry that documents it. The staleness is
+recorded in the design index instead, which is where a reader arrives.</p>
+<p><strong>Move the records under <code>docs/content/en/design/</code> and drop <code>.opencode/plans</code>.</strong>
+Rejected. Two of the four records are published; the other two — the repository
+layout plan and the phased delivery plan — are agent working documents that the
+site never renders. Putting all four under <code>docs/content/</code> would make the site&rsquo;s
+content tree the owner of files it does not publish, and <code>make site-plans</code> would
+become a no-op for half its input.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

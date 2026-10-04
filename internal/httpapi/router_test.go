@@ -38,7 +38,10 @@ func newTestRouter(t *testing.T, registry *observability.Registry) http.Handler 
 	return httpapi.NewRouter(
 		logger, cfg, registry,
 		nil, nil, // no account routes, no store
-		nil, nil, nil, nil, nil, nil, nil, nil, // no campaign-scoped routes
+		// Eight nil campaign-scoped routes and a ninth: every handler the router
+		// mounts under `/c/{slug}` is nil here, and the count is the only thing
+		// this call has to track. `secrets` is the last of them.
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, // no campaign-scoped routes
 	)
 }
 

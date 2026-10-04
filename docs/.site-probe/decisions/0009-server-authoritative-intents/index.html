@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0009 — Server-authoritative intents — semiplane</title>
+<meta name="description" content="Clients send intent and never state. The server validates, applies, versions, and broadcasts.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0009-server-authoritative-intents/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0009 — Server-authoritative intents — semiplane">
+<meta property="og:description" content="Clients send intent and never state. The server validates, applies, versions, and broadcasts.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0009-server-authoritative-intents/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0009 — Server-authoritative intents</h1>
+    <p class="lede">Clients send intent and never state. The server validates, applies, versions, and broadcasts.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#authority-is-enforced-server-side">Authority is enforced server-side</a></li>
+        <li><a href="#presence-is-ephemeral">Presence is ephemeral</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>A tabletop shows a map that several people are looking at, and they are acting on it at the
+same time. This is the concurrency problem the rest of the project inherits, and its shape is
+set by two things: the server must decide what is true, and players are on flaky connections
+doing optimistic updates to stay responsive.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Clients send intent, never state.</strong> The protocol carries operations:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-jsonc" data-lang="jsonc"><span class="line"><span class="cl"><span class="c1">// client → server
+</span></span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;intent&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;move_token&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="nt">&#34;placement&#34;</span><span class="p">:</span><span class="s2">&#34;p1&#34;</span><span class="p">,</span><span class="nt">&#34;x&#34;</span><span class="p">:</span><span class="mi">420</span><span class="p">,</span><span class="nt">&#34;y&#34;</span><span class="p">:</span><span class="mi">180</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;intent&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">8</span><span class="p">,</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;roll&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="nt">&#34;expr&#34;</span><span class="p">:</span><span class="s2">&#34;1d20+5&#34;</span><span class="p">,</span><span class="nt">&#34;reason&#34;</span><span class="p">:</span><span class="s2">&#34;perception&#34;</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// server → client
+</span></span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;applied&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="nt">&#34;version&#34;</span><span class="p">:</span><span class="mi">44</span><span class="p">,</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;move_token&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="err">…</span><span class="p">},</span><span class="nt">&#34;by&#34;</span><span class="p">:</span><span class="s2">&#34;u1&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;rejected&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="nt">&#34;reason&#34;</span><span class="p">:</span><span class="s2">&#34;not_your_turn&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;delta&#34;</span><span class="p">,</span><span class="nt">&#34;version&#34;</span><span class="p">:</span><span class="mi">45</span><span class="p">,</span><span class="nt">&#34;changes&#34;</span><span class="p">:[{</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;set_hp&#34;</span><span class="p">,</span><span class="nt">&#34;placement&#34;</span><span class="p">:</span><span class="s2">&#34;p1&#34;</span><span class="p">,</span><span class="nt">&#34;hp&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">}]}</span>
+</span></span></code></pre></div><p>Five things follow, and each is load-bearing:</p>
+<ol>
+<li><strong><code>seq</code> is the client&rsquo;s sequence number.</strong> It exists so a client can match an <code>applied</code> or
+<code>rejected</code> to the intent it sent, and reconcile its optimistic update. It is not an ordering
+authority.</li>
+<li><strong><code>version</code> is the server&rsquo;s monotonic version, and it is the only ordering authority.</strong>
+Two clients cannot disagree about order when one of them is authoritative.</li>
+<li><strong>Dice are evaluated server-side.</strong> The client never supplies a result. A client-side roll is
+unverifiable, and it would break the audit trail the moment anyone at the table wanted to
+check whether a number was fair.</li>
+<li><strong>Versioning is per-placement, not global.</strong> Global versioning would make two players moving
+unrelated tokens contend for the same counter.</li>
+<li><strong>Reconnect sends <code>since</code> for a delta</strong>, not a full snapshot, so a client returning after a
+dropped connection does not re-download state it already has.</li>
+</ol>
+<h3 id="authority-is-enforced-server-side">Authority is enforced server-side</h3>
+<p>GM-only operations — pausing the game, setting another token&rsquo;s hit points, revealing a secret —
+are checked on the server. Client-side hiding is cosmetic and is treated as such: it exists to
+avoid showing a player a control they cannot use, and nothing more.</p>
+<h3 id="presence-is-ephemeral">Presence is ephemeral</h3>
+<p>Cursors and focus are broadcast but <strong>never persisted</strong>. They are not game state and do not
+appear in <code>campaign_state</code>.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Clients apply optimistically and reconcile on version mismatch. That is a real cost in the
+client, and it buys responsiveness on a bad connection.</li>
+<li><code>roll</code> cannot be previewed with certainty — the client can parse and validate an expression
+against the system&rsquo;s grammar, but the result arrives from the server. The <code>Grammar()</code> method
+exists precisely so a d20 system and a 2d6-pool system can both describe their own notation
+without the protocol assuming either.</li>
+<li>Because mutations are <strong>returned</strong> by the resolver rather than applied in place, no code path
+— plugin or otherwise — can write state or forge a broadcast. See
+[0012 — plugin
+authority]({{ &ldquo;decisions/0012-plugin-authority/&rdquo; | relURL }}).</li>
+<li>Replay works, because resolution is a pure function of (state, intent, seed). That is what
+makes the determinism rule in the architecture record&rsquo;s §10.3 a requirement rather than a
+nicety.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Client-authoritative state with server validation at write time.</strong> The client computes the
+result and the server checks it. Cheaper for the server, and it breaks as soon as two clients
+diverge: the server must then either reject the second write or accept state no client believes.
+It also makes every GM-only operation a UI affordance rather than a rule.</p>
+<p><strong>CRDTs.</strong> Genuinely the right answer for some shapes of concurrent editing. Rejected because a
+tabletop is not collaboratively edited prose — it has a turn order, a permission structure, and
+rules that must be applied, and a CRDT would have to be told about all three. The complexity is
+the same either way; the authority model would be much harder to reason about.</p>
+<p><strong>Last-write-wins without versions.</strong> The cheapest thing that could possibly work, and the thing
+that silently loses a token&rsquo;s position. Explicitly rejected.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

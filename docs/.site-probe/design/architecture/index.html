@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Technical architecture — semiplane</title>
+<meta name="description" content="The architecture design record, rendered verbatim from the repository.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/design/architecture/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Technical architecture — semiplane">
+<meta property="og:description" content="The architecture design record, rendered verbatim from the repository.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/design/architecture/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Technical architecture</h1>
+    <p class="lede">The architecture design record, rendered verbatim from the repository.</p>
+    <aside class="banner" data-testid="page-banner">
+      <p>A design record from 2026-09-30, published unedited. It describes intent, not shipped behaviour.</p>
+    </aside><aside class="banner" data-testid="design-record-banner" aria-labelledby="banner-heading">
+  <h2 class="banner__heading" id="banner-heading">
+    <span class="banner__badge" aria-hidden="true">record</span>
+    Dated design record — 2026-09-30
+  </h2>
+  <p>
+    This is a <strong>design record</strong>, not user documentation. It is
+    published here verbatim from the repository so it cannot drift from the
+    design it records — which also means it may describe behaviour the code does
+    not have yet, or no longer has.
+  </p>
+  <p>
+    For how to run semiplane, start with the
+    <a href="/semiplane/install/">installation guide</a> and the
+    <a href="/semiplane/concepts/">concepts</a>. Source of this page:
+    <a href="https://github.com/PopinjayJohn/semiplane/blob/main/.opencode/plans/1790774477695-semiplane-architecture-overview.md"
+       data-testid="design-record-source"><code>.opencode/plans/1790774477695-semiplane-architecture-overview.md</code></a>.
+  </p>
+</aside>
+
+<p>Refined design overview. Repo state: bare scaffold (<code>cmd/server</code>,
+<code>internal/config</code>, <code>internal/httpapi</code>, three empty packages). No Chi present,
+so nothing to unwind.</p>
+<hr>
+<h2 id="1-scope-and-the-one-load-bearing-constraint">1. Scope, and the one load-bearing constraint</h2>
+<p>A self-hosted TTRPG wiki plus virtual tabletop. One binary, one process, one
+SQLite file, campaign content in a local Obsidian vault.</p>
+<p><strong>In scope:</strong> content pipeline, campaign registry, access control, web editor with
+conflict resolution, real-time game state, WebSocket protocol, search, assets,
+and the plugin system (§10).</p>
+<p><strong>Out of scope:</strong> voice/video (WebRTC), combat automation, mobile clients,
+multi-instance HA, horizontal scaling, and third-party runtime plugin loading —
+plugins are compiled-in modules, not dynamically loaded extensions.</p>
+<h3 id="11-single-process-is-a-hard-constraint">1.1 Single process is a hard constraint</h3>
+<p>Authoritative game state lives in memory; the WebSocket hub is process-local.
+<strong>Two instances behind a load balancer will silently diverge.</strong> SQLite&rsquo;s
+single-writer limit is not the constraint — in-memory state ownership is.</p>
+<p>Acceptable for self-hosted single-table use. If it ever changes, a shared broker
+is required <em>before</em> anything else. Record this in <code>AGENTS.md</code> so nobody
+&ldquo;helpfully&rdquo; scales it.</p>
+<hr>
+<h2 id="2-decisions">2. Decisions</h2>
+<p>Every version verified against upstream on 2026-09-30.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Concern</th>
+					<th>Choice</th>
+					<th>Version</th>
+					<th>Rationale</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Language</td>
+					<td>Go</td>
+					<td>1.27.1</td>
+					<td><code>net/http</code>, <code>log/slog</code></td>
+			</tr>
+			<tr>
+					<td>Router</td>
+					<td><code>net/http</code> ServeMux</td>
+					<td>stdlib</td>
+					<td>Go 1.22+ native method+pattern routing. Chi dropped; it also carries open-redirect advisories <code>GO-2025-3770</code> / <code>GO-2026-4316</code>.</td>
+			</tr>
+			<tr>
+					<td>Templating</td>
+					<td>templ</td>
+					<td>v0.3.1020</td>
+					<td>Compiles to Go; v0.3.1020 added concurrent component rendering (#1359). Still v0.x — pin exactly.</td>
+			</tr>
+			<tr>
+					<td>Live UI</td>
+					<td>Datastar</td>
+					<td>SDK v1.2.2</td>
+					<td>SSE. Scoped to live UI only — never content delivery, never the map.</td>
+			</tr>
+			<tr>
+					<td>Realtime</td>
+					<td>coder/websocket</td>
+					<td>current</td>
+					<td>Not gorilla: advisory <code>GO-2026-6278</code> (weak PRNG for mask key) plus panics on concurrent writes.</td>
+			</tr>
+			<tr>
+					<td>Map render</td>
+					<td>PixiJS v8</td>
+					<td>current</td>
+					<td>WebGL retained mode; same engine Foundry uses.</td>
+			</tr>
+			<tr>
+					<td>DB driver</td>
+					<td>modernc.org/sqlite</td>
+					<td>v1.58.0</td>
+					<td>Pure Go, FTS5 compiled in by default. mattn/go-sqlite3 needs <code>-tags fts5</code> <em>and</em> gcc.</td>
+			</tr>
+			<tr>
+					<td>Search</td>
+					<td>SQLite FTS5</td>
+					<td>—</td>
+					<td>External-content table over <code>pages</code>.</td>
+			</tr>
+			<tr>
+					<td>Markdown</td>
+					<td>goldmark</td>
+					<td><strong>v1.8.5</strong></td>
+					<td>Not v2.0.0-rc.1 (RC, zero importers).</td>
+			</tr>
+			<tr>
+					<td>YAML</td>
+					<td>goccy/go-yaml</td>
+					<td>current</td>
+					<td>Front matter + <code>vtt/</code> game objects.</td>
+			</tr>
+			<tr>
+					<td>CSS</td>
+					<td>Tailwind v4 standalone CLI</td>
+					<td>pin</td>
+					<td>No Node. Avoid pure-Go ports (<code>tailwind-go</code> = <code>Imported by: 1</code>).</td>
+			</tr>
+			<tr>
+					<td>Watch</td>
+					<td>fsnotify</td>
+					<td>v1.9.0</td>
+					<td>Non-recursive; one watch per directory.</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="21-terminology-previously-overloaded--now-fixed">2.1 Terminology (previously overloaded — now fixed)</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Term</th>
+					<th>Meaning</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Campaign</strong></td>
+					<td>A tenant. One content root, one membership list, one live tabletop, one gameplay system.</td>
+			</tr>
+			<tr>
+					<td><strong>Page</strong></td>
+					<td>One <code>.md</code> file. All content — prose <em>and</em> game objects — is a page.</td>
+			</tr>
+			<tr>
+					<td><strong>Game object</strong></td>
+					<td>A page with a registered <code>kind</code> (built-in: <code>token</code>, <code>scene</code>, <code>handout</code>, <code>journal</code>, <code>index</code>). A <em>definition</em>, durable, Obsidian-editable.</td>
+			</tr>
+			<tr>
+					<td><strong>Ruleset</strong></td>
+					<td>The resolved rule configuration for a campaign: gameplay plugin + data pack overlay + enabled house-rule modules. Has a <code>ruleset_version</code>.</td>
+			</tr>
+			<tr>
+					<td><strong>Placement</strong></td>
+					<td>A game object instance on a live map. <strong>Runtime only.</strong> Position, current HP, conditions.</td>
+			</tr>
+			<tr>
+					<td><strong>Campaign state</strong></td>
+					<td>The single in-memory + persisted row holding all live placements and turn state.</td>
+			</tr>
+			<tr>
+					<td><strong>Auth session</strong></td>
+					<td>A login. Distinct from all of the above.</td>
+			</tr>
+	</tbody>
+</table>
+<p>There is no <code>world</code> and no <code>session</code> game entity. A campaign has at most one live
+tabletop.</p>
+<h3 id="22-roles">2.2 Roles</h3>
+<p><code>campaign_members.role ∈ {gm, player}</code>. <strong>GM-only content editing</strong>; players
+participate in games only. Plus an instance-level <code>users.is_admin</code> for campaign
+registration. Role stays a clean two-value enum with no ambiguous middle.</p>
+<hr>
+<h2 id="3-architecture">3. Architecture</h2>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">graph TB
+    subgraph Browser
+        REND[&#34;Rendered page&lt;br/&gt;templ shell&#34;]
+        EDIT[&#34;Web editor&lt;br/&gt;GM only, conflict UI&#34;]
+        VTT[&#34;VTT client&lt;br/&gt;PixiJS v8&#34;]
+    end
+
+    subgraph Proc[&#34;semiplane (single process)&#34;]
+        MW[&#34;middleware chain&lt;br/&gt;RequestID Recoverer RealIP Log Timeout&#34;]
+        MUX[&#34;net/http ServeMux&lt;br/&gt;method + {path}&#34;]
+        WIKI[&#34;wiki handlers&#34;]
+        API[&#34;editor · search · assets&#34;]
+        HUB[&#34;realtime hub&lt;br/&gt;coder/websocket&#34;]
+        PIPE[&#34;content pipeline&lt;br/&gt;watch · render · index&#34;]
+        CSTATE[&#34;campaign state&lt;br/&gt;in-memory + debounced&#34;]
+        DOM[&#34;domain rules&lt;br/&gt;pure, no I/O&#34;]
+        ST[&#34;store (SQLite WAL)&#34;]
+        CACHE[&#34;render cache&lt;br/&gt;content-neutral HTML&#34;]
+    end
+
+    OBS[&#34;Obsidian&lt;br/&gt;Sync · iCloud · Dropbox&#34;]
+    FS[(&#34;content roots&lt;br/&gt;one per campaign&#34;)]
+    DB[(&#34;semiplane.db&#34;)]
+
+    OBS -.writes.-&gt; FS
+    FS --&gt;|fsnotify dir watch| PIPE
+    PIPE --&gt; CACHE
+    PIPE --&gt;|FTS| ST
+    EDIT --&gt;|PUT If-Match| API
+    API --&gt;|temp + rename| FS
+    MW --&gt; MUX --&gt; WIKI &amp; API
+    HUB --&gt; CSTATE --&gt; DOM
+    HUB &amp; WIKI &amp; API --&gt; DOM
+    CSTATE &amp; WIKI &amp; API --&gt; ST
+    CACHE --&gt; REND
+    ST &amp; FS --&gt; DB &amp; FS
+</code></pre><h3 id="31-templ-and-datastar-are-not-rivals">3.1 templ and Datastar are not rivals</h3>
+<ul>
+<li><strong>templ</strong> renders the shell and chrome. Compiled Go, no runtime template language.</li>
+<li><strong>Datastar</strong> patches live DOM over SSE, for genuinely reactive fragments:
+initiative tracker, chat log, presence.</li>
+</ul>
+<p>Content is <strong>never</strong> delivered over Datastar. Filesystem markdown is cacheable
+and static within a session, so it ships as ordinary HTTP with <code>ETag</code>. SSE appears
+in exactly two places: live game chrome, and the editor&rsquo;s external-change notice.</p>
+<hr>
+<h2 id="4-data-model">4. Data model</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- identity
+</span></span></span><span class="line"><span class="cl"><span class="n">users</span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">username</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">,</span><span class="w"> </span><span class="n">email</span><span class="p">,</span><span class="w"> </span><span class="n">password_hash</span><span class="p">,</span><span class="w"> </span><span class="n">is_admin</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="n">auth_sessions</span><span class="p">(</span><span class="n">token_hash</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w"> </span><span class="n">user_id</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">expires_at</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- tenancy
+</span></span></span><span class="line"><span class="cl"><span class="n">campaigns</span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">slug</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">content_root</span><span class="p">,</span><span class="w"> </span><span class="n">visibility</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">          </span><span class="n">system_id</span><span class="p">,</span><span class="w"> </span><span class="n">ruleset_version</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   content_root: absolute path to this campaign&#39;s vault
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   visibility:   &#39;private&#39; | &#39;public&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   system_id:    gameplay plugin this campaign resolves with, e.g. &#39;5e-2024&#39;
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   ruleset_version: ruleset the persisted state was last written under
+</span></span></span><span class="line"><span class="cl"><span class="n">campaign_members</span><span class="p">(</span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">user_id</span><span class="p">,</span><span class="w"> </span><span class="k">role</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                 </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">(</span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">user_id</span><span class="p">))</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   role: &#39;gm&#39; | &#39;player&#39;
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- content: filesystem is the source of truth, this is an index
+</span></span></span><span class="line"><span class="cl"><span class="n">pages</span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="n">kind</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">body_plain</span><span class="p">,</span><span class="w"> </span><span class="n">content_hash</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="n">front_matter</span><span class="p">,</span><span class="w"> </span><span class="n">updated_at</span><span class="p">,</span><span class="w"> </span><span class="n">deleted_at</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">      </span><span class="k">UNIQUE</span><span class="p">(</span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">))</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- all live game state: exactly one row per campaign
+</span></span></span><span class="line"><span class="cl"><span class="n">campaign_state</span><span class="p">(</span><span class="n">campaign_id</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w"> </span><span class="k">state</span><span class="p">,</span><span class="w"> </span><span class="k">version</span><span class="p">,</span><span class="w"> </span><span class="n">updated_at</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- history (git is not usable: two writers, content outside git)
+</span></span></span><span class="line"><span class="cl"><span class="n">page_revisions</span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="p">,</span><span class="w"> </span><span class="n">author_id</span><span class="p">,</span><span class="w"> </span><span class="k">source</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   source: &#39;web&#39; | &#39;obsidian&#39; | &#39;system&#39;   (&#39;obsidian&#39; ⇒ author_id NULL)
+</span></span></span><span class="line"><span class="cl"><span class="n">audit_log</span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">actor_id</span><span class="p">,</span><span class="w"> </span><span class="n">action</span><span class="p">,</span><span class="w"> </span><span class="n">target</span><span class="p">,</span><span class="w"> </span><span class="n">detail</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- secret callouts: the FILE is authoritative for current revealed-ness;
+</span></span></span><span class="line"><span class="cl"><span class="c1">-- this table is authoritative for who/when, and for re-applying a revert (§5.6)
+</span></span></span><span class="line"><span class="cl"><span class="n">secrets_revealed</span><span class="p">(</span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="n">anchor</span><span class="p">,</span><span class="w"> </span><span class="n">revealed_by</span><span class="p">,</span><span class="w"> </span><span class="n">revealed_at</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                 </span><span class="n">reverted_count</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                 </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">(</span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="n">anchor</span><span class="p">))</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="c1">--   anchor: stable per-callout id so renames do not lose the ledger
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="n">VIRTUAL</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">pages_fts</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">fts5</span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">body_plain</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="o">=</span><span class="s1">&#39;pages&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">content_rowid</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">tokenize</span><span class="o">=</span><span class="s1">&#39;unicode61 remove_diacritics 2&#39;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p><code>body_plain</code> excludes secret callout content entirely, in every reveal state, so
+a search snippet can never carry secret text to a non-GM (§5.6.4).</p>
+<h3 id="41-kind-discriminates-only-opted-in-pages-are-validated">4.1 <code>kind</code> discriminates; only opted-in pages are validated</h3>
+<p>A page with no <code>kind</code> is prose. The VTT loader considers <strong>only</strong> pages whose
+<code>kind</code> is a registered game-object kind. A malformed front-matter block in a lore page
+is therefore inert — it cannot break the loader. This dissolves the concern that
+unifying prose and objects would let arbitrary pages break the VTT.</p>
+<p>The set of recognised kinds is <strong>registry-backed, not a fixed enum</strong> — see
+§10.7. Built-ins register <code>token</code>, <code>scene</code>, <code>handout</code>, <code>journal</code>, <code>index</code>; a UI
+plugin may add more. An unknown <code>kind</code> still degrades to prose, so removing a
+plugin never destroys content.</p>
+<h3 id="42-definitions-are-files-placements-are-runtime">4.2 Definitions are files; placements are runtime</h3>
+<table>
+	<thead>
+			<tr>
+					<th></th>
+					<th>Stored in</th>
+					<th>Written by</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Token max HP, AC, portrait, size</td>
+					<td>page front matter</td>
+					<td>GM, via web or Obsidian</td>
+			</tr>
+			<tr>
+					<td>Placed token position, current HP, conditions, visibility</td>
+					<td><code>campaign_state</code></td>
+					<td>gameplay only</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Placements must never be written to files.</strong> If current HP lived in front
+matter, every damage event would rewrite the file and collide head-on with
+Obsidian sync — a permanent conflict storm. This is a hard rule, not a
+preference.</p>
+<h3 id="43-fts5-specifics">4.3 FTS5 specifics</h3>
+<p><code>tokenize</code> deliberately avoids <code>porter</code>: TTRPG proper nouns stem badly. Use
+<code>unicode61 remove_diacritics 2</code>. External-content tables cannot be <code>ALTER</code>ed —
+bulk changes require <code>INSERT INTO pages_fts(pages_fts) VALUES('rebuild')</code>.</p>
+<hr>
+<h2 id="5-content-pipeline">5. Content pipeline</h2>
+<p>Event-driven, not request-time. Web editor and Obsidian converge on one path.</p>
+<pre tabindex="0"><code class="language-mermaid" data-lang="mermaid">sequenceDiagram
+    participant O as Obsidian
+    participant F as Filesystem
+    participant W as Watcher
+    participant C as Cache
+    participant X as FTS
+    participant E as SSE clients
+
+    O-&gt;&gt;F: sync writes / renames / removes
+    F-&gt;&gt;W: fsnotify (directory watch)
+    W-&gt;&gt;W: debounce + size-stable recheck
+    W-&gt;&gt;F: read via os.Root
+    W-&gt;&gt;C: invalidate by content hash
+    W-&gt;&gt;X: upsert / delete FTS row
+    W-&gt;&gt;E: &#34;page changed on disk&#34;
+</code></pre><h3 id="51-watch-directories-never-files">5.1 Watch directories, never files</h3>
+<p>Atomic writes (temp in same dir → <code>fsync</code> → <code>os.Rename</code>) are mandatory, but
+fsnotify documents the consequence:</p>
+<blockquote>
+<p><em>&ldquo;If a file is removed (perhaps during a remove-rename atomic update cycle),
+fsnotify will stop watching it, and the watch needs to be replaced… Due to the
+gap between removal and watch replacement, the file should also be directly
+checked.&rdquo;</em></p>
+</blockquote>
+<p>A <strong>directory</strong> watch survives files inside it being replaced. One <code>fsnotify.Watcher</code>
+for all campaigns; route events by path prefix. Linux defaults:
+<code>max_user_instances=128</code> (instances are scarce), <code>max_user_watches=124983</code>
+(watches are per-directory, not per-file).</p>
+<h3 id="52-partial-writes">5.2 Partial writes</h3>
+<p>fsnotify&rsquo;s own docs warn of <em>&ldquo;significant danger of reading a half-written
+file… <code>IN_CLOSE_WRITE</code> isn&rsquo;t exposed with fsnotify, so you just have to take
+care.&rdquo;</em> Obsidian Sync and iCloud both burst.</p>
+<ol>
+<li>Per-path debounce — reset timer on each event, fire on quiet.</li>
+<li>Size-stable confirmation — re-<code>stat</code>, require unchanged size across two samples.</li>
+<li>Ignore dotfiles and <code>.tmp</code> / <code>.swp</code> / <code>~</code> suffixes.</li>
+</ol>
+<p>Time-debounce alone is documented as unreliable (3s insufficient for 100MB writes,
+fsnotify #553). Markdown is small; shared assets are not.</p>
+<h3 id="53-watch-failure-modes">5.3 Watch failure modes</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Failure</th>
+					<th>Detection</th>
+					<th>Response</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Watch limit exhausted</td>
+					<td><code>Add</code> → ENOSPC/EMFILE</td>
+					<td>Log loudly, fall back to periodic full rescan. <strong>Never silent.</strong></td>
+			</tr>
+			<tr>
+					<td>Root missing at boot</td>
+					<td><code>os.Stat</code></td>
+					<td>Campaign <code>degraded</code>; server still starts</td>
+			</tr>
+			<tr>
+					<td>Root removed later</td>
+					<td>watch error</td>
+					<td>Mark degraded, retry with backoff</td>
+			</tr>
+			<tr>
+					<td>Symlink in tree</td>
+					<td>policy</td>
+					<td><strong>Reject by default</strong> — fsnotify: <em>&ldquo;behavior is uncertain and definitely undocumented&rdquo;</em></td>
+			</tr>
+			<tr>
+					<td>Watch binds inode not name</td>
+					<td>renames missed</td>
+					<td>Re-verify tree at startup and on a slow timer</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="54-render-pipeline">5.4 Render pipeline</h3>
+<pre tabindex="0"><code>bytes → front matter (separate; never reaches renderer)
+      → goldmark: GFM + Footnote + Typographer, WithAutoHeadingID
+      → extensions: [[wikilink]], ![[embed]], {{statblock]], {{dice]], [!secret]
+      → redact secrets (§5.6) unless the viewer is the campaign GM
+      → sanitize
+      → tier-aware HTML → render cache (keyed with include_secrets)
+      → plain text, secrets excluded → pages.body_plain (FTS)
+</code></pre><p>Redaction happens <strong>before</strong> sanitize and before the value ever reaches a
+template, so no intermediate buffer holds an unredacted copy for a non-GM.</p>
+<p><strong>Never <code>html.WithUnsafe()</code>.</strong> goldmark already refuses raw HTML and dangerous
+links by default. With a public tier and Obsidian sync as an input, this is a
+security boundary, not a style choice.</p>
+<p><strong>Link resolution</strong> is Obsidian-compatible: <code>[[Page]]</code> links,
+<code>![[Page]]</code> embeds page content, <code>![[image.png]]</code> embeds an asset. Resolve by
+relative path first, then by basename index within the campaign, then within
+campaigns the viewer can see — never probe invisible ones. Record unresolved
+links at index time for a broken-link report.</p>
+<h3 id="55-cache-keys">5.5 Cache keys</h3>
+<p>Rendered output is <strong>permission-neutral by construction</strong>, with one deliberate
+exception: <code>[!secret]</code> callouts (§5.6), whose body differs by viewer. Chrome
+always differs and is never cached.</p>
+<ul>
+<li>Key: <code>(campaign_id, path, content_hash, include_secrets)</code></li>
+<li><code>include_secrets</code> is true <strong>only</strong> for a campaign GM. Everyone else — members,
+players, anonymous readers of a public campaign — gets the redacted variant,
+so there are exactly two variants per page, never a per-user cache.</li>
+<li>Validity: <strong>content hash, not mtime</strong> — sync paths preserve or coarsen mtime,
+and 1-second filesystem granularity lets distinct writes collide</li>
+<li><code>ETag</code> = the same hash, so browser and server caches share one invalidation signal</li>
+<li>Campaign in the key automatically partitions public from private</li>
+</ul>
+<p>Because a reveal is written into the file, it changes <code>content_hash</code> and both
+variants invalidate through the ordinary watcher path. No special-casing.</p>
+<h3 id="56-secret-callouts">5.6 Secret callouts</h3>
+<p>Markdown may mark GM-only content with an Obsidian-compatible callout:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="k">&gt; </span><span class="ge">[!secret]-
+</span></span></span><span class="line"><span class="cl"><span class="k">&gt; </span><span class="ge">The traitor is Captain Aldric. He replaced the eastern signal fire.
+</span></span></span><span class="line"><span class="cl"><span class="k">
+</span></span></span><span class="line"><span class="cl"><span class="k">&gt; </span><span class="ge">[!secret]+
+</span></span></span><span class="line"><span class="cl"><span class="k">&gt; </span><span class="ge">*Revealed to the party on 3 Frostfall.*
+</span></span></span></code></pre></div><p><code>-</code> is a secret, collapsed and GM-only. <code>+</code> is revealed and public. The single
+character is the whole edit, which keeps the diff to one byte and minimises the
+window for a collision with Obsidian&rsquo;s own line handling. Unknown callout types
+render in Obsidian as generic callouts, so <code>secret</code> does not require an Obsidian
+plugin to look correct.</p>
+<p>This is the <strong>only</strong> feature that makes rendered body content viewer-dependent,
+and it is scoped tightly on purpose.</p>
+<h4 id="561-redaction-not-hiding">5.6.1 Redaction, not hiding</h4>
+<p>The secret body is <strong>absent from the response</strong> for non-GM viewers. It is not
+<code>display:none</code>, not a <code>hidden</code> attribute, not an inline comment, and not a CSS
+class — every one of those ships the text in the HTML, where any player can
+recover it from view-source or the inspector.</p>
+<p>Non-GM viewers receive the callout <strong>removed entirely</strong>. The default is omission
+rather than a stub, because a placeholder still discloses the <em>existence</em> and
+<em>position</em> of a secret, which is itself information in many games. A per-campaign
+&ldquo;render a redacted stub&rdquo; option is available for tables where the GM wants the
+prose to read naturally; it is opt-in, never the default.</p>
+<h4 id="562-reveal-is-a-file-write-so-it-must-converge-against-sync">5.6.2 Reveal is a file write, so it must converge against sync</h4>
+<p>Revealing rewrites the markdown. The file is authoritative for whether a secret
+is currently revealed; <code>secrets_revealed</code> in SQLite is authoritative for <strong>who
+revealed it and when</strong>, and for re-applying a reveal that sync reverted.</p>
+<p>This is a deliberate precedence rule, not an ambiguous two-source split:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Question</th>
+					<th>Authority</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Is this secret revealed right now?</td>
+					<td>the file</td>
+			</tr>
+			<tr>
+					<td>Who revealed it, when, and was it reverted?</td>
+					<td><code>secrets_revealed</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>Because Obsidian syncs a copy that predates the reveal, it will periodically
+overwrite a revealed callout back to <code>-</code>. The watcher must therefore reconcile:</p>
+<ol>
+<li>On any change to a page, parse each secret callout&rsquo;s current marker.</li>
+<li>Diff against the ledger for previously-revealed secrets that are now <code>-</code>.</li>
+<li>Re-apply the <code>+</code> marker via the ordinary atomic write with <code>If-Match</code>.</li>
+<li>If step 3 conflicts (a concurrent edit), back off and retry on the next event.</li>
+</ol>
+<p><strong>Bounded, and failing toward secrecy.</strong> Re-application is capped — say 3 passes
+per file per minute. On exhaustion, log loudly and <strong>leave the secret hidden</strong>.
+An accidentally revealed secret is a far worse outcome than a reveal that
+arrives late or is dropped, so every failure path in this subsystem resolves
+toward hiding.</p>
+<h4 id="563-anchor-identity">5.6.3 Anchor identity</h4>
+<p>The ledger is keyed by an <code>anchor</code>, which must survive editing a secret&rsquo;s text —
+otherwise editing a revealed secret orphans its row and the next sync reversion
+re-applies a reveal that has since been moved.</p>
+<p>Resolution order:</p>
+<ol>
+<li><strong>Obsidian block reference.</strong> If the callout carries a <code>^block-id</code>, that is
+the anchor. Stable across any edit, and idiomatic in an Obsidian vault.
+<code>&gt; [!secret]+ The traitor is Aldric. ^traitor</code></li>
+<li><strong>Derived anchor</strong>, when the author supplied no block id:
+<code>sha256(campaign_id, path, ordinal, first-line-of-body)[:12]</code>, where
+<code>ordinal</code> is the callout&rsquo;s position among secrets on the page.</li>
+</ol>
+<p>The derived form is stable across body edits <em>below the first line</em> but not
+across a first-line rewrite, a reorder, or an insertion above it. That is
+acceptable because the fallback is best-effort and self-healing: when the
+watcher finds a ledger row whose anchor no longer resolves, it re-associates by
+<code>ordinal</code>, carries the revealed state across, and logs a <code>secret_anchor_drift</code>
+event. It never silently drops a reveal.</p>
+<p>Anchors are also why renames are survivable: a page move re-keys the ledger on
+<code>(campaign_id, new_path, anchor)</code> and leaves a tombstone for the old path.</p>
+<h4 id="564-role-and-audit">5.6.4 Role and audit</h4>
+<p>Reveal and unreveal are GM-only, and go through the same authorization and
+<code>If-Match</code> precondition as any other write. Every reveal is written to
+<code>audit_log</code> and to <code>secrets_revealed(campaign_id, path, anchor, revealed_by, revealed_at, reverted_count)</code>. <code>reverted_count</code> makes the sync fight visible
+rather than mysterious.</p>
+<h4 id="565-interaction-with-search-and-export">5.6.5 Interaction with search and export</h4>
+<p><strong>Secret text never enters the FTS index.</strong> <code>body_plain</code> excludes callout
+content outright, regardless of reveal state, so a search snippet can never leak
+a secret to a player or an anonymous reader. The tradeoff is that secrets are
+not full-text searchable; a secret-aware index is an additive later change.</p>
+<p>Session exports to journal pages exclude secret content by default.</p>
+<h4 id="566-what-this-does-not-protect-against">5.6.6 What this does not protect against</h4>
+<p>Anyone with filesystem access to the vault sees every secret, revealed or not —
+the callout is hidden from <em>viewers of the rendered site</em>, not encrypted on disk.
+The GM&rsquo;s Obsidian vault, its sync provider, and any device syncing to it are all
+inside the trust boundary. This is the same boundary the whole content model
+already has, but it is worth stating explicitly because secrets invite the
+assumption that they are protected.</p>
+<hr>
+<h2 id="6-editing-and-conflict-resolution">6. Editing and conflict resolution</h2>
+<p>Two independent writers, no shared lock:</p>
+<pre tabindex="0"><code>10:00  A opens page in web editor  (served hash H1)
+10:05  Obsidian syncs               (disk is now H2)
+10:10  A saves                      (H2 lost, no error)
+</code></pre><p>A file lock cannot fix this — Obsidian is a separate process unaware of
+semiplane. Use an HTTP-native optimistic precondition.</p>
+<pre tabindex="0"><code>GET /c/{slug}/edit/{path...}          → 200, ETag: &#34;H1&#34;
+PUT /c/{slug}/edit/{path...}  If-Match: &#34;H1&#34;
+   → 200 + new ETag      (matched)
+   → 412 + current body  (disk is H2)     ← RFC 9110 for failed If-Match
+</code></pre><h3 id="61-write-path">6.1 Write path</h3>
+<ol>
+<li>Auth: session valid <strong>and</strong> <code>role = 'gm'</code> for the campaign.</li>
+<li>Read current file, hash it, compare to <code>If-Match</code>.</li>
+<li>Mismatch → 412, return current content and its hash, record nothing.</li>
+<li>Match → append <code>page_revisions</code> (<code>source='web'</code>), write temp in same
+directory, <code>fsync</code>, <code>os.Rename</code>.</li>
+<li>Return new ETag. The watcher&rsquo;s own event re-renders and re-indexes; the save
+path does not force either.</li>
+</ol>
+<p><strong>No silent overwrite. No last-write-wins fallback.</strong></p>
+<h3 id="62-conflict-ui-v1">6.2 Conflict UI (v1)</h3>
+<p>Side-by-side: user&rsquo;s buffer (from H1) against current disk (H2), per-hunk
+accept/reject, then save with <code>If-Match: &quot;H2&quot;</code>. Deliberately not a 3-way merge
+in v1 — but <code>page_revisions</code> holds the common ancestor (H1), so a real merge is
+additive later rather than a rewrite.</p>
+<hr>
+<h2 id="7-real-time-plane">7. Real-time plane</h2>
+<p><code>coder/websocket</code> at <code>GET /c/{slug}/ws</code>. The map canvas is <strong>never</strong> a Datastar
+element: templ renders shell and sidebar, PixiJS owns one <code>&lt;div&gt;</code> and everything
+inside it. Datastar patches the DOM <em>around</em> the canvas.</p>
+<p>Browsers allow ~6 concurrent HTTP/1.1 connections per origin and every SSE stream
+holds one permanently. So: <strong>no SSE on the VTT page.</strong> SSE appears only for live
+game chrome and editor change-notification. HTTP/2 removes the ceiling entirely
+(a deployment recommendation, not a code change).</p>
+<h3 id="71-protocol">7.1 Protocol</h3>
+<p>Clients send <strong>intent</strong>, never state. The server validates permissions and turn
+order, applies, increments <code>version</code>, broadcasts.</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-jsonc" data-lang="jsonc"><span class="line"><span class="cl"><span class="c1">// client → server
+</span></span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;hello&#34;</span><span class="p">,</span><span class="nt">&#34;since&#34;</span><span class="p">:</span><span class="mi">42</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;intent&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;move_token&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="nt">&#34;placement&#34;</span><span class="p">:</span><span class="s2">&#34;p1&#34;</span><span class="p">,</span><span class="nt">&#34;x&#34;</span><span class="p">:</span><span class="mi">420</span><span class="p">,</span><span class="nt">&#34;y&#34;</span><span class="p">:</span><span class="mi">180</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;intent&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">8</span><span class="p">,</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;roll&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="nt">&#34;expr&#34;</span><span class="p">:</span><span class="s2">&#34;1d20+5&#34;</span><span class="p">,</span><span class="nt">&#34;reason&#34;</span><span class="p">:</span><span class="s2">&#34;perception&#34;</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;presence&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="nt">&#34;cursor&#34;</span><span class="p">:[</span><span class="mi">120</span><span class="p">,</span><span class="mi">88</span><span class="p">],</span><span class="nt">&#34;focus&#34;</span><span class="p">:</span><span class="s2">&#34;p1&#34;</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1">// server → client
+</span></span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;snapshot&#34;</span><span class="p">,</span><span class="nt">&#34;version&#34;</span><span class="p">:</span><span class="mi">43</span><span class="p">,</span><span class="nt">&#34;state&#34;</span><span class="p">:{</span><span class="err">…</span><span class="p">},</span><span class="nt">&#34;you&#34;</span><span class="p">:{</span><span class="nt">&#34;id&#34;</span><span class="p">:</span><span class="s2">&#34;u1&#34;</span><span class="p">,</span><span class="nt">&#34;role&#34;</span><span class="p">:</span><span class="s2">&#34;gm&#34;</span><span class="p">}}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;applied&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="nt">&#34;version&#34;</span><span class="p">:</span><span class="mi">44</span><span class="p">,</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;move_token&#34;</span><span class="p">,</span><span class="nt">&#34;args&#34;</span><span class="p">:{</span><span class="err">…</span><span class="p">},</span><span class="nt">&#34;by&#34;</span><span class="p">:</span><span class="s2">&#34;u1&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;rejected&#34;</span><span class="p">,</span><span class="nt">&#34;seq&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="nt">&#34;reason&#34;</span><span class="p">:</span><span class="s2">&#34;not_your_turn&#34;</span><span class="p">}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;delta&#34;</span><span class="p">,</span><span class="nt">&#34;version&#34;</span><span class="p">:</span><span class="mi">45</span><span class="p">,</span><span class="nt">&#34;changes&#34;</span><span class="p">:[{</span><span class="nt">&#34;op&#34;</span><span class="p">:</span><span class="s2">&#34;set_hp&#34;</span><span class="p">,</span><span class="nt">&#34;placement&#34;</span><span class="p">:</span><span class="s2">&#34;p1&#34;</span><span class="p">,</span><span class="nt">&#34;hp&#34;</span><span class="p">:</span><span class="mi">7</span><span class="p">}]}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;presence&#34;</span><span class="p">,</span><span class="nt">&#34;users&#34;</span><span class="p">:[{</span><span class="nt">&#34;id&#34;</span><span class="p">:</span><span class="s2">&#34;u1&#34;</span><span class="p">,</span><span class="nt">&#34;cursor&#34;</span><span class="p">:[</span><span class="mi">120</span><span class="p">,</span><span class="mi">88</span><span class="p">]}]}</span>
+</span></span><span class="line"><span class="cl"><span class="p">{</span><span class="nt">&#34;t&#34;</span><span class="p">:</span><span class="s2">&#34;clock&#34;</span><span class="p">,</span><span class="nt">&#34;world_time&#34;</span><span class="p">:</span><span class="s2">&#34;2026-09-30T14:00:00Z&#34;</span><span class="p">,</span><span class="nt">&#34;paused&#34;</span><span class="p">:</span><span class="kc">false</span><span class="p">}</span>
+</span></span></code></pre></div><ul>
+<li><code>seq</code> — client sequence, for optimistic reconcile</li>
+<li><code>version</code> — server monotonic version, the ordering authority</li>
+<li>Reconnect sends <code>since</code> for a delta instead of a full snapshot</li>
+<li><code>roll</code> is evaluated <strong>server-side</strong>; the client never supplies a result</li>
+</ul>
+<h3 id="72-authority">7.2 Authority</h3>
+<p>Server-authoritative. Clients apply optimistically, reconcile on version
+mismatch. Per-placement version, not global. GM-only ops (<code>pause</code>, <code>set_hp</code> on
+another token, secret reveal) enforced server-side; client-side hiding is
+cosmetic. Presence is ephemeral, never persisted.</p>
+<h3 id="73-persistence-cadence">7.3 Persistence cadence</h3>
+<p><code>campaign_state</code> lives in memory, written on a <strong>trailing debounce</strong> (~2s after
+last mutation) and on shutdown. A table produces a handful of writes per minute
+instead of hundreds per second, so SQLite&rsquo;s single-writer limit never binds.
+This is the main reason SQLite is adequate here.</p>
+<p>Crash floor: the last debounced state. Mid-game restart resumes from it.</p>
+<h3 id="74-chat-and-recaps">7.4 Chat and recaps</h3>
+<p>No session entity, so chat is an in-memory ring buffer per campaign, lost on
+restart. An explicit <strong>&ldquo;export to journal&rdquo;</strong> action writes a <code>kind: journal</code>
+markdown page — which fits the unified content model, creates a
+<code>page_revisions</code> row, and is therefore recoverable and Obsidian-editable.</p>
+<hr>
+<h2 id="8-access-control">8. Access control</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Scope</th>
+					<th>Capability</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Instance admin</td>
+					<td>global</td>
+					<td>Register campaigns, manage users</td>
+			</tr>
+			<tr>
+					<td>Campaign GM</td>
+					<td>one campaign</td>
+					<td>Full content edit, game control, invite</td>
+			</tr>
+			<tr>
+					<td>Campaign player</td>
+					<td>one campaign</td>
+					<td>Play only; <strong>no content write</strong></td>
+			</tr>
+			<tr>
+					<td>Anonymous</td>
+					<td><code>visibility='public'</code> only</td>
+					<td>Read-only wiki and public assets</td>
+			</tr>
+	</tbody>
+</table>
+<p>Games always require membership; <code>public</code> grants wiki read only.</p>
+<hr>
+<h2 id="9-url-scheme">9. URL scheme</h2>
+<pre tabindex="0"><code>/c/{slug}/wiki/{path...}       page, ETag, cacheable, secret-redacted for non-GM
+/c/{slug}/edit/{path...}       editor (GM only)
+/c/{slug}/secrets/{path...}    reveal / unreveal, GM only, If-Match (§5.6)
+/c/{slug}/assets/{path...}     assets, Range, visibility-gated
+/c/{slug}/search?q=            FTS5
+/c/{slug}/play                 VTT (members only)   — no session id
+/c/{slug}/ws                   WebSocket upgrade
+/c/{slug}/events               SSE (editors + live chrome)
+/healthz  /readyz
+</code></pre><p>Slug in the path partitions every cache and CDN key by visibility, which is what
+makes a shared cache safe when public and private campaigns coexist.</p>
+<hr>
+<h2 id="10-plugin-system">10. Plugin system</h2>
+<h3 id="101-taxonomy--three-tiers-not-two">10.1 Taxonomy — three tiers, not two</h3>
+<p>Plugins are <strong>compiled-in Go modules</strong> registered at the composition root. Their
+purpose is to keep rules and presentation in separate packages with their own
+tests, not to load third-party code at runtime.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Authority</th>
+					<th>Ships as</th>
+					<th>Examples</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Gameplay plugin</strong></td>
+					<td>Resolves intents into state mutations</td>
+					<td>Go package + <code>go:embed</code> data packs</td>
+					<td>D&amp;D 5e 2024, 5e 2014</td>
+			</tr>
+			<tr>
+					<td><strong>UI plugin</strong></td>
+					<td>Reads state; declares page types and render hooks. <strong>Never writes state.</strong></td>
+					<td>Go package + templ components + JS</td>
+					<td>link previews, graphical dice roller</td>
+			</tr>
+			<tr>
+					<td><strong>Theme layer</strong></td>
+					<td>None</td>
+					<td>Plain files in the campaign content root</td>
+					<td>CSS, header background, fonts</td>
+			</tr>
+	</tbody>
+</table>
+<p>Two corrections to the original brief:</p>
+<ol>
+<li><strong>House rules are a gameplay plugin</strong>, not a UI modifier — they change
+mechanics. The UI modifier category as stated does not exist.</li>
+<li>A modifier that only adds CSS is <strong>not a plugin</strong>. It is the theme layer,
+served from content, with no code and no authority.</li>
+</ol>
+<p>A second, orthogonal axis — <strong>scope</strong>:</p>
+<table>
+	<thead>
+			<tr>
+					<th></th>
+					<th><em>Defines</em> a system</th>
+					<th><em>Patches</em> an instance</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Gameplay</strong></td>
+					<td>5e 2024, 5e 2014</td>
+					<td>House rule modules</td>
+			</tr>
+			<tr>
+					<td><strong>UI</strong></td>
+					<td>(unused — no benefit)</td>
+					<td>Link previews, dice roller</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="102-the-structural-difference-stated-precisely">10.2 The structural difference, stated precisely</h3>
+<blockquote>
+<p><strong>A gameplay plugin defines the operation vocabulary and resolves it into
+mutations. A UI plugin may only emit operations that some gameplay system
+already resolves.</strong></p>
+</blockquote>
+<p>Everything else follows from that sentence:</p>
+<table>
+	<thead>
+			<tr>
+					<th></th>
+					<th>Gameplay</th>
+					<th>UI</th>
+					<th>Theme</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Runs</td>
+					<td>server</td>
+					<td>browser (+ templ SSR)</td>
+					<td>browser</td>
+			</tr>
+			<tr>
+					<td>Input</td>
+					<td>intent + state + seeded RNG</td>
+					<td>DOM events, render query</td>
+					<td>CSS cascade</td>
+			</tr>
+			<tr>
+					<td>Output</td>
+					<td><code>[]Mutation</code></td>
+					<td>DOM / Datastar patches</td>
+					<td>nothing</td>
+			</tr>
+			<tr>
+					<td>Writes <code>campaign_state</code></td>
+					<td>yes</td>
+					<td><strong>never</strong></td>
+					<td>never</td>
+			</tr>
+			<tr>
+					<td>Determinism required</td>
+					<td><strong>yes</strong></td>
+					<td>no</td>
+					<td>no</td>
+			</tr>
+			<tr>
+					<td>Registration</td>
+					<td><code>internal/plugin</code></td>
+					<td><code>internal/web/plugins</code></td>
+					<td>none — content files</td>
+			</tr>
+			<tr>
+					<td>Can define a new <code>op</code></td>
+					<td>yes</td>
+					<td>no</td>
+					<td>no</td>
+			</tr>
+			<tr>
+					<td>Failure blast radius</td>
+					<td>campaign state</td>
+					<td>one browser tab</td>
+					<td>one browser tab</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="1021-kind-ownership--a-plugin-does-not-own-what-it-does-not-need">10.2.1 Kind ownership — a plugin does not own what it does not need</h3>
+<p><code>semiplane</code> owns the page kinds that are not about rules. A gameplay plugin
+declares only rules-content kinds. This matters because it is what allows a
+system sharing nothing with 5e — Pathfinder, Starfinder — to register its own
+<code>ancestry</code> or <code>feat</code> without colliding with, or being blocked by, 5e&rsquo;s vocabulary.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Owner</th>
+					<th>Kinds</th>
+					<th>Rationale</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>semiplane — wiki</td>
+					<td><code>journal</code>, <code>handout</code>, <code>index</code></td>
+					<td>Content, not rules. No plugin should redeclare these.</td>
+			</tr>
+			<tr>
+					<td>semiplane — VTT, system-agnostic</td>
+					<td><code>token</code>, <code>scene</code></td>
+					<td>Present on every map in every system. Parameterised by the system, not defined by it.</td>
+			</tr>
+			<tr>
+					<td><strong>gameplay plugin</strong></td>
+					<td><code>spell</code>, <code>class</code>, <code>feat</code>, <code>creature</code>, <code>ancestry</code>, …</td>
+					<td>Genuinely system-specific. Declared via <code>ContentKinds()</code>.</td>
+			</tr>
+	</tbody>
+</table>
+<p><code>token</code> and <code>scene</code> being semiplane-owned is the load-bearing part: the PixiJS
+map layer renders placements, fog, and initiative order without knowing any
+rules, so a new system needs no client work at all.</p>
+<h3 id="103-gameplay-contract">10.3 Gameplay contract</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// internal/domain/rules</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="kd">type</span><span class="w"> </span><span class="nx">System</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">ID</span><span class="p">()</span><span class="w"> </span><span class="nx">ID</span><span class="w">          </span><span class="c1">// stable; stored in campaign_state, never renamed</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Title</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">RulesetVersion</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// This system&#39;s expression notation, so the client can preview and</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// validate a roll before sending it. A d20 system and a 2d6-pool system</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// describe different grammars; the protocol never assumes d20.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Grammar</span><span class="p">()</span><span class="w"> </span><span class="nx">Grammar</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Parse</span><span class="p">(</span><span class="nx">expr</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">Expr</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// Apply a validated intent. Returns mutations for the hub to version and</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// broadcast — a system can never forge a broadcast or skip versioning.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Apply</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">state</span><span class="w"> </span><span class="o">*</span><span class="nx">State</span><span class="p">,</span><span class="w"> </span><span class="nx">in</span><span class="w"> </span><span class="nx">Intent</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">Mutation</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// Data for the UI: modifiers, DCs, sheet summaries. Opaque to semiplane.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Derive</span><span class="p">(</span><span class="nx">state</span><span class="w"> </span><span class="o">*</span><span class="nx">State</span><span class="p">,</span><span class="w"> </span><span class="nx">q</span><span class="w"> </span><span class="nx">Query</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// How this system wants that data rendered. Each view is either backed by</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// a templ component shipped by the plugin, or served by a built-in generic</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// renderer (stat block, key-value, list). See §10.6.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Views</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="nx">View</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// Rules-content kinds this system defines: spell, class, feat, creature,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// ancestry. NOT token, scene, journal, handout, or index — those belong to</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// semiplane. See the ownership table in §10.2.1.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">ContentKinds</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="nx">Kind</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">}</span><span class="w">
+</span></span></span></code></pre></div><p><code>Context</code> carries the seeded RNG, campaign identity, actor identity, and actor
+role — never a wall clock and never an ambient random source.</p>
+<p><strong>Determinism is a discipline requirement, not a sandbox.</strong> Because these are
+compiled-in packages there is no isolation layer, so rule code is forbidden from
+calling <code>time.Now</code>, ranging over a map, or calling <code>crypto/rand</code> directly. The
+enforcement is a lint rule plus tests. Rationale: <code>campaign_state</code> supports
+optimistic client apply, resume-by-version, and replay, all of which break if
+resolution is not a pure function of (state, intent, seed).</p>
+<h3 id="104-data-packs">10.4 Data packs</h3>
+<p>A pack is <code>go:embed</code>ed YAML, versioned with the code: stat blocks, conditions,
+reference tables, and the set of <code>kind</code>s the system recognises.</p>
+<p>A shared engine plus data packs plus a narrow Go escape hatch is the chosen
+split, because 5e 2014 and 5e 2024 are ~90% identical:</p>
+<pre tabindex="0"><code>base pack (shared 5e data)
+  ├── overlay:  2014  — race naming, crit on 20 only, no mastery properties
+  └── overlay:  2024  — species, mastery properties, crit on any natural 20
+resolver hooks (the escape hatch, only where data genuinely cannot express it)
+</code></pre><p>The differences show up as reviewable data diffs. Only genuinely procedural rules
+— weapon mastery resolution, 2024 crit — become Go hooks.</p>
+<p><strong>Overlay is one strategy among several, not a requirement.</strong> It applies only
+where two systems are closely related. A plugin sharing nothing with 5e — say
+Pathfinder — ships one complete standalone pack and its own resolver hooks, and
+implements <code>System</code> without touching <code>internal/domain/rules</code>, the engine, or
+semiplane itself. The only shared code is the interface, the intent and mutation
+types, and the shared conformance suite (§14).</p>
+<p>The engine is therefore <em>shared 5e mechanics</em>, not &ldquo;the rules engine&rdquo;. Systems
+with nothing in common do not use it.</p>
+<h3 id="105-house-rules-gameplay--patch">10.5 House rules: gameplay × patch</h3>
+<p>House rules are applied at campaign load to produce an <em>effective</em> ruleset:</p>
+<pre tabindex="0"><code>system ID → base pack → overlay → enabled house-rule modules (declared order)
+         → effective ruleset (+ ruleset_version)
+</code></pre><p>Two hard constraints:</p>
+<ul>
+<li><strong>House rules are data-level, not code-level.</strong> A house rule may toggle
+<code>flanking_optional</code>, change a DC formula constant, or disable a condition. It
+may not reorder resolution or introduce nondeterminism — otherwise replay and
+audit die. This is what keeps house rules auditable and shareable.</li>
+<li><strong>Application order is explicit and deterministic.</strong> Modules carry a
+<code>position</code>; conflicts resolve first-match-wins and are logged, never
+last-write-wins.</li>
+</ul>
+<h3 id="106-ui-contract-and-how-system-views-are-rendered">10.6 UI contract, and how system views are rendered</h3>
+<p>A UI plugin registers one or more of:</p>
+<ul>
+<li><strong>page types</strong> — a new <code>kind</code> plus its route handler and templ component</li>
+<li><strong>render hooks</strong> — participation in the markdown pipeline for a block</li>
+<li><strong>state observers</strong> — Datastar patches driven by WebSocket deltas</li>
+</ul>
+<p>Constraints:</p>
+<ul>
+<li>Read access to state is filtered by the viewer&rsquo;s campaign visibility, exactly
+as the wiki is.</li>
+<li>A UI plugin <strong>cannot write</strong> <code>campaign_state</code>. It dispatches the same intents a
+human player would, so it passes identical authorization and validation.</li>
+<li>It cannot register a new <code>op</code>. Only a gameplay system defines those.</li>
+</ul>
+<p><strong>Worked consequences:</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Plugin</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Graphical dice roller</strong></td>
+					<td>Renders a die widget in chat. On send, emits <code>{&quot;op&quot;:&quot;roll&quot;}</code> and renders the server&rsquo;s result. It must <strong>not</strong> roll client-side — a client-side roll is unverifiable and would break the audit trail.</td>
+			</tr>
+			<tr>
+					<td><strong>Link preview</strong></td>
+					<td>Render hook on external links. The server-side unfurl helper is read-only and returns <code>{title, description, image}</code>. It must not become a path for reading private campaign content.</td>
+			</tr>
+			<tr>
+					<td><strong>House-rules widget</strong></td>
+					<td>Displays which house rules are active. Read-only; the rule data itself comes from a gameplay module, never from the UI.</td>
+			</tr>
+	</tbody>
+</table>
+<h4 id="1061-system-specific-views-are-server-rendered">10.6.1 System-specific views are server-rendered</h4>
+<p>A character sheet, spell list, or DC summary shares almost nothing between 5e,
+Pathfinder, and Starfinder. <code>Derive</code> returns opaque data; something must decide
+how it becomes HTML.</p>
+<p><strong>Rendering is server-side templ, chosen by the system.</strong> <code>Views()</code> declares
+views; each is either backed by a templ component the plugin ships, or served by
+a built-in generic renderer — stat block, key/value, list, tag cloud. A simple
+plugin ships data and zero UI code; a rich one ships Go templates.</p>
+<p>Three consequences worth stating, because they are why this choice:</p>
+<ol>
+<li><strong>No second language per plugin.</strong> A gameplay plugin is Go plus YAML. There
+is no client-side rendering contract to version and no plugin JavaScript.</li>
+<li><strong>The mutation vocabulary stays server-side.</strong> Datastar already patches DOM
+from server-rendered fragments, so the client never interprets a
+system-specific mutation. This was unstated and is the main reason server-side
+rendering is preferable to a client-renderer contract.</li>
+<li><strong>The client surface stays small.</strong> PixiJS renders placements, fog, and
+initiative order — all system-agnostic (§10.2.1). A new system therefore adds
+no client work.</li>
+</ol>
+<p>The accepted limitation: a plugin cannot have a richly interactive character
+sheet with live client-side editing. Editing happens in the markdown editor
+instead, which is Obsidian-compatible anyway. If that limitation later hurts, it
+is additive — a <code>ClientView</code> can be added alongside templ without changing
+<code>Derive</code>.</p>
+<h3 id="107-schema-additions">10.7 Schema additions</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-sql" data-lang="sql"><span class="line"><span class="cl"><span class="c1">-- campaigns gains a system and a ruleset version
+</span></span></span><span class="line"><span class="cl"><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">campaigns</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">system_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;5e-2024&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">campaigns</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">ruleset_version</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">;</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">campaign_rule_modules</span><span class="w"> </span><span class="p">(</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">campaign_id</span><span class="w">  </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">campaigns</span><span class="p">(</span><span class="n">id</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">module_id</span><span class="w">    </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">enabled</span><span class="w">      </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="n">config</span><span class="w">       </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;{}&#39;</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="k">position</span><span class="w">     </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">  </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">campaign_id</span><span class="p">,</span><span class="w"> </span><span class="n">module_id</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">);</span><span class="w">
+</span></span></span></code></pre></div><p><code>kind</code> becomes <strong>registry-backed</strong> rather than the fixed enum written elsewhere in
+this document: built-ins register <code>token</code>, <code>scene</code>, <code>handout</code>, <code>journal</code>,
+<code>index</code>; a UI plugin may register additional kinds at startup. Validation is
+still opt-in — unknown <code>kind</code> means prose.</p>
+<h3 id="108-plugin-failure-modes">10.8 Plugin failure modes</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Condition</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>system_id</code> unknown (plugin removed or renamed)</td>
+					<td>Campaign refuses to start a game and says which ID it wants. <strong>Wiki still serves.</strong></td>
+			</tr>
+			<tr>
+					<td><code>ruleset_version</code> differs from persisted state</td>
+					<td>Refuse to resume rather than silently misresolve; prompt the GM to start a new session</td>
+			</tr>
+			<tr>
+					<td>House-rule conflict</td>
+					<td>First-match-wins by <code>position</code>, logged with both module IDs</td>
+			</tr>
+			<tr>
+					<td>Gameplay plugin panics inside <code>Apply</code></td>
+					<td><code>recover()</code> at the <code>Apply</code> boundary; return an error; <strong>state is not mutated</strong> because mutations are returned, never applied in place</td>
+			</tr>
+			<tr>
+					<td>UI plugin throws client-side</td>
+					<td>Contained to that browser tab; server unaffected</td>
+			</tr>
+			<tr>
+					<td>Stale <code>kind</code> after a plugin removal</td>
+					<td>Page degrades to prose; content is never lost — it is a file on disk</td>
+			</tr>
+	</tbody>
+</table>
+<p>That last row is why <code>kind</code> is safe to extend: an unknown kind is inert, not
+fatal, and the markdown is always recoverable.</p>
+<hr>
+<h2 id="11-module-structure">11. Module structure</h2>
+<pre tabindex="0"><code>cmd/server/                thin main: config, wiring, signals
+internal/config/           env parsing, no project deps
+internal/domain/           pure types + rules, no I/O
+internal/domain/rules/     System, Intent, Mutation, Expr contracts
+internal/domain/systems/   gameplay plugins (dnd5e: engine + embedded packs,
+                           overlays for 2014/2024, house-rule modules)
+internal/plugin/           registry + composition-root wiring (no init() magic)
+internal/store/            SQLite, migrations, FTS
+internal/content/          os.Root, watcher, front matter, render, cache, game objects
+internal/realtime/         hub, campaign state, protocol codec
+internal/httpapi/          handlers + middleware chain
+internal/web/              templ components, static assets
+internal/web/plugins/      UI page-type and render-hook registration
+</code></pre><p><code>domain</code> imports nothing from the project. <code>content</code>, <code>realtime</code>, and
+<code>domain/systems</code> depend on <code>domain/rules</code>; <code>httpapi</code> depends on all.</p>
+<p>Registration is explicit in the composition root (<code>cmd/server</code>), not <code>init()</code>.
+<code>init()</code>-based registration hides ordering and leaks state between tests, both
+of which become real problems once rules packs are versioned.</p>
+<hr>
+<h2 id="12-security-boundaries">12. Security boundaries</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Boundary</th>
+					<th>Requirement</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Path traversal</td>
+					<td><code>os.Root</code> (Go 1.24+) per campaign, created at registration — <strong>not</strong> <code>filepath.Clean</code> + prefix check. Applies to writes and to every path in front matter.</td>
+			</tr>
+			<tr>
+					<td>Stored XSS</td>
+					<td>No <code>html.WithUnsafe()</code>, ever. Sanitize before caching.</td>
+			</tr>
+			<tr>
+					<td>Untrusted disk content</td>
+					<td>Obsidian sync is untrusted input — shared vaults, plugins, compromised devices. Validate all YAML and resolve all paths within <code>os.Root</code>.</td>
+			</tr>
+			<tr>
+					<td>YAML bombs</td>
+					<td>Front matter is attacker-reachable; use a parser with alias-expansion limits, or cap document size.</td>
+			</tr>
+			<tr>
+					<td>Search leakage</td>
+					<td>FTS queries must join <code>campaigns</code> on visibility; a bare query returns private titles to anonymous users.</td>
+			</tr>
+			<tr>
+					<td>Asset leakage</td>
+					<td>Assets inherit campaign visibility; never share a cache entry across campaigns.</td>
+			</tr>
+			<tr>
+					<td>Auth parity</td>
+					<td>WebSocket upgrade authenticates identically to HTTP. Presence cursors leak positions — gate them.</td>
+			</tr>
+			<tr>
+					<td>WebSocket origin</td>
+					<td>Enforce <code>Origin</code> explicitly on upgrade.</td>
+			</tr>
+			<tr>
+					<td>Plugin authority</td>
+					<td>A UI plugin must never reach <code>campaign_state</code>; it may only dispatch intents a gameplay system resolves. Enforce structurally — gameplay <code>Apply</code> returns mutations, so no plugin can write state or forge a broadcast in place.</td>
+			</tr>
+			<tr>
+					<td><strong>Secret redaction</strong></td>
+					<td>Secret callout bodies must be absent from every non-GM response — never CSS-hidden, commented out, or deferred client-side. The redaction happens in the render, before templ output. <strong>Highest-value security test in this plan</strong> (§14).</td>
+			</tr>
+			<tr>
+					<td><strong>Secret reconciliation</strong></td>
+					<td>Sync-driven re-application is capped and fails toward hidden. Never retry unboundedly, and never resolve a conflict by revealing.</td>
+			</tr>
+			<tr>
+					<td>Rule determinism</td>
+					<td>Rule code must not call <code>time.Now</code>, iterate maps, or use ambient <code>crypto/rand</code>. Enforce by lint rule and tests — there is no sandbox, because plugins are compiled in.</td>
+			</tr>
+			<tr>
+					<td>House-rule scope</td>
+					<td>House rules are data-level only. A module that reorders resolution or introduces nondeterminism is rejected, because replay and audit depend on determinism.</td>
+			</tr>
+			<tr>
+					<td>Supply chain</td>
+					<td><code>datastar-go</code> is young (207★, 24 commits) but is plain <code>net/http</code> — cheap to escape. templ is v0.x; pin exactly.</td>
+			</tr>
+	</tbody>
+</table>
+<hr>
+<h2 id="13-failure-modes">13. Failure modes</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Condition</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Content root missing</td>
+					<td>Campaign <code>degraded</code>; server starts; others unaffected</td>
+			</tr>
+			<tr>
+					<td>inotify exhaustion</td>
+					<td>Loud error + periodic full rescan</td>
+			</tr>
+			<tr>
+					<td>Mid-write read</td>
+					<td>Debounce + size-stable; drop and retry once</td>
+			</tr>
+			<tr>
+					<td>Stale editor save</td>
+					<td>412 + current content; user reconciles</td>
+			</tr>
+			<tr>
+					<td>Mass WS disconnect</td>
+					<td>Presence cleanup; reconnect with <code>since</code> → deltas</td>
+			</tr>
+			<tr>
+					<td>SQLite busy</td>
+					<td>Single writer goroutine + <code>busy_timeout</code>; never a pool of writers</td>
+			</tr>
+			<tr>
+					<td>Crash mid-game</td>
+					<td>Resume from last debounced <code>campaign_state</code></td>
+			</tr>
+			<tr>
+					<td>Cache miss</td>
+					<td>Re-render synchronously; cache is never a dependency</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="131-operational-concerns">13.1 Operational concerns</h3>
+<ul>
+<li><strong>Bootstrap:</strong> no user can exist before the DB. Provide
+<code>semiplane admin create --username X</code> as a CLI subcommand (runnable via
+<code>docker exec</code>) rather than a bootstrap env var, so no secret sits in the
+environment.</li>
+<li><strong>Migrations:</strong> forward-only under <code>internal/store/migrations/</code>. FTS5 virtual
+tables cannot be altered — schema changes there require drop + recreate +
+<code>'rebuild'</code>.</li>
+<li><strong>Backups:</strong> two artifacts that can desync. Back up the content root <em>and</em> a
+consistent SQLite snapshot (<code>.backup</code> API or <code>VACUUM INTO</code>, not a raw file
+copy while running). The content root is the source of truth for pages; the DB
+is a rebuildable index plus <code>campaign_state</code>.</li>
+<li><strong>Retention:</strong> <code>page_revisions</code> is unbounded. Keeping all is acceptable for v1
+(small text); add a per-page cap if Obsidian sync churn proves noisy.</li>
+</ul>
+<h3 id="132-observability">13.2 Observability</h3>
+<p>Four subsystems fail silently by default, which is the specific risk here: a
+watcher that stops watching, a cache that serves a stale tier, a reconciliation
+loop that quits, and a hub that leaks connections. Each needs a signal that is
+cheap to assert on and impossible to ignore.</p>
+<p><code>slog</code> is the only mechanism — no metrics server, no tracing stack. Emit
+structured events with a stable <code>event</code> key so they are greppable and
+alertable-on, plus expose counters on <code>/readyz</code> as JSON.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Signal</th>
+					<th>Type</th>
+					<th>Why it matters</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>watch.add_failed</code></td>
+					<td>error, per campaign</td>
+					<td>Watch exhaustion is the highest-impact silent failure. Must be an error, never a debug line.</td>
+			</tr>
+			<tr>
+					<td><code>watch.degraded</code> / <code>watch.recovered</code></td>
+					<td>state per campaign</td>
+					<td>Content root went away or came back</td>
+			</tr>
+			<tr>
+					<td><code>watch.rescan_fallback</code></td>
+					<td>counter</td>
+					<td>Fallback engaged because watches were lost</td>
+			</tr>
+			<tr>
+					<td><code>content.stable_read_timeout</code></td>
+					<td>counter</td>
+					<td>Debounce never settled — a writer is stuck mid-write</td>
+			</tr>
+			<tr>
+					<td><code>content.render_error</code></td>
+					<td>error, with campaign + path</td>
+					<td>Never serve a broken page silently</td>
+			</tr>
+			<tr>
+					<td><code>cache.hit</code> / <code>cache.miss</code></td>
+					<td>counter, by tier</td>
+					<td>A permanently-zero <code>include_secrets</code> hit rate means the GM view is being regenerated every request</td>
+			</tr>
+			<tr>
+					<td><code>conflict.412</code></td>
+					<td>counter by campaign</td>
+					<td>Elevated rate means Obsidian and the web editor are fighting</td>
+			</tr>
+			<tr>
+					<td><code>secret.reverted</code></td>
+					<td>counter</td>
+					<td>Sync is undoing a reveal — the single most surprising failure this system can have</td>
+			</tr>
+			<tr>
+					<td><code>secret.anchor_drift</code></td>
+					<td>warn</td>
+					<td>Ledger re-association happened (§5.6.3)</td>
+			</tr>
+			<tr>
+					<td><code>secret.reconcile_capped</code></td>
+					<td><strong>error</strong></td>
+					<td>Reconciliation exhausted its budget and left the secret hidden</td>
+			</tr>
+			<tr>
+					<td><code>ws.connected</code> / <code>ws.closed</code> / <code>ws.stale</code></td>
+					<td>gauges</td>
+					<td>Detect leaks; <code>ws.stale</code> fires when a peer stops reading</td>
+			</tr>
+			<tr>
+					<td><code>state.write_ms</code></td>
+					<td>histogram</td>
+					<td>Debounced persistence latency; a spike means the writer is contended</td>
+			</tr>
+			<tr>
+					<td><code>plugin.missing</code> / <code>plugin.version_mismatch</code></td>
+					<td>error</td>
+					<td>Unknown <code>system_id</code> or <code>ruleset_version</code> (§10.8)</td>
+			</tr>
+	</tbody>
+</table>
+<p>The three rows marked as the ones that must never be below <code>error</code> are the
+security-relevant ones: <code>secret.reconcile_capped</code> in particular is the system
+telling you it <em>chose</em> to hide something and a sync fight is unresolved.</p>
+<p>Every event carries <code>campaign_id</code> and, where applicable, <code>path</code>. No event carries
+secret content, file contents, or dice results.</p>
+<hr>
+<h2 id="14-validation-strategy">14. Validation strategy</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Area</th>
+					<th>Method</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Markdown rendering</td>
+					<td>Golden files; assert raw HTML in input is stripped</td>
+			</tr>
+			<tr>
+					<td>Partial-write safety</td>
+					<td>Burst-write a file; assert cache never holds a truncated parse</td>
+			</tr>
+			<tr>
+					<td>Watch loss on rename</td>
+					<td>Atomic-write a page; assert it still re-renders</td>
+			</tr>
+			<tr>
+					<td>Conflict detection</td>
+					<td>Stale <code>If-Match</code> → 412, disk unchanged, no revision written</td>
+			</tr>
+			<tr>
+					<td>Role enforcement</td>
+					<td><code>player</code> PUT → 403; <code>anonymous</code> PUT → 401/404</td>
+			</tr>
+			<tr>
+					<td>Cache partitioning</td>
+					<td><strong>Security test:</strong> private page body must never appear in a public response</td>
+			</tr>
+			<tr>
+					<td>FTS visibility</td>
+					<td>Anonymous search must not return private rows</td>
+			</tr>
+			<tr>
+					<td>FTS lifecycle</td>
+					<td>Obsidian-style rename / delete / undelete → index converges</td>
+			</tr>
+			<tr>
+					<td>Realtime</td>
+					<td>Two clients, concurrent intents, assert convergence + monotonic versions</td>
+			</tr>
+			<tr>
+					<td>Persistence</td>
+					<td>Kill mid-game; assert resume from last debounce</td>
+			</tr>
+			<tr>
+					<td>Concurrency</td>
+					<td><code>go test -race</code> across hub, cache, watcher</td>
+			</tr>
+			<tr>
+					<td>Rule determinism</td>
+					<td>Property test: same (state, intent, seed) → identical mutations across 100 runs</td>
+			</tr>
+			<tr>
+					<td>Ruleset drift</td>
+					<td>Resume a session written under a different <code>ruleset_version</code> → refuse, do not silently re-resolve</td>
+			</tr>
+			<tr>
+					<td>Plugin isolation</td>
+					<td>Panic inside <code>Apply</code> → recovered, error returned, <code>campaign_state</code> byte-identical to before</td>
+			</tr>
+			<tr>
+					<td>Plugin authority</td>
+					<td>A UI plugin attempting to mutate state → cannot; assert no write path is reachable</td>
+			</tr>
+			<tr>
+					<td>Unknown <code>kind</code></td>
+					<td>Page with a <code>kind</code> no plugin registers → degrades to prose, content intact</td>
+			</tr>
+			<tr>
+					<td>Missing plugin</td>
+					<td>Campaign with unknown <code>system_id</code> → game refused, wiki still serves 200</td>
+			</tr>
+			<tr>
+					<td>2014 vs 2024 parity</td>
+					<td>Shared property suite runs green against both overlays</td>
+			</tr>
+			<tr>
+					<td><strong>Plugin conformance</strong></td>
+					<td>A published suite every <code>System</code> must pass: determinism, unknown-<code>kind</code> tolerance, version/migration refusal, GM-only enforcement, <code>Apply</code> panic containment. <strong>A system sharing nothing with 5e must pass it without touching <code>internal/domain/rules</code>.</strong> This is the test that the plugin system actually generalises.</td>
+			</tr>
+			<tr>
+					<td>View rendering</td>
+					<td>Every declared view renders for an empty, a typical, and a maximal <code>Derive</code> output; unknown fields are ignored, not fatal</td>
+			</tr>
+			<tr>
+					<td><strong>Secret redaction</strong></td>
+					<td>For a page containing a secret: GM response contains the body, player response does <strong>not</strong>, anonymous response does <strong>not</strong>, and neither contains the secret text anywhere in the payload — headers, comments, JSON payloads, or HTML source</td>
+			</tr>
+			<tr>
+					<td>Secret reveal</td>
+					<td>Reveal rewrites <code>-</code> → <code>+</code>, logs an audit row, and is visible to players on the next render</td>
+			</tr>
+			<tr>
+					<td>Secret sync conflict</td>
+					<td>Simulate Obsidian reverting <code>+</code> → <code>-</code>; assert the watcher re-applies, counts the reversion, and <strong>stops after the cap leaving it hidden</strong></td>
+			</tr>
+			<tr>
+					<td>Secret concurrency</td>
+					<td>Stale <code>If-Match</code> on a reveal → 412, file unchanged, no ledger row</td>
+			</tr>
+			<tr>
+					<td>Secret search</td>
+					<td>A query matching only secret text returns nothing to any role; snippets never contain secret text</td>
+			</tr>
+			<tr>
+					<td>Secret + cache</td>
+					<td>After a reveal, both cache variants invalidate on the new <code>content_hash</code>; a stale non-GM variant is never served</td>
+			</tr>
+			<tr>
+					<td>Observability</td>
+					<td>Assert each event in §13.2 is emitted by its trigger; assert no event payload contains secret or file content</td>
+			</tr>
+			<tr>
+					<td>Gate</td>
+					<td><code>make ci</code> — format, build, vet, golangci-lint, <code>-race</code></td>
+			</tr>
+	</tbody>
+</table>
+<hr>
+<h2 id="15-implementation-order">15. Implementation order</h2>
+<p>Sequenced by dependency, not by effort.</p>
+<ol>
+<li><strong>Foundations</strong> — middleware chain; config for SQLite path and content-root
+base; <code>admin create</code> CLI; migration skeleton.</li>
+<li><strong>Identity and tenancy</strong> — <code>users</code>, <code>auth_sessions</code>, <code>campaigns</code>,
+<code>campaign_members</code>; auth middleware; campaign registration and <code>os.Root</code>
+creation.</li>
+<li><strong>Content read path</strong> — <code>os.Root</code> confinement; front matter + <code>kind</code>
+discrimination; goldmark render + sanitize; wikilink/embed extensions; render
+cache; <code>ETag</code>.</li>
+<li><strong>Watcher</strong> — fsnotify directory watches, debounce + size-stable, FTS
+maintenance, degraded mode, <code>campaign_state</code> schema.</li>
+<li><strong>Wiki surface</strong> — templ shell and chrome; <code>wiki</code> / <code>edit</code> routes; <code>If-Match</code>
+write path; conflict UI; SSE change-notification; search; assets with Range.</li>
+<li><strong>Realtime</strong> — in-memory <code>campaign_state</code>; hub; protocol codec; placements vs
+definitions; GM-only operations; debounced persist; resume by <code>version</code>.</li>
+<li><strong>Plugin contracts</strong> — <code>domain/rules</code> interfaces; <code>plugin</code> registry wired in
+the composition root; UI page-type and render-hook registration.</li>
+<li><strong>First systems</strong> — 5e engine + base pack, then the 2014 and 2024 overlays and
+their resolver hooks; two reference UI plugins (link preview, dice roller) to
+prove both contracts are usable.</li>
+<li><strong>House rules</strong> — <code>campaign_rule_modules</code>, ordered application, ruleset version
+gating on resume.</li>
+<li><strong>Client</strong> — PixiJS canvas; Datastar live chrome; Tailwind standalone build;
+theme layer served from content.</li>
+<li><strong>Secret callouts</strong> — <code>[!secret]</code> goldmark extension; two-variant render;
+<code>include_secrets</code> cache key; GM-only reveal endpoint with <code>If-Match</code>;
+<code>secrets_revealed</code> ledger; bounded sync reconciliation; FTS exclusion.</li>
+<li><strong>Hardening</strong> — the security tests above, race coverage, failure-mode tests,
+determinism lint rule and its tests. The secret-redaction test gates the
+release: it must fail loudly if a non-GM response ever contains secret text.</li>
+</ol>
+<p>Each phase is independently runnable: the server starts and serves <code>/healthz</code>
+from phase 1 onward. Phases 7–9 are separable — a build with no gameplay plugin
+still serves the wiki, and a campaign with an unknown <code>system_id</code> degrades to
+wiki-only rather than failing to boot. Phase 11 comes late because it refines an
+already-working render pipeline, and because it needs the access control (phase
+2), watcher (phase 4), and conflict-resolution (phase 5) layers underneath it.</p>
+<hr>
+<h2 id="16-open-questions">16. Open questions</h2>
+<p>Deliberately deferred, with a default chosen for v1:</p>
+<ol>
+<li><strong>Cross-campaign wikilinks</strong> — resolution already respects viewer
+permissions. Whether authors should be able to <em>write</em> them is a product call.
+Default: allowed within campaigns the viewer can see.</li>
+<li><strong>Asset storage beyond local disk</strong> — maps are tens of MB. Local disk with
+Range requests is the self-hosted answer; leave a seam for S3-compatible
+storage rather than building it.</li>
+<li><strong>Dice expression scope</strong> — expressions only, no system-specific semantics.
+The seeded RNG is supplied via <code>Context</code> rather than called directly (§10.3),
+which makes a per-session seed + roll log auditable at no extra cost; that log
+is the natural follow-up if trust becomes a concern.</li>
+<li><strong>Player wiki editing</strong> — settled as GM-only. If a group wants shared notes,
+Obsidian already covers it, and <code>editor</code> can be added to the enum later
+without a migration.</li>
+<li><strong>Ruleset version drift</strong> — the policy is &ldquo;refuse to resume on mismatch&rdquo;
+(§10.8). Whether semiplane should instead auto-migrate state forward, or warn
+and let the GM continue, is unresolved. Default: refuse, because silently
+misresolving past state is worse than an extra click.</li>
+<li><strong>Plugin API stability</strong> — gameplay plugins are compiled in, so there is no
+semver contract to honour across releases. <code>Intent</code>/<code>Mutation</code>/<code>Kind</code> are
+therefore semi-public. If plugins ever move out-of-tree, these need versioning
+before that happens.</li>
+</ol>
+<h3 id="161-blocking-dependency-the-uiux-spec-is-stale">16.1 Blocking dependency: the UI/UX spec is stale</h3>
+<p><code>.kilo/plans/1790778908232-responsive-ui-ux-design-spec.md</code> (1,209 lines) was
+written against an earlier revision of this plan and still describes entities
+this plan <strong>removed</strong> when the tenancy model was simplified. It correctly defers
+to this plan for semantics (its own lines 8–10), so the drift is in its
+vocabulary and route tables, not its intent.</p>
+<p><strong>Stale references to fix before that spec is implemented:</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Location</th>
+					<th>Says</th>
+					<th>This plan says</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>line 60</td>
+					<td><code>world</code> — the <code>worlds</code> table, and a <code>world</code> field in the WebSocket <code>hello</code></td>
+					<td>No <code>world</code> entity. <code>hello</code> is <code>{&quot;t&quot;:&quot;hello&quot;,&quot;since&quot;:N}</code> (§7.1)</td>
+			</tr>
+			<tr>
+					<td>line 61</td>
+					<td><code>game</code> — the <code>sessions</code> table and <code>/c/{slug}/play/{session}</code></td>
+					<td>No play-session entity. Route is <code>/c/{slug}/play</code> (§9)</td>
+			</tr>
+			<tr>
+					<td>lines 68–71</td>
+					<td>Interface vocabulary rules premised on a <code>{session}</code> URL parameter</td>
+					<td>No such parameter exists</td>
+			</tr>
+			<tr>
+					<td>line 76, 312, 404</td>
+					<td>TV target, nav label, and route table all address <code>/c/{slug}/play/{session}</code></td>
+					<td><code>/c/{slug}/play</code></td>
+			</tr>
+			<tr>
+					<td>line 102</td>
+					<td>Checklist item banning a second meaning of &ldquo;session&rdquo; across <code>internal/</code></td>
+					<td>Moot as written; §2.1 now fixes the terms directly</td>
+			</tr>
+	</tbody>
+</table>
+<p>Lines 884–885 also say &ldquo;world units&rdquo; but mean map coordinate space, which is a
+standard graphics term and is <strong>not</strong> affected.</p>
+<p><strong>Also missing entirely:</strong> any UI treatment of <code>[!secret]</code> (§5.6). The
+architecture now specifies that secret bodies are absent from non-GM responses,
+which has four direct UI consequences the spec does not cover:</p>
+<ol>
+<li>The GM reveal affordance — a control in the editor surface, distinct from the
+ordinary save path because it is a disclosure action with its own audit row.</li>
+<li>The player-facing redacted view, and the prose gap &ldquo;omit entirely&rdquo; leaves when
+a secret sits mid-sentence.</li>
+<li>Theming for a revealed callout, distinct from a hidden one.</li>
+<li>An accessibility decision: whether a redacted secret is announced to assistive
+technology at all, which risks disclosing its existence.</li>
+</ol>
+<p><strong>Status:</strong> deferred by decision — the spec is left untouched to avoid conflicting
+with its author. Reconcile before either document is built, and treat it as a
+blocker on UI work, not on backend work: phases 1–9 and 11 are unaffected.</p>
+
+
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

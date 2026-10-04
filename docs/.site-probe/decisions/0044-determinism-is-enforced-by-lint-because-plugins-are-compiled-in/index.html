@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0044 — Determinism is enforced by lint because plugins are compiled in — semiplane</title>
+<meta name="description" content="S-10.4&#39;s three rules — no `time.Now`, no map iteration, no direct `crypto/rand` — are one table in `determinism`, and both enforcement mechanisms are derived from it: `forbidigo`&#39;s patterns are computed from the table rather than written in `.golangci.yml`, and `Audit` walks the same table over the parsed and type-checked rule packages. The `maps.Keys` pattern was written, watched fire on the one correct spelling, and removed. `campaign_rule_modules` arrives as migration 0010, with `campaign_id` as `INTEGER` rather than architecture §10.7&#39;s `TEXT`.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0044 — Determinism is enforced by lint because plugins are compiled in — semiplane">
+<meta property="og:description" content="S-10.4&#39;s three rules — no `time.Now`, no map iteration, no direct `crypto/rand` — are one table in `determinism`, and both enforcement mechanisms are derived from it: `forbidigo`&#39;s patterns are computed from the table rather than written in `.golangci.yml`, and `Audit` walks the same table over the parsed and type-checked rule packages. The `maps.Keys` pattern was written, watched fire on the one correct spelling, and removed. `campaign_rule_modules` arrives as migration 0010, with `campaign_id` as `INTEGER` rather than architecture §10.7&#39;s `TEXT`.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0044 — Determinism is enforced by lint because plugins are compiled in</h1>
+    <p class="lede">S-10.4&#39;s three rules — no `time.Now`, no map iteration, no direct `crypto/rand` — are one table in `determinism`, and both enforcement mechanisms are derived from it: `forbidigo`&#39;s patterns are computed from the table rather than written in `.golangci.yml`, and `Audit` walks the same table over the parsed and type-checked rule packages. The `maps.Keys` pattern was written, watched fire on the one correct spelling, and removed. `campaign_rule_modules` arrives as migration 0010, with `campaign_id` as `INTEGER` rather than architecture §10.7&#39;s `TEXT`.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>There is no sandbox. S-10.1 makes a plugin a compiled-in Go module registered explicitly at the composition root, so a gameplay plugin runs in-process with the server&rsquo;s full authority: it can open a file, read a database handle it was handed, and call anything in the standard library. §10.3 states the consequence in one sentence — rule code is forbidden from calling <code>time.Now</code>, ranging over a map, or calling <code>crypto/rand</code> directly — and gives the reason: <code>campaign_state</code> supports optimistic client apply, resume-by-version and replay, all of which break if resolution is not a pure function of <code>(state, intent, seed)</code>. It then says &ldquo;the enforcement is a lint rule plus tests&rdquo;, and that is the whole of what §10.3 says about enforcement.</p>
+<p>Two mechanisms, then, and the obvious way to build them is the one that produces the bug this record exists to prevent. Write the forbidden identifiers in <code>.golangci.yml</code> because a linter configuration is YAML and there is nowhere else to put them. Write the same identifiers in a Go test because a linter does not run on every machine that runs <code>go test</code>. Two lists, one question, and the second list is edited by whoever last touched the rule — which is not the person who thinks about how a resolution can go wrong.</p>
+<p>The failure is silent in the expensive direction. A lint pattern that was deleted still leaves the test green; a test case that was deleted still leaves the lint green. Nothing reports a rule that has stopped being enforced, because an unenforced rule produces no output, and the gate that would have noticed is the one that stopped.</p>
+<p>Two further facts arrived with the code phase 8 already has, and both are reasons the obvious design does not work here.</p>
+<p><strong><code>rules.Context.Rand</code> legitimately uses <code>math/rand/v2</code>.</strong> [0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }}) settled that randomness arrives as <code>Rand(label)</code>, a fresh <code>*rand.Rand</code> derived from the campaign&rsquo;s recorded seed through SHA-256, and that the <code>gosec</code> G404 finding on that one call is suppressed inline with that reason. A determinism rule therefore has to distinguish <code>rand.New(rand.NewPCG(seed, seed))</code> — the one correct implementation of randomness in this codebase — from <code>rand.Intn(6)</code>, which reads a process-global source. Both spell <code>rand.</code>. The distinction is a list of selectors, and a rule that gets it wrong is a rule nobody disables: <code>AGENTS.md</code>&rsquo;s own words about a gate nobody runs, applied to a rule that fires on correct code.</p>
+<p><strong>Map iteration is not an identifier.</strong> <code>for k, v := range m</code> contains no name the linter can be told about. It is also the failure S-14.6 exists to catch, and the one no amount of careful code review catches reliably, because ranging a map looks exactly like ranging a slice.</p>
+<h2 id="decision">Decision</h2>
+<p>There is one table, in <code>internal/domain/rules/determinism</code>, and both mechanisms read it.</p>
+<p><strong><code>ForbiddenRules</code> is the whole of S-10.4 as this project enforces it.</strong> Nine entries, each <code>(kind, package, selectors, reason)</code>, where <code>kind</code> is <code>import</code>, <code>call</code> or <code>range</code>. The reasons are written for whoever wrote the offending line, because the useful half of a refusal is what to reach for instead — <code>range/map</code> names <code>slices.Sorted(maps.Keys(m))</code> as the sanctioned form, and <code>call/math-rand-v2</code> names <code>rand.New(rand.NewPCG(...))</code> as the one thing the list does not forbid.</p>
+<p><strong><code>LintPatterns()</code> computes the linter&rsquo;s configuration from the table.</strong> Every <code>KindCall</code> entry contributes its selectors to the pattern for that package&rsquo;s <em>name</em>, because a name is what a selector expression spells: <code>crypto/rand</code>, <code>math/rand</code> and <code>math/rand/v2</code> are three import paths and one package name, <code>rand</code>. Selectors are sorted and de-duplicated within a group, so the result is deterministic and readable, and the same table always yields the same patterns in the same order. <code>.golangci.yml</code> is not free to hold a hand-written list, because <code>TestTheLintConfigurationIsTheTableTheAuditWalks</code> requires it to be exactly what <code>LintPatterns()</code> returns — and separately requires that <em>every</em> <code>KindCall</code> selector is matched by a configured pattern, compiled and run, which is the assertion that proves coverage rather than restating the derivation.</p>
+<p><strong><code>ScopePattern()</code> computes the linter&rsquo;s path scope from <code>RuleDirs()</code>,</strong> for the same reason and because the failure is worse: an audit watching a directory the linter does not is a green build with a real nondeterminism in it. The scope names <code>internal/domain/rules</code> and <code>internal/domain/systems</code>, and the second directory does not exist yet. Naming it anyway is the <code>A11Y_ROUTE_PKGS</code> argument: a scope that has to be amended to cover a new package is a scope that will be amended after the violation rather than before it. <code>Audit</code> skips a directory that is absent, fails when <em>no</em> directory contributed a file, and treats a stat error other than &ldquo;not there&rdquo; as an error — because a permission problem reading the rules directory is the shape of a gate that quietly stops auditing.</p>
+<p><strong><code>Audit</code> walks the table over parsed and type-checked rule code.</strong> It parses each <code>.go</code> file that is not a <code>_test.go</code>, groups the files by their package clause, and type-checks each group with <code>go/importer</code>&rsquo;s source importer — a second resolution against real types rather than a syntactic guess, because the interesting question is whether a range expression&rsquo;s <em>type</em> is a map, and only a type checker answers that. A file that does not parse and a package that does not type-check are both <strong>errors</strong>, not findings: an audit that could not read its input and reported nothing is exactly the &ldquo;audit that cannot fail&rdquo; this repository has been bitten by twice. Test files are excluded because a test resolves nothing, and because this package&rsquo;s own fixtures are files containing <code>time.Now</code>.</p>
+<p><strong>The audit is a strict superset of the linter, and the difference is written down.</strong> It refuses an import, a <em>reference</em> to a forbidden selector taken as a value rather than called (<code>now := time.Now</code> is the same hole one step earlier), a range over a map, and a range over an iterator from <code>maps.Keys</code>, <code>maps.Values</code> or <code>maps.All</code>. <code>LintBlindSpots()</code> names the two rules no selector pattern can express — <code>range/map</code> and <code>range/map-iterator</code> — and <code>TestTheLintBlindSpotsAreExactlyTheRangeRules</code> asserts that list is <em>exactly</em> the <code>KindRange</code> entries and that no configured pattern mentions <code>maps</code> at all. What the linter can reach that the audit cannot: nothing.</p>
+<p><strong>The <code>maps.Keys</code> pattern was written, and removed.</strong> It was in <code>.golangci.yml</code> as <code>^maps\.(All|Keys|Values)$</code>, on the reasoning that ranging an iterator is ranging a map. It fired on <code>slices.Sorted(maps.Keys(m))</code> — the sanctioned spelling — exactly as loudly as on <code>for k := range maps.Keys(m)</code>, because <code>forbidigo</code> sees the call and not what the call is an argument to. That is the same failure <code>Context.Rand</code>&rsquo;s G404 suppression exists to avoid, in the linter&rsquo;s own configuration: a determinism rule that fires on the one correct way to write the thing it forbids gets disabled wholesale by the next contributor, and a disabled rule catches nothing. <code>Audit</code> keeps the rule, because it reads the range clause rather than the call and can therefore tell the two apart. The measured asymmetry is recorded rather than asserted: injecting a map range into <code>internal/domain/rules/context.go</code> leaves <code>golangci-lint run</code> at exit 0 and fails <code>go test</code>.</p>
+<p><strong><code>internal/domain/rules/determinism</code> also owns the house-rule scope check.</strong> S-10.5 refuses a module that reorders resolution or introduces nondeterminism, and that refusal has no other enforcement — the lint rule and the audit catch code reaching for a clock, and neither can see a compiled-in module&rsquo;s claim about what it may do. A <code>Scope</code> is a list of <code>Capability</code> values; <code>Scope.Admissible()</code> refuses <code>CapReorder</code> and <code>CapUnseededRandomness</code> <strong>by name</strong>, refuses an unrecognised capability under <code>ErrUnknownCapability</code>, and treats nil and empty as admissible. Refusing an unknown capability is the direction that matters: a capability nobody has classified must not be treated as harmless, because the next build to add one may classify it as a refusal and this build would already have enabled the module. <code>Admissible</code> is a pure function over a compiled-in value — no configuration, no database, no registry — so <code>internal/domain/rules/houserules</code> can call it at registration without either package importing the other.</p>
+<p><strong>Migration 0010 adds <code>campaign_rule_modules</code>,</strong> with two departures from architecture §10.7&rsquo;s sketch. <code>campaign_id</code> is <code>INTEGER</code>, not <code>TEXT</code>: migration 0005 creates <code>campaigns</code> with <code>INTEGER PRIMARY KEY AUTOINCREMENT</code>, and every other campaign-scoped table in this schema spells the column <code>INTEGER</code>. A <code>TEXT</code> column referencing an <code>INTEGER</code> primary key would store the id as text, and SQLite compares text to integer by class, so a <code>WHERE campaign_id = ?</code> issued with an <code>int64</code> would match nothing — silently, at campaign load, as an effective ruleset with no modules in it. <code>TestTheRuleModuleSchemaIsTheOneTheDomainAssumes</code> reads the declared types out of <code>pragma_table_info</code> for exactly that reason. And <code>ON DELETE CASCADE</code> is added, which the sketch omits, matching every other campaign-scoped table here. §10.7&rsquo;s other two statements — <code>campaigns.system_id</code> and <code>campaigns.ruleset_version</code> — were already delivered in migration 0005, which records at length why they are <code>CREATE</code>d rather than the <code>ALTER</code>s the record sketches.</p>
+<p><strong><code>RuleModulesForCampaign</code> orders by <code>(position, module_id)</code>, and the second key is the point.</strong> Two modules may legitimately share a <code>position</code>: nothing in the schema declares positions unique, and a GM editing a list has no reason to notice two rows at zero. Over an order that is not total, §10.5&rsquo;s &ldquo;conflicts resolve first-match-wins&rdquo; has no referent — the winner becomes whichever row the storage engine returned first, which is the last-write-wins behaviour the sentence forbids, arriving by a different route. <code>module_id</code> is unique within a campaign by the primary key, so it cannot tie. <code>determinism.Order</code> states the same order in Go, for a caller assembling a set in memory, and the two are held together twice: behaviourally, by <code>TestRuleModulesForCampaignMatchesTheOrderTheDomainStates</code>, and structurally, by <code>TestTheRuleModuleOrderByIsTotal</code>, which reads the keys out of the compiled statement and sorts a fixture by <em>those keys</em>.</p>
+<p><strong>The unit of a write is the whole set.</strong> <code>ReplaceRuleModules</code> deletes and re-inserts in one transaction, because applying a half-written module set is not a state this project can describe: a campaign either has the effective ruleset its modules describe or the previous one. Every row is validated before the transaction opens — <code>rules.ParseID</code> for the identifier rather than a second implementation of it, a duplicate check that reports the caller&rsquo;s slice rather than the driver&rsquo;s message, and a JSON-<strong>object</strong> check on <code>config</code> whose shape is what the column&rsquo;s <code>DEFAULT '{}'</code> asserts. Which <em>keys</em> a module understands is deliberately not checked: that vocabulary is <code>houserules</code>&rsquo; to write.</p>
+<h2 id="consequences">Consequences</h2>
+<p>The table is the only place a determinism rule is written down. Adding a selector means editing <code>forbiddenRules</code> and nothing else; <code>.golangci.yml</code> fails the build if it does not say what the table derives, and <code>TestTheLintBlindSpotsAreExactlyTheRangeRules</code> fails if a <code>range</code> rule is quietly promoted or demoted.</p>
+<p>The audit costs real time, and the cost is stated because a gate nobody can afford to run is a gate nobody runs. <code>go test -race</code> for this package takes about 8 seconds, of which roughly half is type-checking <code>determinism</code>&rsquo;s own dependency graph (<code>go/types</code>, <code>go/importer</code>, <code>go/parser</code>) from source, because the audit polices itself and this package is inside the audited tree. The obvious implementation — a fresh importer per audit — measured <strong>41 seconds</strong> instead, because the source importer caches a package&rsquo;s dependencies only within one importer and four fixtures that mention a clock each re-resolved <code>time</code>&rsquo;s whole transitive closure. So there is one resolver for the process, guarded by a mutex, and the audits serialise; the second audit of a package that imports <code>time</code> is then a lookup rather than a rebuild. That is the only concurrency this package has, and it is a mutex around a cache rather than a parallel audit.</p>
+<p><code>forbidigo</code> replaces its default <code>forbid</code> list (<code>fmt.Print*</code> and the bare <code>print</code>/<code>println</code>) as a side effect of being configured here. Nothing in this repository calls them, and the configuration test confirms the default is gone rather than assuming it.</p>
+<p>Two layers that are not the same strength will drift if the gap is not written down, so it is written down in three places: <code>LintBlindSpots()</code>, the <code>.golangci.yml</code> comment above the two patterns, and <code>TestTheLintBlindSpotsAreExactlyTheRangeRules</code>.</p>
+<p>Two mutations did not fail any test, and both are recorded because &ldquo;a test that cannot fail is not a test&rdquo; cuts both ways — a mutation that changes behaviour nobody can observe is a place where a test is asserting the wrong thing, or is asserting nothing.</p>
+<p><strong><code>ORDER BY position</code> without the tie-break passed every behavioural test in <code>internal/store</code>.</strong> <code>ReplaceRuleModules</code> inserts in <code>determinism.Order</code> order and SQLite answers the <code>WHERE campaign_id = ?</code> lookup from the primary key index, so a table built through this package&rsquo;s own write path comes back in module-id order whichever <code>ORDER BY</code> it is given. Rows inserted by hand in reverse id order came back in id order too. The difference only appears for rows written by something else, and only under a different plan — which is why the order is now also asserted where it is written, by reading the keys out of the statement and using them.</p>
+<p><strong>Moving the validation inside the write transaction changed nothing observable,</strong> because the writer wraps the error with <code>ErrWriteFailed</code> and the transaction rolls back. The claim &ldquo;a rejected write leaves the previous set intact&rdquo; is true either way. What the pre-validation ordering actually decides is which of two simultaneous mistakes a caller is told about, and <code>TestAMistypedModuleIdIsReportedInPreferenceToAnUnknownCampaign</code> holds that specifically rather than implying the ordering is load-bearing when it is not.</p>
+<p>A real violation in rule code was injected in both directions, and both layers fired: <code>time.Now</code> in <code>rules.Context.Rand</code> produced a <code>forbidigo</code> finding <em>and</em> two audit findings (the import and the call); a map range produced no lint finding and one audit finding. The same probe in <code>internal/domain/systems</code> — a directory that did not exist when this work started, and which <code>RuleDirs</code> named anyway — produced the same two findings from both layers with no edit to any configuration, which is the claim about the forward-looking scope demonstrated rather than asserted. The audit&rsquo;s own meta-test — one fixture per table entry, each required to be objected to by name, plus a closure asserting every entry has a fixture — is what makes &ldquo;the audit works&rdquo; a claim rather than a hope, and its sanctioned-forms test is the one that decides whether the rules are rules or noise.</p>
+<p><code>internal/domain/rules/rules_test.go</code> still holds its own import audit, <code>TestNoRuleFileImportsAClockOrAnAmbientSourceOfRandomness</code>. It is left in place: that file is not this work item&rsquo;s to edit, and it checks one thing this package&rsquo;s audit deliberately does not — that <code>math/rand/v2</code> <em>is</em> imported, which is how the one permitted <code>rand</code> package stays required rather than merely un-forbidden. It is a narrower sibling over one directory, not a second answer to a different question.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Write the <code>forbidigo</code> patterns in <code>.golangci.yml</code> and the selectors in Go, with a test comparing them by hand.</strong> Rejected: that is three lists, not two, and the test would itself need updating when a rule changes — so the rule now has three places to be edited and one of them is a test. Deriving the configuration makes the list impossible to get wrong rather than merely checked.</p>
+<p><strong>Generate <code>.golangci.yml</code> from the table.</strong> Rejected: the linter&rsquo;s configuration is the phase integrator&rsquo;s file, and a generated one would put a build step between <code>golangci-lint config verify</code> and a file a human reads during an incident. The derivation goes the other way, from the file to the table, and the direction of the dependency is the point.</p>
+<p><strong><code>depguard</code> instead of <code>forbidigo</code>, forbidding the imports rather than the calls.</strong> Rejected, and not because it is wrong: forbidding <code>time</code> outright is stricter and would cover a <code>time.Duration</code> a rule resolver used for no reason. But S-10.4&rsquo;s rules are about what a resolution can <em>depend on</em>, and a package that is imported and never called is already caught by the audit&rsquo;s import rule — while <code>depguard</code> cannot express map iteration at all. Two linters for one table would be two configurations to keep in step, which is the problem this record exists to solve.</p>
+<p><strong>A type-aware audit with no linter at all.</strong> Rejected: it is the stronger of the two mechanisms and it is the one that runs only when somebody runs <code>go test</code>. <code>AGENTS.md</code> puts it exactly: a gate that can be skipped by not running a command is a gate nobody runs, and <code>golangci-lint run</code> is in <code>make check</code> for every contributor whether or not they read this file.</p>
+<p><strong>A syntactic audit — detect a map range by looking for a map literal or a call to <code>maps.Keys</code> — with no type checking.</strong> Rejected: it cannot see a map behind a struct field or a function result, so <code>for k := range s.weights</code> and <code>for k := range buildWeights()</code> would both pass, which is the shape of an audit that cannot fail. Type information is what makes the rule the rule, and it costs about a second.</p>
+<p><strong>Forbid map iteration with <code>//nolint</code> on the sorted form.</strong> Rejected: <code>nolint</code> is per-line and <code>forbidigo</code> matches the <code>maps.Keys</code> call wherever it appears, so every sanctioned use would need a suppression comment, and a rule whose correct uses all carry a suppression is a rule the next contributor deletes rather than reads around.</p>
+<p><strong>A <code>Scope</code> that takes the registry, so <code>Admissible</code> can look up what a module id means.</strong> Rejected: it would make <code>domain</code> depend on the plugin registry, and <code>internal/domain</code> imports nothing from the project by rule. The check is a pure function over a compiled-in value, which is what lets <code>houserules</code> call it at registration without either package importing the other.</p>
+<p><strong>Store <code>Scope</code> in the <code>config</code> column, so the store can refuse an inadmissible module on write.</strong> Rejected twice. It would put a vocabulary this record does not own into a JSON document <code>houserules</code> owns, and it would be the wrong layer: the store cannot know which modules this build has, so it cannot check anything a registry would not check better, and a check the store performs for a registry that does not exist is a second answer waiting to diverge.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

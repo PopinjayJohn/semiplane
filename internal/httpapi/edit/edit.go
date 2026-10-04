@@ -369,6 +369,7 @@ func (h *Handler) edit(
 		ContentHash: src.hash,
 		Preview:     preview,
 		State:       editor.SaveIdle,
+		Secrets:     h.disclosuresFor(access.Campaign, target.Path(), src.body, src.hash),
 	})
 }
 

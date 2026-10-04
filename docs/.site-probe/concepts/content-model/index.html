@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Content model — semiplane</title>
+<meta name="description" content="Markdown, front matter, wikilinks, and embeds — what semiplane reads from your vault.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/concepts/content-model/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Content model — semiplane">
+<meta property="og:description" content="Markdown, front matter, wikilinks, and embeds — what semiplane reads from your vault.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/concepts/content-model/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Content model</h1>
+    <p class="lede">Markdown, front matter, wikilinks, and embeds — what semiplane reads from your vault.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#one-markdown-file-is-one-page">One markdown file is one page</a></li>
+    <li><a href="#front-matter">Front matter</a></li>
+    <li><a href="#markdown-dialect">Markdown dialect</a></li>
+    <li><a href="#link-resolution">Link resolution</a></li>
+    <li><a href="#raw-html-is-not-allowed">Raw HTML is not allowed</a></li>
+    <li><a href="#the-content-pipeline">The content pipeline</a></li>
+    <li><a href="#concurrency-with-obsidian">Concurrency with Obsidian</a></li>
+    <li><a href="#backups">Backups</a></li>
+  </ul>
+</nav>
+    </details><h2 id="one-markdown-file-is-one-page">One markdown file is one page</h2>
+<p>A page is a <code>.md</code> file at <code>(campaign, path)</code>. Prose and game objects are the same
+thing, discriminated by the optional <code>kind</code> in front matter. There is no separate
+&ldquo;content type&rdquo;, and there is no content that lives only in the database.</p>
+<h2 id="front-matter">Front matter</h2>
+<p>YAML, parsed with a parser that bounds alias expansion and document size. Front
+matter is attacker-reachable — it comes from files an Obsidian sync wrote — so it
+is treated as untrusted input, and every path inside it is resolved within the
+campaign&rsquo;s <code>os.Root</code> rather than merely cleaned.</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l">The Drowned Lighthouse</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">handout</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="l">mystery, coast]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">summary</span><span class="p">:</span><span class="w"> </span><span class="l">Read aloud to the party when they reach the causeway.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">The beam still turns. Nobody has turned it on in eleven years.
+</span></span></code></pre></div><p>Front matter is parsed separately and <strong>never reaches the renderer</strong>, so a value
+that happens to contain HTML cannot become markup.</p>
+<h2 id="markdown-dialect">Markdown dialect</h2>
+<p>CommonMark with GitHub extensions, footnotes and typographic replacement, plus
+automatic heading identifiers. On top of that, four semiplane-specific
+extensions:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Syntax</th>
+					<th>Meaning</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>[[Page]]</code></td>
+					<td>Wikilink to another page. Obsidian-compatible.</td>
+			</tr>
+			<tr>
+					<td><code>![[Page]]</code></td>
+					<td>Embed another page&rsquo;s rendered content.</td>
+			</tr>
+			<tr>
+					<td><code>![[image.png]]</code></td>
+					<td>Embed an asset.</td>
+			</tr>
+			<tr>
+					<td><code>{{statblock}}</code></td>
+					<td>Render a referenced game object as a stat block.</td>
+			</tr>
+			<tr>
+					<td><code>{{dice &quot;1d20+5&quot;}}</code></td>
+					<td>Render a dice expression. Evaluated server-side.</td>
+			</tr>
+	</tbody>
+</table>
+<p><code>{{dice}}</code> exists in the document and is never evaluated in the browser: a
+client-side roll is unverifiable and would break the audit trail. The expression
+grammar belongs to the gameplay system, so a d20 system and a 2d6-pool system
+describe different grammars and the protocol never assumes d20.</p>
+<h2 id="link-resolution">Link resolution</h2>
+<p><code>[[Page]]</code> resolves Obsidian-style, in this order:</p>
+<ol>
+<li>by relative path,</li>
+<li>by basename within the campaign,</li>
+<li>by basename within any other campaign the viewer is allowed to see — never
+within one they cannot.</li>
+</ol>
+<p>Unresolved links are recorded at index time and reported as a broken-link list,
+rather than being silently rendered as plain text.</p>
+<h2 id="raw-html-is-not-allowed">Raw HTML is not allowed</h2>
+<p>The renderer runs with raw HTML disabled, and sanitisation happens before output.
+This is a security boundary rather than a style choice: the content root is
+writable by an Obsidian sync, by Obsidian plugins, and by any device that syncs
+that vault. Treating that as HTML-shaped input and shipping it to other people&rsquo;s
+browsers would be indefensible.</p>
+<h2 id="the-content-pipeline">The content pipeline</h2>
+<p>Rendering is event-driven, not request-time. One watcher serves every campaign
+and routes events by path prefix. A burst of writes is handled by a per-path
+debounce plus a size-stable confirmation before the file is read, because
+Obsidian Sync and iCloud both write in bursts and a half-written file parsed as
+complete is worse than a slightly stale one.</p>
+<p>Dotfiles and <code>.tmp</code>/<code>.swp</code>/<code>~</code> suffixes are ignored. Symlinks inside the tree are
+rejected by default: the watcher&rsquo;s behaviour around them is documented as
+uncertain.</p>
+<p>Writes go through a temporary file in the same directory, then <code>fsync</code>, then
+<code>Rename</code>. A watcher that watched individual files would stop watching a file the
+moment an atomic write replaced it, so semiplane watches <strong>directories</strong> and
+checks the file directly.</p>
+<h2 id="concurrency-with-obsidian">Concurrency with Obsidian</h2>
+<p>Two writers with no shared lock — a browser tab and a sync client — cannot be
+serialised with a file lock, because Obsidian is a separate process that knows
+nothing about semiplane. Instead, every browser write carries an HTTP
+precondition:</p>
+<pre tabindex="0"><code>GET /c/{slug}/edit/{path}          → 200, ETag: &#34;&lt;hash&gt;&#34;
+PUT /c/{slug}/edit/{path}  If-Match: &#34;&lt;hash&gt;&#34;
+   → 200 + new ETag    (matched)
+   → 412 + current body  (disk moved on)   ← RFC 9110
+</code></pre><p>A mismatch returns 412 with the current file contents, records no revision, and
+writes nothing. There is no last-write-wins fallback and no silent overwrite. The
+editor shows the two versions side by side for per-hunk accept/reject, and every
+prior revision is retained — so nothing is ever lost to a bad merge.</p>
+<h2 id="backups">Backups</h2>
+<p>Two artifacts, and they can desync. Back up both:</p>
+<ol>
+<li><strong>The content root.</strong> The source of truth for pages. A plain file copy is fine
+when nothing is writing.</li>
+<li><strong>A consistent SQLite snapshot</strong>, taken with the <code>.backup</code> API or
+<code>VACUUM INTO</code> — never a raw file copy while the server is running.</li>
+</ol>
+<p>The database is a rebuildable index plus live game state. If you can restore the
+vault alone, you can rebuild everything except the last few seconds of a game in
+progress.</p>
+<p>Details under [operating]({{ &ldquo;operating/&rdquo; | relURL }}).</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

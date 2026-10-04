@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0052 — Third-party browser assets are committed, digest-pinned, and served from our own origin — semiplane</title>
+<meta name="description" content="PixiJS and Datastar are committed under `internal/web/static/vendor/` with a sha256 per file and the upstream archive integrity, `make vendor` re-fetches and verifies, and `make vendor-check` re-hashes the committed bytes with no network at all.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0052-third-party-browser-assets-are-committed-and-digest-pinned/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0052 — Third-party browser assets are committed, digest-pinned, and served from our own origin — semiplane">
+<meta property="og:description" content="PixiJS and Datastar are committed under `internal/web/static/vendor/` with a sha256 per file and the upstream archive integrity, `make vendor` re-fetches and verifies, and `make vendor-check` re-hashes the committed bytes with no network at all.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0052-third-party-browser-assets-are-committed-and-digest-pinned/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0052 — Third-party browser assets are committed, digest-pinned, and served from our own origin</h1>
+    <p class="lede">PixiJS and Datastar are committed under `internal/web/static/vendor/` with a sha256 per file and the upstream archive integrity, `make vendor` re-fetches and verifies, and `make vendor-check` re-hashes the committed bytes with no network at all.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#two-upstreams-and-why-the-manifest-names-them-rather-than-assuming-one">Two upstreams, and why the manifest names them rather than assuming one</a></li>
+        <li><a href="#three-targets-because-there-are-three-claims">Three targets, because there are three claims</a></li>
+        <li><a href="#the-check-is-a-go-test-and-it-is-not-reimplemented">The check is a Go test, and it is not reimplemented</a></li>
+        <li><a href="#origin-local-and-why-a-licence-is-a-pinned-file"><code>origin: &#34;local&#34;</code>, and why a licence is a pinned file</a></li>
+        <li><a href="#the-committed-bytes-have-to-be-staged-to-be-served-at-all">The committed bytes have to be staged to be served at all</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Phase 9 adds two third-party pieces of JavaScript to the browser: the renderer
+for the live tabletop, which
+[0015]({{ &ldquo;decisions/0015-pixijs-and-client-surface/&rdquo; | relURL }})
+chose as PixiJS v8, and the patcher for the live chrome, which
+[0014]({{ &ldquo;decisions/0014-datastar-scope/&rdquo; | relURL }}) scoped to Datastar over
+SSE. Both are libraries this repository did not write, both are served to
+readers, and both are <strong>executable code running in a reader&rsquo;s browser with the
+authority of the page they are on</strong>.</p>
+<p>Two properties of this product make the obvious answers wrong, and they pull in
+opposite directions from how a front-end project normally resolves a dependency.</p>
+<p><strong>First, the assets route is campaign-scoped and reader-authorised.</strong> S-8 answers
+<code>/c/{slug}/assets/**</code> through a gate, and
+[0024]({{ &ldquo;decisions/0024-authorisation-gates-mount-not-handler/&rdquo; | relURL }})
+is the rule that the gate is mounted rather than checked. A CDN is therefore a
+<strong>second origin this product would have to authenticate a player to</strong>: the
+access matrix would have to be reproduced somewhere that is not this codebase,
+for an asset that is the same bytes for every reader of every campaign. It is
+also an origin the campaign&rsquo;s gate never touched, which means the one class of
+byte this codebase can actually vouch for — bytes it holds and hashes — is the
+one class a CDN cannot supply.</p>
+<p><strong>Second, this repository ships one static binary.</strong>
+[0001]({{ &ldquo;decisions/0001-go-as-implementation-language/&rdquo; | relURL }}) is the
+decision to have no runtime to install, and a self-hosted instance is frequently
+on a network with no route to a registry. A build that fetches its own front-end
+dependencies is a build whose output depends on a third party being up, and a
+product whose stated property is &ldquo;air-gap friendly&rdquo; cannot have its own assets
+behind somebody else&rsquo;s uptime.</p>
+<p>[0015]({{ &ldquo;decisions/0015-pixijs-and-client-surface/&rdquo; | relURL }}) already
+committed to the answer in a single line — &ldquo;a committed, integrity-pinned file
+served from the app&rsquo;s own origin&rdquo;, pointing at D13 in the delivery plan — and
+phase 9&rsquo;s plan resolved it the same way. Neither shipped a record, and the
+phase&rsquo;s Definition of Done requires one. This is that record, and it covers
+<strong>both</strong> assets rather than only the one that happened to land first: the second
+package is added to the same <code>packages</code> array by the same mechanism, and nothing
+in the Makefile changed to accommodate it.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Every third-party browser asset is committed under
+<code>internal/web/static/vendor/</code>, declared in <code>tools/vendor.json</code>, and held to two
+digests that are not interchangeable.</strong></p>
+<ul>
+<li><code>source.integrity</code> is the upstream&rsquo;s own Subresource Integrity value: the
+<strong>sha512 of the source archive</strong>. The archive is never committed, so this is
+the digest only <code>make vendor</code> can check, against the bytes the source actually
+served.</li>
+<li><code>files[].sha256</code> and <code>files[].bytes</code> describe the <strong>committed file</strong> — what
+<code>make vendor-check</code> recomputes from disk on every <code>make check</code>.</li>
+</ul>
+<p>Comparing the archive digest in the offline check would be checking a file the
+gate cannot see, and comparing the committed digest in the fetch would trust
+whatever the source served. Both are present because the two questions are
+different: <em>did the source give me the artefact it says it did?</em> and <em>are the
+bytes on this disk the bytes this repository reviewed?</em></p>
+<h3 id="two-upstreams-and-why-the-manifest-names-them-rather-than-assuming-one">Two upstreams, and why the manifest names them rather than assuming one</h3>
+<p><code>source.kind</code> is <code>npm</code> for a registry tarball and <code>archive</code> for a project&rsquo;s own
+release tarball, and <code>tools/vendor</code> takes <strong>one path for both</strong>: an <code>https</code> URL,
+an integrity digest checked <em>before</em> anything is decompressed, and one named
+member walked out of the archive. <code>files[].origin</code> is <code>archive</code> for a file
+extracted from that pinned source and <code>local</code> for a file this repository wrote —
+the MIT licence is the only one, because MIT requires the notice to travel with
+the code.</p>
+<p>The distinction is bookkeeping, not behaviour, and the honest reason it exists
+is that <strong>Datastar is not served by a registry.</strong> npm&rsquo;s
+<code>@starfederation/datastar</code> stops at <code>1.0.0-beta.11</code>, and every build from
+0.20.0 onwards dispatches on <code>datastar-merge-fragments</code>; the rename to
+<code>datastar-patch-elements</code> this product emits happened at 1.0.0. So the pinned
+source is a GitHub tag tarball for <code>v1.0.4</code>, and labelling it <code>npm</code> was a stated
+falsehood in the one file whose entire job is being trustworthy about
+provenance. A manifest whose <code>kind</code> is wrong for half its entries trains the
+reader to stop reading it, which is the whole cost this decision is paying to
+avoid.</p>
+<p>The alternative was to leave the lie and document it in the manifest&rsquo;s
+<code>description</code>, which is what first happened: a paragraph explaining that one entry
+says <code>npm</code> and means something else. An apology in a data file is not a
+correction, and the field was small enough to fix.</p>
+<h3 id="three-targets-because-there-are-three-claims">Three targets, because there are three claims</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Target</th>
+					<th>Network</th>
+					<th>Claim</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>make vendor</code></td>
+					<td>yes</td>
+					<td>Re-fetch every pinned package, verify it, write the pinned bytes into the vendor tree.</td>
+			</tr>
+			<tr>
+					<td><code>make vendor-dry-run</code></td>
+					<td>yes</td>
+					<td>The same fetch and the same verification, writing nothing.</td>
+			</tr>
+			<tr>
+					<td><code>make vendor-check</code></td>
+					<td><strong>no</strong></td>
+					<td>Re-hash the committed bytes, and require every file in the served tree to be declared.</td>
+			</tr>
+	</tbody>
+</table>
+<p><code>vendor-check</code> is in <code>check</code>, immediately after the format diff check and before
+<code>make css</code>. It sits there for the reason <code>css</code> and <code>templ</code> sit before <code>build</code>:
+the staged vendor tree is copied into <code>internal/web/static/dist/</code>, <code>internal/web</code>
+embeds <code>all:static/dist</code>, and <code>build</code> therefore embeds <strong>whatever vendored bytes
+are on disk</strong> into the shipped binary. A build that embedded a swapped blob
+would produce a working binary serving somebody else&rsquo;s JavaScript while every
+gate below that line reported green about it. It also reads a committed file
+rather than a build output, which is the same category of check as the format
+diff above it, and the cheapest place to find a problem.</p>
+<p><strong><code>vendor-check</code> reaches no network</strong>, and that is a requirement rather than an
+optimisation: CI has no npm account and no credentials, so a gate that fetched
+there would make <code>make check</code> depend on a third party being up. It is also
+<strong>guarded</strong>, in the same idiom as <code>a11y</code>, because <code>go test -run</code> exits <strong>0</strong>
+when its pattern matches nothing — a pin checked by a gate that selected no
+assertion is a pin that is trusted rather than checked. AGENTS.md records two
+separate occasions on which this repository shipped a gate that was green and
+looked nowhere.</p>
+<p><code>vendor-dry-run</code> exists because <code>vendor-check</code> structurally cannot answer the
+question a maintainer asks when adding a package. Editing the manifest changes
+the digests, so the offline check passes the instant the wrong digests are
+written down: it compares the disk against the manifest, and both were just
+edited. Confirming a manifest edit <strong>against the registry</strong>, before it is
+committed, is a network operation and gets its own target.</p>
+<h3 id="the-check-is-a-go-test-and-it-is-not-reimplemented">The check is a Go test, and it is not reimplemented</h3>
+<p><code>vendor-check</code> runs <code>TestTheVendoredBytesMatchThePin</code>. It reads the whole
+manifest rather than one package, so adding a package to <code>packages</code> is covered
+without touching the Makefile, and it holds a second claim the Makefile could
+not: <strong>every file in the served vendor tree is declared</strong>. A digest gate over
+the manifest&rsquo;s own list cannot catch the interesting accident — a hand-copied
+script dropped into a directory the product serves, which no digest covers
+because nobody wrote one.</p>
+<p>A second implementation in the Makefile was rejected for the reason this
+repository keeps recording: two answers to one question is one more than a
+repository can check, and the two would be free to disagree about what the pin
+means. The fetching half has no such existing implementation and is
+<code>tools/vendor</code>, a Go program — because a bounded HTTP read, a base64 Subresource
+Integrity comparison, a gzip tar member lookup and a write that is refused
+unless the digest matches are four things to get right and not one shell
+pipeline to get right casually. Its tests use an <code>httptest</code> TLS registry, so the
+fetcher is itself covered by <code>make check</code>, offline.</p>
+<h3 id="origin-local-and-why-a-licence-is-a-pinned-file"><code>origin: &quot;local&quot;</code>, and why a licence is a pinned file</h3>
+<p>A file this repository wrote is committed and hashed like any other but has
+nothing upstream to re-fetch, so <code>make vendor</code> verifies it in place and reaches
+no network for a package whose files are all local. The one such entry today is
+a licence notice, and it is a <strong>declared file</strong> rather than an afterthought
+because MIT requires the notice to travel with the code — a licence that is
+regenerable is a licence nobody can prove was ever there.</p>
+<h3 id="the-committed-bytes-have-to-be-staged-to-be-served-at-all">The committed bytes have to be staged to be served at all</h3>
+<p><code>internal/web</code> embeds <code>all:static/dist</code> and <code>/assets/</code> serves exactly that tree,
+so anything the browser fetches must be <strong>in</strong> <code>static/dist/</code> or it 404s — and a
+404 asset is a <em>silently</em> absent behaviour: the page renders, the tabletop loads,
+and the map is a blank box. <code>make stage-assets</code> copies <code>static/js/**.js</code> and
+<code>static/vendor/**</code> in with their relative layout preserved, because
+<code>scene.js</code> imports <code>../../vendor/pixi.min.mjs</code> and a flattened copy is a module
+graph that cannot resolve. <code>*.js</code> only, and not as an optimisation: those trees
+also hold the <code>*_test.go</code> files that audit the modules beside them, and a copy
+that took everything would embed a Go test file into the binary and serve it
+from a route with no gate on it.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>The binary carries the blobs.</strong> PixiJS <code>browserAll</code> is 841KB committed and
+841KB embedded, and Datastar is small beside it. That is the price, and it is
+paid in exchange for a build that needs no registry and an instance that can
+serve the map with no egress at all. <code>pixi.min.mjs</code> ends in a
+<code>sourceMappingURL</code> comment naming a file this repository deliberately does not
+ship: a devtools 404, on purpose, because a 2.2MB map for an 841KB module is
+not a cost a self-hosted instance should carry.</p>
+<p><strong>A version bump is a diff in <code>tools/vendor.json</code> and one command.</strong>
+<code>make vendor-dry-run</code> confirms it against the registry, <code>make vendor</code> writes it,
+<code>make vendor-check</code> confirms the disk. Upstream re-publishing a version is a real
+event — npm permits it — and the pin turns it into a loud failure that names both
+digests rather than a silent change of what the product serves.</p>
+<p><strong>The pin is a provenance claim, not a safety claim.</strong> It says these bytes are
+the ones a human read a diff for. It does not say they are free of anything, and
+a digest gate that is mistaken for an audit is worse than none, because it reads
+as an assurance nobody made. What is checked beyond the digest is deliberately
+narrow: <code>TestTheVendoredFileIsThePinnedOneBytes</code> reads the version string the
+build itself embeds, because a digest regenerated from the <em>wrong</em> tarball is
+consistent with itself.</p>
+<p><strong><code>tools/vendor</code> is inside the module, so the ordinary gate covers it.</strong> <code>go vet</code>, <code>golangci-lint</code> and <code>go test -race ./...</code> reach <code>tools/</code>, which means a
+fetcher nobody tested could not be committed. That is the argument for a Go
+program over a shell script: the shell alternative would need its own harness, and
+the repository has one toolchain.</p>
+<p><strong>A missing target is a silent absence, and this phase produced two reports of
+one.</strong> Two work items independently discovered that <code>/assets/</code> serves
+<code>static/dist/</code>, that nothing staged <code>static/js/</code> or <code>static/vendor/</code> into it, and
+that neither could fix it because the Makefile belongs to the integrator. The
+symptom in a browser is a script tag that resolves to nothing: no error in the
+build, no error in the gate, and a feature that is simply not there.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>A CDN, or a public npm URL in a <code>&lt;script src&gt;</code>.</strong> Rejected on both halves of
+the argument above. It is a second origin the access matrix would have to be
+reproduced in, for bytes identical to every reader; it makes the product
+dependent on a third party&rsquo;s uptime and on a self-hosted instance having egress;
+and — the part the pin makes concrete — a URL that resolves to different bytes
+at two points in a campaign&rsquo;s life is a property no digest can catch, because
+there is no digest to compare against. It also moves the trust boundary to a
+party this codebase cannot audit at all.</p>
+<p><strong>Fetching at boot.</strong> Rejected: a network call on every start, or a cached copy
+of unrecorded age, in front of a route whose answer must be reproducible. An
+instance with no egress starts broken, and &ldquo;broken at boot&rdquo; is a worse failure
+than a larger binary.</p>
+<p><strong>A bundler that pulls from npm at build time.</strong> Rejected because it adds a Node
+toolchain to a repository whose premise is one static binary, because it makes
+the build depend on a registry being up, and — the load-bearing part — because a
+bundle&rsquo;s bytes exist in no commit. A supply-chain change would then be invisible:
+the lockfile moves, and the artefact that changed is not in the tree and not in
+any diff. Pinning the <em>inputs</em> and committing the <em>outputs</em> is what makes the
+review possible.</p>
+<p><strong>Shipping no vendored assets at all.</strong> Rejected on the measured argument in
+[0015]({{ &ldquo;decisions/0015-pixijs-and-client-surface/&rdquo; | relURL }}): a map
+holding a few hundred sprites with fog is a renderer, and reimplementing one is
+not this project&rsquo;s problem. The same applies to
+[0014]({{ &ldquo;decisions/0014-datastar-scope/&rdquo; | relURL }})&rsquo;s patcher. &ldquo;No
+dependencies&rdquo; is not free either — it is a dependency on code nobody has
+audited, written by whoever was nearest.</p>
+<p><strong>Pinning by version string, with no digest.</strong> Rejected: a version is a claim and
+a digest is the check. Every failure this pin exists for — a re-published tag, a
+compromised mirror, a hand-edited file — is invisible to a version string.</p>
+<p><strong>Committing the tarball rather than the members it contains.</strong> Rejected: it
+removes the extraction code and it ships 2.2MB of unminified twin and source
+maps that no page loads, for the same bytes.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

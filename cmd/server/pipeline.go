@@ -201,6 +201,23 @@ type settledFanOut struct {
 	// means no stream is served this process — a store-less or watcher-less
 	// instance still indexes.
 	notices content.ChangeSink
+
+	// secrets reconciles a GM's disclosed secrets against a sync client that keeps
+	// reverting them (§5.6.2). Nil is tolerated and means reconciliation does not
+	// run this process.
+	//
+	// **Last**, and the reason is convergence rather than politeness: a successful
+	// pass rewrites one byte of the page, which produces a settled change of its
+	// own, which arrives back here. Running before the indexer would index the
+	// reconciled bytes twice per pass. Running last is enough — a pass that
+	// reverted nothing has nothing pending and returns without writing, so the
+	// second visit is silent. There is no re-entrancy guard because there does not
+	// need to be one: the loop closes on the *state* being fixed, not on a flag.
+	//
+	// A GM whose sync client reverts a disclosure and whose server does not repair
+	// it has a secret that keeps coming back with no explanation anywhere, which is
+	// why this is a field and not a TODO.
+	secrets content.ChangeSink
 }
 
 // settle runs both sinks, in the order `settledFanOut` documents.
@@ -213,11 +230,18 @@ type settledFanOut struct {
 func (f settledFanOut) settle(ctx context.Context, change content.Change) {
 	f.index(ctx, change)
 
-	if f.notices == nil {
-		return
+	if f.notices != nil {
+		f.notices(ctx, change)
 	}
 
-	f.notices(ctx, change)
+	// **Not guarded by an early return.** The three sinks are independent, and an
+	// `if f.notices == nil { return }` in the middle — which is what this function
+	// looked like before the third sink existed — silently drops every sink after
+	// the nil one. A watcher-less instance has no notices, and would therefore have
+	// had no reconciliation either.
+	if f.secrets != nil {
+		f.secrets(ctx, change)
+	}
 }
 
 // settle hands one change the watcher has delivered to the settle filter.
@@ -280,6 +304,16 @@ type contentPipeline struct {
 	// could not index through the watcher gauges rather than through a log line
 	// nobody is watching.
 	signals contentSignals
+
+	// reconcile restores disclosed secrets a sync client has reverted, and it is a
+	// field rather than a local because it is built from the store and the root
+	// registry — both of which exist before the pipeline does — and because a
+	// `contentPipeline` a reader cannot see reconciling nothing is indistinguishable
+	// from one that has nothing to reconcile.
+	//
+	// Nil is the honest "this process does not reconcile", and `settledFanOut`
+	// tolerates it so a store-less instance still indexes.
+	reconcile content.ChangeSink
 }
 
 // newContentPipeline assembles the pipeline, and reports a wiring fault rather than
@@ -315,6 +349,7 @@ func newContentPipeline(
 	kinds domain.PageKindRegistry,
 	signals contentSignals,
 	notices content.ChangeSink,
+	reconcile content.ChangeSink,
 ) (*contentPipeline, error) {
 	watched := watchableCampaigns(campaigns, roots)
 
@@ -322,6 +357,7 @@ func newContentPipeline(
 		indexer:   content.NewIndexer(roots, pages, kinds, signals.index),
 		campaigns: watched,
 		signals:   signals,
+		reconcile: reconcile,
 	}
 
 	// The zero `SettleTimings` rather than stated durations, because
@@ -338,7 +374,11 @@ func newContentPipeline(
 	// tell a GM their page changed while the bytes were still moving.
 	pipeline.debouncer = content.NewDebouncer(
 		ctx,
-		settledFanOut{index: pipeline.indexer.HandleChange, notices: notices}.settle,
+		settledFanOut{
+			index:   pipeline.indexer.HandleChange,
+			notices: notices,
+			secrets: pipeline.reconcile,
+		}.settle,
 		roots,
 		signals.watch,
 		content.SettleTimings{},

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0048 — A house rule is a keyed setting, and 5e&#39;s pack merge is not reused — semiplane</title>
+<meta name="description" content="The house-rule layer is a set of settings identified by `(capability, key)`, resolved first-match-wins by `determinism.Order`&#39;s `(position, module_id)`, with every conflict logged naming both module ids and carrying nothing else. The three data-level capabilities map one-to-one onto the three shapes a change can have, which makes a module&#39;s declared `Scope` the bound on its own body. Registration is the only door a definition enters and it is where `determinism.Scope.Admissible` runs, so there is one admissibility check and not two. `dnd5e`&#39;s pack merge is deliberately not shared: it is last-write-wins by construction, unexported on purpose, and speaks YAML.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0048-a-house-rule-is-a-keyed-setting-and-5es-pack-merge-is-not-reused/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0048 — A house rule is a keyed setting, and 5e&#39;s pack merge is not reused — semiplane">
+<meta property="og:description" content="The house-rule layer is a set of settings identified by `(capability, key)`, resolved first-match-wins by `determinism.Order`&#39;s `(position, module_id)`, with every conflict logged naming both module ids and carrying nothing else. The three data-level capabilities map one-to-one onto the three shapes a change can have, which makes a module&#39;s declared `Scope` the bound on its own body. Registration is the only door a definition enters and it is where `determinism.Scope.Admissible` runs, so there is one admissibility check and not two. `dnd5e`&#39;s pack merge is deliberately not shared: it is last-write-wins by construction, unexported on purpose, and speaks YAML.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0048-a-house-rule-is-a-keyed-setting-and-5es-pack-merge-is-not-reused/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0048 — A house rule is a keyed setting, and 5e&#39;s pack merge is not reused</h1>
+    <p class="lede">The house-rule layer is a set of settings identified by `(capability, key)`, resolved first-match-wins by `determinism.Order`&#39;s `(position, module_id)`, with every conflict logged naming both module ids and carrying nothing else. The three data-level capabilities map one-to-one onto the three shapes a change can have, which makes a module&#39;s declared `Scope` the bound on its own body. Registration is the only door a definition enters and it is where `determinism.Scope.Admissible` runs, so there is one admissibility check and not two. `dnd5e`&#39;s pack merge is deliberately not shared: it is last-write-wins by construction, unexported on purpose, and speaks YAML.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>§10.5 has one line of pseudocode and two sentences of constraint:</p>
+<pre tabindex="0"><code>system ID → base pack → overlay → enabled house-rule modules (declared order)
+         → effective ruleset (+ ruleset_version)
+</code></pre><p><strong>House rules are data-level, not code-level.</strong> A module may toggle <code>flanking_optional</code>, change a DC formula constant, or disable a condition; it may not reorder resolution or introduce nondeterminism, because replay and audit both depend on resolution being a pure function of <code>(state, intent, seed)</code>. <strong>Application order is explicit and deterministic.</strong> Modules carry a <code>position</code>; conflicts resolve first-match-wins and are logged, never last-write-wins.</p>
+<p>Everything upstream of this record had already been built, and two of those decisions constrain this one hard.</p>
+<p><code>determinism.Module.Config</code> is opaque <code>json.RawMessage</code>, deliberately unvalidated beyond being a JSON object, because <em>which keys a module understands belongs to the module</em>. [0044]({{ &ldquo;decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/&rdquo; | relURL }}) settled that and recorded that the vocabulary is this package&rsquo;s to write. So this package receives a JSON document it must not interpret and a set of compiled-in modules it must not trust on their own say-so.</p>
+<p><code>determinism.Scope.Admissible</code> exists and is tested, and is the enforcement point for the first constraint. It is a pure function over a compiled-in value with no configuration, no database and no registry, which is what makes it callable from here without either package importing the other.</p>
+<p>The merge seam next door is <code>dnd5e.mergeFiles</code>: a collection is merged by slug, a mapping by key, a scalar replaced when declared and inherited when not. It is the right rule for an overlay, it is thoroughly commented, and it is <strong>last-write-wins</strong>: <code>mergeMapping</code> copies the base and then copies the overlay over it, and <code>mergeBySlug</code> writes the overlay&rsquo;s row at the base&rsquo;s index. §10.5 forbids last-write-wins for house rules <em>by name</em>. That is the whole tension, and it is the reason this record exists.</p>
+<p>There is also the question of what &ldquo;an effective ruleset&rdquo; is, once house rules are in the chain. It is not a pack. §10.4&rsquo;s packs are 5e&rsquo;s, [0045]({{ &ldquo;decisions/0045-the-5e-engine-is-shared-mechanics-and-a-data-pack/&rdquo; | relURL }}) is the record for why the 5e engine is shared mechanics over a data pack rather than <em>the</em> rules engine, and a system with nothing in common with 5e does not use it at all.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>A house rule is a keyed setting.</strong> A module&rsquo;s <code>Apply</code> returns <code>[]houserules.Change</code>, and a change&rsquo;s identity is the pair <code>(capability, key)</code> — <code>toggle flanking_optional</code>, <code>constant dc_passive_exploration</code>, <code>disable prone</code>. Two modules conflict when and only when they name the same pair.</p>
+<p><strong>The three data-level capabilities are the three shapes a change can have, and that correspondence is forced rather than documented.</strong> <code>CapToggle</code> carries a boolean, <code>CapConstant</code> carries a number, <code>CapDisable</code> carries nothing — &ldquo;disable a condition&rdquo; is a verb, not an assignment, and allowing it to carry a value would let a disable shadow a toggle, which is reordering resolution reached through the data and exactly what S-10.5 refuses. <code>TestEveryDataLevelCapabilityHasAChangeShape</code> runs one change per member of <code>determinism.DataLevel()</code>, so a build that classifies a fourth capability as data-level fails that test until it says what such a change carries — the moment that decision is cheap.</p>
+<p><strong>A module&rsquo;s declared <code>Scope</code> bounds its body.</strong> A change whose kind is not in the scope is refused at application, under <code>ErrUndeclaredCapability</code>. A declaration nobody enforces is a comment, and this is the difference between a <code>Scope</code> being a permission and being a description. The scope check runs before the shape check, so a module that returned a <code>reorder</code> change is told &ldquo;it declares toggle, and returned a reorder change&rdquo; rather than &ldquo;that is not a shape a change has&rdquo; — the first names what went wrong.</p>
+<p><strong>There is exactly one admissibility check, and it is <code>determinism</code>&rsquo;s.</strong> <code>Registry.Register</code> calls <code>Scope.Admissible</code> and refuses a scope that is not data-level. Nothing here classifies capabilities, names a refusal, or second-guesses <code>Admissible</code>. Everything below it assumes a registered module&rsquo;s scope is already admissible, and <code>TestNoRegisterableScopeCanCarryTheTwoNamedRefusals</code> holds that over the whole vocabulary rather than over two literals — so the bound on a module&rsquo;s body does not rest on this package repeating a list <code>determinism</code> owns.</p>
+<p><strong>Registration is the only door a definition enters.</strong> <code>Registry.Apply</code> resolves every module through <code>Lookup</code>, so there is no second path by which an unchecked definition could reach a campaign. <code>Definition</code> is a compiled-in value registered explicitly in the composition root; there is no <code>init()</code> and no package-level mutable state (S-10.1, [0011]({{ &ldquo;decisions/0011-compiled-in-plugins/&rdquo; | relURL }})).</p>
+<p><strong>Conflicts resolve first-match-wins, and the mechanism is the absence of an assignment.</strong> <code>Apply</code> never replaces a recorded setting: the first module to declare one owns it, and a later declaration becomes a <code>Conflict</code>. Last-write-wins is the same function with one line added, which is why <code>TestAConflictResolvesToTheEarlierModuleAndNotTheLaterOne</code> reads the <em>resolved value</em> rather than the conflict list — two modules toggling one setting to opposite values is the case the two policies answer differently, and an assertion that only required &ldquo;a conflict was recorded&rdquo; would pass under both.</p>
+<p><strong>The order is <code>determinism.Order</code>&rsquo;s and there is no third order.</strong> The store computes the order in SQL (<code>ORDER BY position, module_id</code>) and <code>determinism.Order</code> states the same rule in Go; [0044]({{ &ldquo;decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/&rdquo; | relURL }}) holds those two together structurally and behaviourally, and this package calls the Go half and sorts nothing. <code>TestTheApplicationOrderIsTheOneDeterminismStates</code> runs every permutation of a three-module set — two of them sharing a position, all three declaring the same setting — and requires one answer, so a sort by module id alone, by position alone, by arrival order, or by map iteration each fail it.</p>
+<p><strong>A conflict is one line per losing module, naming both module ids and nothing else.</strong> Three modules declaring one setting is two conflicts, because the second and third each lost to the first and neither lost to the other. The line carries the setting, the winner&rsquo;s id and position, the shadowed module&rsquo;s id and position, and a fixed message. It never reads a module&rsquo;s <code>Config</code> — a JSON document a GM&rsquo;s own browser wrote — and never reads a change&rsquo;s value. <code>TestTheConflictLineNamesBothModulesAndCarriesNoConfiguration</code> builds both modules so that decoding the note is the only sensible thing their body does, and requires the rendered JSON to contain neither module id missing nor any part of the note.</p>
+<p><strong>The conflict line goes through <code>log/slog</code> directly, not through <code>internal/observability</code>.</strong> <code>domain</code> imports nothing from the project; <code>conformance</code> states the same reason for the same omission. Adding a twenty-fifth <code>EventName</code> would move a count <code>observability.AllEventNames</code> asserts at 24, in a file this work item does not own, and folding a routine configuration conflict into <code>plugin.version_mismatch</code> would report &ldquo;this campaign cannot start its game&rdquo; for a campaign that starts perfectly well — which is the misclassification ADR 0032 records <code>index.change_failed</code> and <code>content.render_error</code> as having avoided.</p>
+<p><strong>An enabled row naming a module this build does not have refuses the whole application; a row switched off is ignored.</strong> The first is S-10.6&rsquo;s shape. The direction matters: a skipped row is a campaign playing by different rules than its GM configured, with nothing in the log saying so, and that is the failure this repository cares most about because it is silent and coherent. The second is why <code>Enabled</code> exists at all — a module a later release removes cannot strand the campaigns that had it switched off.</p>
+<p><strong><code>Effective</code> is two ordered slices and no map.</strong> <code>Applied()</code> and <code>Conflicts()</code> return clones, <code>Lookup</code> is a linear walk, and there is deliberately no keyed accessor: a map field in <code>Effective</code> would put <code>for k := range</code> inside <code>internal/domain/rules</code>, which is the construct <code>determinism.Audit</code> exists to refuse, and a gameplay system wanting a name-keyed index builds it at campaign load from <code>Applied()</code> at a seam that is not rule code.</p>
+<h2 id="consequences">Consequences</h2>
+<p>Adding a kind of change is three edits and one forced decision: a capability in <code>determinism.DataLevel</code>, a case in <code>Change.setting</code>, and a payload check in <code>Change.validate</code> — with <code>TestEveryDataLevelCapabilityHasAChangeShape</code> failing until the first two are done. That is the point of deriving the shapes from the capability list rather than restating it.</p>
+<p>The <code>disable</code> capability carrying no value means &ldquo;disable <code>prone</code> and give it this modifier instead&rdquo; is two changes from two modules, and a reader who wants to know which modules disagreed gets it from <code>Conflicts()</code>. If a future system needs a disable to carry a value, that is a new capability and a new record, not a widening of this one.</p>
+<p><code>Effective</code> does not expose a map, so every consumer builds its own index. For a gameplay system that is one loop over a handful of settings at campaign load. For a caller that does it per resolution it is a hot path with an O(n) lookup — which is the intended pressure: the layer is applied at load, not per roll, and a resolution that walks it every time is a resolution doing campaign-load work.</p>
+<p>A gameplay system consumes this by folding <code>Applied()</code> into whatever shape its packs have. <code>dnd5e.Options</code> currently takes only an <code>Overlay</code>, so <strong>a system-side consumer is a later work item</strong>; nothing in this record requires one, and the conformance suite is unaffected because ADR 0043 gives it no house-rule module of its own.</p>
+<p>Fifteen mutations were run against the tests and each named the rule it broke. Two are worth recording because they are about the tests rather than the code. <strong><code>builder.absorb</code> replaced by a no-op</strong> failed thirteen tests including the fingerprint one — which is how the fingerprint test&rsquo;s non-vacuity was established: it asserts <em>how many</em> settings each module set applied and <em>how many</em> conflicts were recorded before asserting that the version did not move, so a layer that changes nothing fails it. <strong>And <code>TestTheEffectiveLayerHandsOutCopies</code> indexed its fixture without checking the fixture&rsquo;s length</strong>, so under the no-op mutation it panicked, which aborts the whole test binary and hides every other test&rsquo;s result. A panicking test is a silent test: it turns one package&rsquo;s failure into an uninterpretable run. The length is now asserted before it is indexed.</p>
+<p><code>ORDER BY position</code> alone passing every behavioural test is recorded in ADR 0044, and this package&rsquo;s answer is that it never sorts — it does not have a <code>sort</code> to drop. The permutation test is the second half of that answer: it fails if <code>Apply</code> starts sorting, and it fails if <code>Apply</code> starts trusting its input&rsquo;s order.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Reuse <code>dnd5e.mergeFiles</code>, exported.</strong> Rejected on four independent grounds, and the first is decisive on its own. It is last-write-wins by construction, so getting first-match-wins out of it means not using it for the merge. It is unexported because its own comment says merging is not an operation a caller may perform — &ldquo;a pack that could be re-merged between two resolutions of one campaign would make resolution a function of more than <code>(state, intent, seed)</code>&rdquo; — and that reason applies to an overlay at load for the same reason it applies to an overlay mid-campaign. It returns no record of what it replaced, so §10.5&rsquo;s &ldquo;and are logged&rdquo; would have to be reconstructed by diffing before and after, which is a second merge. And importing <code>internal/domain/systems/dnd5e</code> from <code>internal/domain/rules/houserules</code> inverts the dependency direction — <code>rules</code> is the base <code>systems</code> is built on — and would make a house rule require 5e, which §10.3 forbids for any system with nothing in common.</p>
+<p><strong>A house-rule module is an overlay.</strong> Tempting, because the shape is so close: a partial pack, merged over a base, by the same rule. Rejected: an overlay is authored with the pack&rsquo;s vocabulary and validated against it, so <code>ParseOverlay</code> refuses a pack that names another system or carries no version, and a compilation step resolves every default once. A house rule is authored by a GM in a form and validated against nothing — its <code>Config</code> is opaque JSON this package does not read. Turning one into the other would put a YAML schema and a compiler in the path between &ldquo;a GM ticked a box&rdquo; and &ldquo;a rule changed&rdquo;, and the compiled pack would be rebuilt per campaign rather than once per build.</p>
+<p><strong>The effective ruleset is a flat <code>map[string]any</code> of patches.</strong> Rejected: it loses the distinction between a toggle and a condition with the same slug, it makes the resolved value&rsquo;s <em>type</em> a property of whoever reads the map rather than of the change, and it would put a map range in a rule package. <code>Applied()</code> being an ordered slice of typed changes is the same information without any of the three.</p>
+<p><strong>A conflict is one record naming a winner and a list of losers.</strong> Rejected: §10.5 and ADR 0018 both say &ldquo;logged with both module IDs&rdquo;, and a record with a list cannot be read as the pair it is. Three modules on one setting is two pairs, and the second and third modules genuinely were in conflict with the winner one at a time — no arrangement of the set makes the third lose to the second.</p>
+<p><strong>Validate a module&rsquo;s <code>Config</code> keys here, in a shared vocabulary.</strong> Rejected twice over. ADR 0044 already decided the store does not do it, with the reason that the vocabulary belongs to <code>houserules</code>; and <code>houserules</code> has no business knowing it either, because a module&rsquo;s config is the module&rsquo;s and a second validator here would be two answers to what a build accepts. <code>TestTheStoredConfigurationReachesAModuleVerbatim</code> holds the opacity: the bytes arrive byte-identical, so a &ldquo;harmless&rdquo; normalisation fails a test rather than quietly becoming a schema.</p>
+<p><strong>A refusal per module rather than per application.</strong> Rejected, and it is the most tempting simplification available. A half-applied module set resolves a campaign under a partial reading of what its GM configured, and the symptom is a rule that quietly did not apply — the same silent-and-coherent failure <code>ErrUnknownModule</code> names. Every refusal here therefore returns an empty <code>Effective</code>, and the tests assert that, so a future change that starts returning the partial layer fails rather than shipping.</p>
+<p><strong>Refusing a disabled row that names a module this build lacks.</strong> Rejected: it would make removing a module a backwards-incompatible change to an unrelated feature, because no campaign could ever have it switched off. <code>Enabled</code> exists so that &ldquo;this campaign tried this and turned it off&rdquo; stays a fact the table can answer, and a row that records it must stay loadable by a build that no longer offers the module.</p>
+<p><strong>A new <code>observability.EventName</code> for <code>houserules.conflict</code>.</strong> Rejected: it moves a count asserted at 24 in a file this work item does not own, and an event whose only attributes are two plugin identifiers earns its name more slowly than that. If an operator later wants a counter for conflict frequency, the right home is a record in ADR 0032 alongside the four <code>index.*</code> signals — with the fifth event name added there, not here.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

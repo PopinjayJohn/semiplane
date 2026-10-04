@@ -54,6 +54,7 @@ import (
 	"github.com/semiplane/semiplane/internal/httpapi/middleware"
 	"github.com/semiplane/semiplane/internal/store"
 	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/secret"
 )
 
 // The campaign these tests edit, and the identifiers its rows carry.
@@ -801,4 +802,153 @@ func pathOf(node *html.Node) string {
 	}
 
 	return strings.Join(parts, " > ")
+}
+
+// hasTestID reports whether exactly one element carries `data-testid`.
+//
+// A predicate beside `requireTestID` because "this is absent" and "this is present
+// exactly once" are both assertions an audit makes and only one of them is a fatal
+// helper: `requireTestID` calls `Fatalf`, which cannot be used to check an absence.
+func (d *document) hasTestID(testID string) bool {
+	d.t.Helper()
+
+	count := 0
+
+	d.elements(func(node *html.Node) {
+		if attribute(node, "data-testid") == testID {
+			count++
+		}
+	})
+
+	return count > 0
+}
+
+// textOf returns an element's descendant text, trimmed of nothing.
+//
+// `requireTestID` must find it, so a missing element is fatal here rather than
+// silently yielding an empty string — which would make an "it is empty" assertion
+// pass for the wrong reason, having found nothing at all.
+func (d *document) textOf(testID string) string {
+	d.t.Helper()
+
+	node := d.requireTestID(testID)
+
+	var text strings.Builder
+
+	var walk func(*html.Node)
+
+	walk = func(current *html.Node) {
+		if current.Type == html.TextNode {
+			text.WriteString(current.Data)
+		}
+
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+
+	walk(node)
+
+	return text.String()
+}
+
+// disclosuresPanel returns the editor's disclosure surface and whether it is there.
+//
+// **A named predicate rather than a general `findTestID`.** The general shape was
+// written first and the linter was right that it had exactly one caller and one
+// constant: a helper parameterised by a value nothing varies is a helper shaped by
+// its first use, and the next caller would have found it did not fit.
+//
+// The pair of assertions that need it are the same pair — "the panel is here" and
+// "the panel is not here" — and both are about the panel.
+func (d *document) disclosuresPanel() (*html.Node, bool) {
+	d.t.Helper()
+
+	var found *html.Node
+
+	count := 0
+
+	d.elements(func(node *html.Node) {
+		if attribute(node, "data-testid") == secret.DisclosuresTestID {
+			count++
+			found = node
+		}
+	})
+
+	return found, count > 0
+}
+
+// textUnder returns the descendant text of one node, which is how a subtree is
+// checked for content the subtree must not have.
+func textUnder(d *document, node *html.Node) string {
+	d.t.Helper()
+
+	return subtreeText(node)
+}
+
+// subtreeText is an element's descendant text, with **no `*document` receiver**.
+//
+// Separate from `textUnder` because one caller — `labelInName`, in the label-in-name
+// audit — has a node and no document. Giving `textUnder` a nil document would look
+// fine and panic on its `t.Helper()` call, so the walker takes only what it needs and
+// the document-aware wrapper stays a wrapper.
+func subtreeText(node *html.Node) string {
+	var text strings.Builder
+
+	var walk func(*html.Node)
+
+	walk = func(current *html.Node) {
+		if current.Type == html.TextNode {
+			text.WriteString(current.Data)
+		}
+
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+
+	walk(node)
+
+	return text.String()
+}
+
+// labelInName is an element's visible text, which §10.2's label-in-name rule measures
+// against its accessible name.
+//
+// **The subtree's text, not an `aria-label`.** §10.2's rule is that the accessible
+// name contains the visible label, so a component that renders the label as visible
+// text and the extra words in `aria-label` passes; reading only the attribute would
+// pass a component that renders nothing visible and still be correct for a
+// screen-reader user and wrong for everyone else.
+func labelInName(node *html.Node) string {
+	return strings.TrimSpace(subtreeText(node))
+}
+
+// textOfTestID is `requireTestID` plus `textUnder`, for the one call site that wants
+// both and does not care that a missing element is fatal.
+func textOfTestID(t *testing.T, d *document, testID string) string {
+	t.Helper()
+
+	return textUnder(d, d.requireTestID(testID))
+}
+
+// countAttribute counts elements carrying `data-<name>`.
+//
+// Separate from `countTestIDPrefix` because `data-testid` is a **test hook** and
+// these attributes are the **component's own contract** — `data-secret-ordinal` is one
+// element per callout, while `data-testid` has several values per callout (the list
+// item, its state, its reveal control). Counting a hook to learn about the product's
+// structure is how a test ends up asserting a component's naming scheme.
+func (d *document) countAttribute(name string) int {
+	d.t.Helper()
+
+	count := 0
+
+	d.elements(func(node *html.Node) {
+		if attribute(node, name) != "" {
+			count++
+		}
+	})
+
+	return count
 }

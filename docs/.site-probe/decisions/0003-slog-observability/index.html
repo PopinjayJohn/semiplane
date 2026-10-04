@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0003 — slog, with no metrics server and no tracing — semiplane</title>
+<meta name="description" content="Structured logs with a stable event key, plus counters on /readyz. Nothing else.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0003-slog-observability/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0003 — slog, with no metrics server and no tracing — semiplane">
+<meta property="og:description" content="Structured logs with a stable event key, plus counters on /readyz. Nothing else.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0003-slog-observability/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0003 — slog, with no metrics server and no tracing</h1>
+    <p class="lede">Structured logs with a stable event key, plus counters on /readyz. Nothing else.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#two-rules-on-payloads">Two rules on payloads</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The design record names four subsystems that fail quietly:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Subsystem</th>
+					<th>How it fails silently</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>The watcher</td>
+					<td>Exhausts its inotify watches and stops noticing edits</td>
+			</tr>
+			<tr>
+					<td>The render cache</td>
+					<td>Serves a stale or wrong-tier variant</td>
+			</tr>
+			<tr>
+					<td>Secret reconciliation</td>
+					<td>Gives up and leaves a secret hidden, forever</td>
+			</tr>
+			<tr>
+					<td>The WebSocket hub</td>
+					<td>Leaks connections until the table cannot connect</td>
+			</tr>
+	</tbody>
+</table>
+<p>Each of these is invisible to a health check that only reports &ldquo;the process is up&rdquo;. The
+question is how little machinery is needed to make them visible.</p>
+<h2 id="decision">Decision</h2>
+<p><strong><code>log/slog</code> is the only observability mechanism.</strong> No metrics server, no tracing stack, no
+statsd, no OpenTelemetry.</p>
+<p>Every event is emitted with a stable <code>event</code> key so it is greppable and alertable-on:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">logger</span><span class="p">.</span><span class="nf">Error</span><span class="p">(</span><span class="s">&#34;watch.add_failed&#34;</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nf">String</span><span class="p">(</span><span class="s">&#34;event&#34;</span><span class="p">,</span><span class="w"> </span><span class="s">&#34;watch.add_failed&#34;</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nf">String</span><span class="p">(</span><span class="s">&#34;campaign_id&#34;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">),</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nf">String</span><span class="p">(</span><span class="s">&#34;error&#34;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">.</span><span class="nf">Error</span><span class="p">()))</span><span class="w">
+</span></span></span></code></pre></div><p>Plus <strong>counters exposed on <code>/readyz</code> as JSON</strong>, because a counter in a log is only useful if
+something reads it, and <code>/readyz</code> is already the endpoint a supervisor polls.</p>
+<p>The required signals are enumerated in the architecture record. Three of them must never be
+below error level, because they are the security-relevant ones:</p>
+<ul>
+<li><code>secret.reconcile_capped</code> — the system <em>chose</em> to hide something and a sync fight is
+unresolved. The word &ldquo;chose&rdquo; is the point: this is the system reporting that it gave up on
+the user&rsquo;s behalf.</li>
+<li><code>watch.add_failed</code> — watch exhaustion is the highest-impact silent failure in the content
+pipeline. It must be an error, never a debug line.</li>
+<li><code>content.render_error</code> — never serve a broken page quietly.</li>
+</ul>
+<h3 id="two-rules-on-payloads">Two rules on payloads</h3>
+<p>Every event carries <code>campaign_id</code>, and <code>path</code> where applicable. <strong>No event carries secret
+content, file contents, or dice results.</strong> This is asserted by a test, because the natural
+thing to do when debugging a render failure is to log the thing that failed to render, and
+that thing is frequently a secret callout.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Operators write log-based alerts. <code>event=secret.reconcile_capped</code> is a one-line query with
+no infrastructure to stand up first.</li>
+<li>There is no per-request latency histogram in the usual sense. <code>state.write_ms</code> is the one
+histogram, because debounced persistence latency is the signal that says the single SQLite
+writer is contended — which is the failure mode §13 of the architecture record calls out.</li>
+<li>Adding a real metrics pipeline later is additive, because the event names are already stable
+and the counters are already exposed. A scraper can read them; nothing has to change.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Prometheus client + <code>/metrics</code>.</strong> The conventional answer, and genuinely better for rate and
+histogram work. Rejected because it adds a second exposition format, a second thing to run, and
+a dependency, in exchange for capabilities this project does not yet have a use for. If the
+<code>state.write_ms</code> histogram or the <code>cache.hit</code>/<code>cache.miss</code> by-tier counters turn out to need
+real aggregation, this is the record to revisit first.</p>
+<p><strong>OpenTelemetry.</strong> Would give request traces across the WebSocket upgrade and the SSE
+lifecycle, which is the hardest part to debug. Rejected as speculative: the hard part is
+currently unshipped, and adopting a tracing stack before there is a trace to trace is cost
+without benefit.</p>
+<p><strong>Nothing beyond <code>http.Server.ErrorLog</code>.</strong> Cheapest of all, and it is what the scaffold had.
+Rejected because it cannot distinguish the four silent failures above, which is the whole
+reason the record enumerates them.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

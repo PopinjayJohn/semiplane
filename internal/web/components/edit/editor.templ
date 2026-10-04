@@ -37,6 +37,7 @@ import (
 
 	"github.com/semiplane/semiplane/internal/content"
 	"github.com/semiplane/semiplane/internal/web/components"
+	"github.com/semiplane/semiplane/internal/web/components/secret"
 	"github.com/semiplane/semiplane/internal/web/components/ui"
 )
 
@@ -144,6 +145,21 @@ type EditorView struct {
 	// cannot be the same value — a conflict that rendered as an ordinary preview
 	// would silently drop the one thing the GM came for.
 	Conflict *Conflict
+	// Secrets is the GM's disclosure surface for this page: the `[!secret]`
+	// callouts, a control to reveal each, and the outcome region the reveal's
+	// answer arrives in.
+	//
+	// **A value, not a pointer, and it is nil when the page has no callouts.**
+	// The component renders nothing at all in that case, which is the point: an
+	// empty "Disclosures" panel on a page with no secrets is a panel that tells a
+	// GM their page has secrets. `secret.Disclosures` owns that decision and this
+	// field only carries the answer.
+	//
+	// Present only on the editor route, and that asymmetry is deliberate. The wiki
+	// route renders the same callouts and must not render this: §5.6.1's omission
+	// is a *response* property, and a control that says "reveal" on a published
+	// page is a control no reader may press and a GM may not need.
+	Secrets secret.DisclosuresView
 }
 
 // Conflict is one save that was refused, and the two texts it is a conflict
@@ -667,6 +683,18 @@ templ EditorRail(view EditorView) {
 			<dd><code id={ validatorID } data-testid="editor-validator">{ view.Validator }</code></dd>
 		</dl>
 	</section>
+	// The disclosure surface, last in the rail.
+	//
+	// **After "On disk" and "This page", not before**, and the reason is that a GM
+	// arriving with a conflict needs the diff first — it is what they came for and
+	// it is the only thing on the page that cannot be re-derived. The reveal control
+	// is a deliberate act they choose after reading what is actually there.
+	//
+	// It carries the editor's own `Validator`, so a reveal presents the same
+	// `If-Match` a save would. That is what makes a reveal *refusable* on a stale
+	// buffer rather than silently applied to bytes the GM never read.
+	@secret.Disclosures(view.Secrets)
+	@secret.OutcomeRegion()
 }
 
 // ConflictDiff is the two-column diff, framed by `ui.ConflictNotice`.

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0011 — Plugins are compiled-in, registered explicitly — semiplane</title>
+<meta name="description" content="No dynamic loading. No init(). Registration happens in the composition root where it can be read.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0011-compiled-in-plugins/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0011 — Plugins are compiled-in, registered explicitly — semiplane">
+<meta property="og:description" content="No dynamic loading. No init(). Registration happens in the composition root where it can be read.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0011-compiled-in-plugins/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0011 — Plugins are compiled-in, registered explicitly</h1>
+    <p class="lede">No dynamic loading. No init(). Registration happens in the composition root where it can be read.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#why-not-init">Why not <code>init()</code></a></li>
+        <li><a href="#three-tiers-and-only-one-of-them-has-authority">Three tiers, and only one of them has authority</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The requirement is that a new gameplay system costs no client work, and that rules code is
+testable in isolation. It is not a requirement that a user can install a plugin by dropping a
+file into a directory.</p>
+<p>Those are different products. This one is the first, and it is much simpler.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Plugins are compiled-in Go modules, registered explicitly in the composition root. There is no
+<code>init()</code>.</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="c1">// cmd/server/main.go — the composition root</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">registry</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">plugin</span><span class="p">.</span><span class="nf">NewRegistry</span><span class="p">()</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">registry</span><span class="p">.</span><span class="nf">RegisterSystem</span><span class="p">(</span><span class="nx">dnd5e</span><span class="p">.</span><span class="nf">New2024</span><span class="p">())</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">registry</span><span class="p">.</span><span class="nf">RegisterSystem</span><span class="p">(</span><span class="nx">dnd5e</span><span class="p">.</span><span class="nf">New2014</span><span class="p">())</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">registry</span><span class="p">.</span><span class="nf">RegisterUIPage</span><span class="p">(</span><span class="nx">linkpreview</span><span class="p">.</span><span class="nf">New</span><span class="p">())</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">registry</span><span class="p">.</span><span class="nf">RegisterUIRender</span><span class="p">(</span><span class="nx">diceroller</span><span class="p">.</span><span class="nf">New</span><span class="p">())</span><span class="w">
+</span></span></span></code></pre></div><h3 id="why-not-init">Why not <code>init()</code></h3>
+<p><code>init()</code> is the idiomatic Go registration pattern, and it is wrong here for two specific
+reasons:</p>
+<ol>
+<li><strong>It hides ordering.</strong> The reader cannot see what is registered or in what order without
+running the program. With versioned rules packs, registration order becomes meaningful —
+a base pack and an overlay have to be composed in the right order — and an invisible order is
+an order nobody can review.</li>
+<li><strong>It leaks state between tests.</strong> A package that registers itself into a global at import time
+is registered for every test in the binary that imports it. Two tests wanting different
+registrations cannot both have them.</li>
+</ol>
+<p>Both become real problems exactly when rules packs get versioned, which is the design this
+project is aiming at.</p>
+<h3 id="three-tiers-and-only-one-of-them-has-authority">Three tiers, and only one of them has authority</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Authority</th>
+					<th>Can define a new <code>op</code>?</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Gameplay</strong></td>
+					<td>Resolves intents into mutations</td>
+					<td><strong>Yes</strong></td>
+			</tr>
+			<tr>
+					<td><strong>UI</strong></td>
+					<td>Reads state, emits operations an existing system resolves</td>
+					<td>No</td>
+			</tr>
+			<tr>
+					<td><strong>Theme</strong></td>
+					<td>None — plain files in the campaign content root</td>
+					<td>No</td>
+			</tr>
+	</tbody>
+</table>
+<p>Two corrections to the original brief are baked in here, because both were wrong:</p>
+<ul>
+<li><strong>House rules are a gameplay plugin</strong>, not a UI modifier. They change mechanics, so they sit
+in the tier with authority.</li>
+<li><strong>A modifier that only adds CSS is not a plugin.</strong> It is the theme layer: files served from
+the campaign&rsquo;s content root, with no code and no authority.</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>A new system is a Go package plus YAML data packs, added to the composition root. No
+installation step, no version negotiation with a plugin host, no sandbox to build.</li>
+<li><code>campaigns.system_id</code> that no plugin resolves <strong>does not fail the boot</strong>. The campaign&rsquo;s wiki
+still serves; only the game refuses to start, and it says which ID it wanted. Removing a
+plugin degrades a feature rather than taking down a site.</li>
+<li>Because plugins are compiled in, there is no semver contract to honour across releases.
+<code>Intent</code>, <code>Mutation</code>, and <code>Kind</code> are therefore semi-public — which is a real constraint, and
+the reason they are named and documented rather than incidental.</li>
+<li>Data packs are versioned <em>with the code</em>, via <code>go:embed</code>. A pack cannot drift from the code
+that reads it.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>HashiCorp go-plugin or a gRPC plugin host.</strong> Real dynamic loading, at the cost of a process
+boundary, a protocol version, a discovery mechanism, and a security model for loading code. All
+of that infrastructure exists to solve a problem this project does not have, and each part is a
+thing that can break.</p>
+<p><strong><code>.so</code> plugins via a C ABI.</strong> Would allow a genuinely non-Go system. Rejected: it would make
+rule code non-deterministic across a boundary, and determinism is the property that makes replay
+and audit work.</p>
+<p><strong>One monolithic rules package with a type switch.</strong> No plugin system at all. Rejected because
+it puts a new system in the same package as every existing one, so they cannot be tested
+separately and cannot be built separately — which was the actual reason for the plugin boundary.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

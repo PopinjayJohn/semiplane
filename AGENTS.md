@@ -161,6 +161,26 @@ each cost a PR:
   deleting the import then found the stale sentence still sitting in the header and
   passed. The marker tracks the wiring: it moved with the import, and both arms are
   now red. A note must not outlive the fact it describes.
+- **`A11Y_COMPONENT_PKGS` had the same hole, on the package that renders a secret
+  callout and a redacted view.** Phase 10 built `internal/web/components/secret` with
+  eight tests matching `A11Y_TESTS` — two of them reading the **built**
+  `static/dist/app.css` — and `make a11y` was green without running any of them,
+  because the list named `play`, `chat` and `live`. **A green accessibility gate over
+  the disclosure surface reads exactly like a green one over a build whose feature is
+  switched off.** The work item did the right thing about it rather than shipping
+  around it: it left a test that prints the exact Makefile line and cannot fail,
+  because the Makefile is the integrator's file. The line has landed.
+  **Naming the directory is not the claim; naming it in the list is** — the same rule
+  as `A11Y_ROUTE_PKGS`, now paid twice.
+- **`make site-check` passing is not evidence that a new page exists.** Hugo's
+  `buildFuture` defaults to **false**, so a page dated after the build clock is skipped
+  **with no warning**: `hugo list all` shows it, the output does not contain it, and
+  the gate reports the same page count it reported yesterday and exits 0. Four ADRs
+  were invisible for this reason and the bisect went through `weight`, a folded
+  `description` and a missing `lede` before reaching the one field that mattered —
+  **each hypothesis "confirmed" only because the clock was still in the previous
+  minute.** The count is the check: a new page that does not move `check-site-structure`
+  is not on the site, whatever the front matter says.
 
 ```bash
 make check          # the full gate

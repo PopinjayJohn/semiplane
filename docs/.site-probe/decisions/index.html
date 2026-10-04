@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Decisions — semiplane</title>
+<meta name="description" content="Architecture decision records: what was chosen, what it forecloses, and what lost.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Decisions — semiplane">
+<meta property="og:description" content="Architecture decision records: what was chosen, what it forecloses, and what lost.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/" aria-current="page">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Decisions</h1>
+    <p class="lede">Architecture decision records: what was chosen, what it forecloses, and what lost.</p>
+    <p>Every significant decision gets a record. A decision gets a record when a later reader could
+reasonably have made a different choice and where being wrong would be expensive to undo: a new
+dependency, a deviation from the
+[architecture overview]({{ &ldquo;design/architecture/&rdquo; | relURL }}), a change to the data model, URL
+scheme, protocol, or plugin authority, anything touching path confinement, sanitisation,
+authorisation or secret redaction, and anything that changes the build or the gate.</p>
+<p>Records are <strong>immutable and numbered</strong>. A number is never reused and never changed. A decision
+that gets reversed does not have its record edited — the record&rsquo;s <code>status</code> becomes <code>superseded</code>,
+<code>superseded_by</code> names the replacement, and both remain readable. That is the point: the reason a
+decision was not made is usually the reason it should not be remade.</p>
+<h2 id="two-records-here-correct-the-design-records">Two records here correct the design records</h2>
+<p>The [architecture overview]({{ &ldquo;design/architecture/&rdquo; | relURL }}) and the
+[UI specification]({{ &ldquo;design/ui-ux/&rdquo; | relURL }}) are dated records published verbatim, and
+editing them would destroy their value as records. Where they are wrong, the correction lives
+here:</p>
+<ul>
+<li><strong>0016</strong> — the overview&rsquo;s <code>ETag</code> rule is a defect. Two body variants cannot share one
+validator without a cache serving a GM&rsquo;s unredacted page to a player.</li>
+<li><strong>0017</strong> — and the cache invariant that 0016 protects is why a cross-campaign link may be
+<em>written</em> but never <em>inlined</em>.</li>
+<li><strong>0018</strong> — the overview&rsquo;s ruleset chain, read literally, would refuse to resume a campaign
+whose GM merely toggled a house rule.</li>
+</ul>
+<p>All three are also listed in the
+[known staleness]({{ &ldquo;design/&rdquo; | relURL }}#known-staleness) note on the design records index.</p>
+<p>A fourth was found in phase 3:</p>
+<ul>
+<li><strong>0027</strong> — the overview&rsquo;s <code>pages</code> table lists a <code>front_matter</code> column, and the table does not
+have one. The file is the source of truth, so a second copy of a block the parser regenerates in
+a millisecond is a second answer to &ldquo;what does this page declare&rdquo;.</li>
+</ul>
+<p>Three more were found in phase 5. The first is a conflict <em>within</em> one record — the UI
+specification stating two things that cannot both hold — and the other two are decisions the
+record left to the implementation:</p>
+<ul>
+<li><strong>0033</strong> — §4.3 persists the collapsed navigation in <code>sp_ui</code> while §6.6 fixes <code>sp_ui</code> to two
+fields and rules the rest out, and §4.1&rsquo;s campaign and mode switchers cannot be
+server-rendered without making the document vary by <code>sp_ui</code>. In both cases the later and
+more specific rule governs, and both resolutions are recorded rather than picked in a
+template.</li>
+<li><strong>0034</strong> — TV is a <code>[data-ui]</code> mode and never a width band, because a 55-inch television and a
+12.9-inch tablet in landscape are indistinguishable to CSS and need opposite layouts.
+The record&rsquo;s own accepted failure mode — an unrecognised TV browser shows the laptop
+layout until someone presses the switcher once — is kept rather than fixed, and the
+user-agent allowlist stays narrow.</li>
+<li><strong>0035</strong> — no <code>Vary</code> header is emitted at all, and the document&rsquo;s independence from
+<code>sp_ui</code> is held by asserting the <em>bytes</em> are identical rather than by asserting the
+header&rsquo;s absence. The one blocking inline resolver is under a byte budget the build
+enforces.</li>
+</ul>
+<h2 id="the-records">The records</h2>
+
+    <ul class="section-list" data-testid="section-list">
+        <li>
+          <a href="/semiplane/decisions/0047-a-ui-plugin-renders-what-the-server-stamped-and-fetches-only-what-it-is-public/">0047 — A UI plugin renders what the server stamped, and fetches only what is public</a>
+            <br><span class="section-list__desc">The two reference UI plugins, and the two boundaries that make them safe to ship. The dice roller renders the `Resolution` the hub returned and can roll nothing itself; the link preview reads only `http`/`https` URLs whose resolved address is public unicast, refuses every redirect hop on the same terms, and has no handle of any kind on campaign content. Both are declared inert until the pipeline and the composition root wire them.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0048-a-house-rule-is-a-keyed-setting-and-5es-pack-merge-is-not-reused/">0048 — A house rule is a keyed setting, and 5e&#39;s pack merge is not reused</a>
+            <br><span class="section-list__desc">The house-rule layer is a set of settings identified by `(capability, key)`, resolved first-match-wins by `determinism.Order`&#39;s `(position, module_id)`, with every conflict logged naming both module ids and carrying nothing else. The three data-level capabilities map one-to-one onto the three shapes a change can have, which makes a module&#39;s declared `Scope` the bound on its own body. Registration is the only door a definition enters and it is where `determinism.Scope.Admissible` runs, so there is one admissibility check and not two. `dnd5e`&#39;s pack merge is deliberately not shared: it is last-write-wins by construction, unexported on purpose, and speaks YAML.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/">0051 — OpenCode is the only agent, and its directory is the committed one</a>
+            <br><span class="section-list__desc">The repo carried two agent configs and one agent&#39;s directory, with `.opencode/skills` a symlink into `.kilo/skills` and a `.gitignore` rule holding that symlink out of diffs. Everything an agent reads now lives under `.opencode/`, and `kilo.json` is gone.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0052-third-party-browser-assets-are-committed-and-digest-pinned/">0052 — Third-party browser assets are committed, digest-pinned, and served from our own origin</a>
+            <br><span class="section-list__desc">PixiJS and Datastar are committed under `internal/web/static/vendor/` with a sha256 per file and the upstream archive integrity, `make vendor` re-fetches and verifies, and `make vendor-check` re-hashes the committed bytes with no network at all.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet/">0054 — A campaign sets its brand, and the server renders the stylesheet</a>
+            <br><span class="section-list__desc">UI §4.12&#39;s theme layer: a `theme.yaml` manifest in the content root, `/c/{slug}/theme.css` generated from a closed vocabulary, two contrast floors measured against each theme&#39;s own page, and a refusal that keeps the last known-good sheet while a fault answers 500. `theme.brand_invalid` is recorded here as the twenty-fifth signal beyond §13.2, and the six seams this work item cannot wire are named rather than assumed.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/">0041 — The rules contract returns mutations and carries its own randomness</a>
+            <br><span class="section-list__desc">`internal/domain/rules` follows §10.3&#39;s shape in every place where the record is right, and departs from it in three: `Apply` takes a `context.Context` and a state by value, and `Derive` returns a named `Payload`. `Context` carries a seed and nothing ambient, so `(state, intent, seed) → mutations` is reproducible by construction rather than by discipline.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0042-the-plugin-registry-is-explicit-and-a-ui-plugin-can-only-emit-known-ops/">0042 — The plugin registry is explicit, and a UI plugin can only emit known ops</a>
+            <br><span class="section-list__desc">`internal/plugin` is an ordered registry of gameplay systems plus the adapter that turns them into the hub&#39;s one resolver; `internal/web/plugins` is a second tier whose only authority is an emitter that dispatches as the reader. Registration is a call in the composition root, a kind is inert when nothing registers it, and the four constraints §10.6 puts on a UI plugin are enforced by the shape of what it is handed rather than by a check it has to pass.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0043-the-conformance-suite-is-the-only-shared-code-a-foreign-system-needs/">0043 — The conformance suite is the only shared code a foreign system needs</a>
+            <br><span class="section-list__desc">`internal/domain/rules/conformance` is a published suite every `rules.System` must pass, taking a `rules.System` and four explicit seams and nothing else; `internal/domain/systems/notfive` is a complete system sharing nothing with 5e, and three AST audits make that claim falsifiable rather than documented.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/">0044 — Determinism is enforced by lint because plugins are compiled in</a>
+            <br><span class="section-list__desc">S-10.4&#39;s three rules — no `time.Now`, no map iteration, no direct `crypto/rand` — are one table in `determinism`, and both enforcement mechanisms are derived from it: `forbidigo`&#39;s patterns are computed from the table rather than written in `.golangci.yml`, and `Audit` walks the same table over the parsed and type-checked rule packages. The `maps.Keys` pattern was written, watched fire on the one correct spelling, and removed. `campaign_rule_modules` arrives as migration 0010, with `campaign_id` as `INTEGER` rather than architecture §10.7&#39;s `TEXT`.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0045-the-5e-engine-is-shared-mechanics-and-a-data-pack/">0045 — The 5e engine is shared mechanics and a data pack</a>
+            <br><span class="section-list__desc">`internal/domain/systems/dnd5e` is one Go engine plus one `go:embed`ed YAML pack. Every edition difference is a row, a formula, a toggle or the name of a Go hook; exactly two rules are hooks, and a test asserts the list is exactly two so a third is a decision rather than an entry in a map.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0046-edition-differences-are-overlay-data-not-go/">0046 — Edition differences are overlay data, not Go</a>
+            <br><span class="section-list__desc">`internal/domain/systems/dnd5e/overlays` ships 2014 and 2024 as two `go:embed`ed YAML overlays over the engine&#39;s base pack. All four edition differences are rows, switches or a label; no third hook was added, and the diff between the two files is machine-checked so it stays reviewable.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0050-a-dispatch-names-its-own-actor/">0050 — A dispatch names its own actor, and an actor cannot be decoded from bytes</a>
+            <br><span class="section-list__desc">`Hub.Dispatch` resolves an intent on behalf of an identity rather than a connection, so a UI plugin can dispatch without a socket. The identity is a `realtime.Actor` with unexported fields and a refusing `UnmarshalJSON`, so &#39;every field is server-derived&#39; is a property of the type rather than a habit of its call sites.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/">0055 — Two egresses, one hub: the sidebar is HTML and the canvas is structured data</a>
+            <br><span class="section-list__desc">UI §7.5&#39;s resolution table is implemented as one `events.Hub` with two egress representations. The canvas takes structured deltas over `/c/{slug}/ws`; the sidebar takes rendered DOM fragments over `/c/{slug}/events`. The delivery policy splits on one question — does the newer value make the older one untrue, or merely old? — and the region a fragment announces is a field on its type, refused server-side when it disagrees with its target. The stream&#39;s gate is the play gate rather than the edit gate, because one URL carries two payloads. Three of §7.5&#39;s four prohibitions are code rather than comment, and the fourth — search has no live region — was already held elsewhere. Separately: the vendored Datastar is 1.0.4 from the upstream release rather than the newest *published* npm package, because every pre-1.0.0 build renamed the event this route writes.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0053-play-serves-the-table-and-ws-upgrades/">0053 — `/play` serves the table and `/ws` upgrades, and a control the protocol cannot honour is rendered disabled with its reason</a>
+            <br><span class="section-list__desc">The WebSocket upgrade moves to `/c/{slug}/ws` so `/c/{slug}/play` can serve the document architecture §9 always described, and the action bar&#39;s End turn and Chat controls render disabled with the reason stated rather than inventing a client-side turn.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0001-go-as-implementation-language/">0001 — Go 1.27 as the implementation language</a>
+            <br><span class="section-list__desc">One language, one process, one binary — and what a static toolchain costs.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0002-standard-library-router/">0002 — The standard library router, not Chi</a>
+            <br><span class="section-list__desc">net/http ServeMux carries method and pattern routing; Chi carried two advisories.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0023-work-item-branch-names-drop-the-phase-prefix/">0023 — Work-item branch names drop the `phase/` prefix</a>
+            <br><span class="section-list__desc">A branch named `a/b` and a branch named `a/b/c` cannot both exist in git, so work-item branches are `NN-slug/&lt;work-item&gt;` rather than `phase/NN-slug/&lt;work-item&gt;`.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0003-slog-observability/">0003 — slog, with no metrics server and no tracing</a>
+            <br><span class="section-list__desc">Structured logs with a stable event key, plus counters on /readyz. Nothing else.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0004-single-process-constraint/">0004 — One process, and what that forecloses</a>
+            <br><span class="section-list__desc">Authoritative game state lives in memory. Two instances behind a load balancer will silently diverge.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0005-sqlite-driver/">0005 — modernc.org/sqlite, not mattn/go-sqlite3</a>
+            <br><span class="section-list__desc">Pure Go, FTS5 compiled in by default, no cgo — and mattn needs both a build tag and a C compiler.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0006-content-root-is-source-of-truth/">0006 — The content root is the source of truth</a>
+            <br><span class="section-list__desc">Markdown files in an Obsidian vault are the content. SQLite is a rebuildable index plus live game state.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0007-fts5-tokenizer/">0007 — FTS5, unicode61, and deliberately not porter</a>
+            <br><span class="section-list__desc">An external-content FTS5 table over pages, tokenised without stemming, because TTRPG proper nouns stem badly.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0008-forward-only-migrations/">0008 — Forward-only migrations</a>
+            <br><span class="section-list__desc">A shipped migration is never edited. New schema means a new migration, and FTS5 tables are drop-and-recreate.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0009-server-authoritative-intents/">0009 — Server-authoritative intents</a>
+            <br><span class="section-list__desc">Clients send intent and never state. The server validates, applies, versions, and broadcasts.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0010-websocket-library/">0010 — coder/websocket, not gorilla</a>
+            <br><span class="section-list__desc">gorilla/websocket carries an advisory for a weak PRNG in its mask key and panics on concurrent writes.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0011-compiled-in-plugins/">0011 — Plugins are compiled-in, registered explicitly</a>
+            <br><span class="section-list__desc">No dynamic loading. No init(). Registration happens in the composition root where it can be read.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0012-plugin-authority/">0012 — Plugin authority is enforced structurally</a>
+            <br><span class="section-list__desc">A UI plugin can emit operations a gameplay system resolves. It cannot write state, and it does not need to be trusted not to.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0013-templ/">0013 — templ, pinned exactly</a>
+            <br><span class="section-list__desc">Compiled Go templates. Still v0.x, so the version is pinned rather than ranged.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0014-datastar-scope/">0014 — Datastar for live chrome only</a>
+            <br><span class="section-list__desc">SSE patches rendered DOM fragments. It never carries content delivery and it never carries the map.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0015-pixijs-and-client-surface/">0015 — PixiJS v8, and a deliberately small client</a>
+            <br><span class="section-list__desc">WebGL for the map. The client surface stays system-agnostic because token and scene are semiplane-owned.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0016-salted-etag/">0016 — Salt the ETag with include_secrets</a>
+            <br><span class="section-list__desc">The design record&#39;s ETag rule is a defect. Two body variants cannot share one validator without leaking secrets to players.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0017-cross-campaign-links-never-inline/">0017 — Cross-campaign links never inline</a>
+            <br><span class="section-list__desc">A wikilink may point into another campaign. Its content is never inlined, because inlining breaks the two-variant render cache.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0018-ruleset-version-fingerprint/">0018 — ruleset_version fingerprints semantics, not configuration</a>
+            <br><span class="section-list__desc">House-rule enablement is deliberately excluded from the fingerprint that gates resume, and drift is recoverable.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0019-tailwind-standalone-pinned/">0019 — Tailwind as a pinned standalone binary, with the manifest hash committed</a>
+            <br><span class="section-list__desc">The CSS toolchain is a downloaded executable verified against a committed digest of its own release manifest, and `make check` builds CSS and templ before compiling Go.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0021-password-hashing-with-pbkdf2/">0021 — A password is stored as PBKDF2 at OWASP&#39;s work factor, and carries its own iteration count</a>
+            <br><span class="section-list__desc">Password hashing is PBKDF2-HMAC-SHA256 at 600,000 iterations with a per-hash salt, encoded so the iteration count travels with the hash.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0022-sessions-key-on-a-token-hash/">0022 — `auth_sessions` keys on a hash of the token, because the database is the thing that gets stolen</a>
+            <br><span class="section-list__desc">The session token lives in exactly two places, a cookie and the response that set it; the database stores only its SHA-256.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0020-trusted-proxies-and-client-ip/">0020 — A forwarding header is evidence of nothing until an operator names the proxy</a>
+            <br><span class="section-list__desc">Client IP resolution trusts no proxy by default, and walks the forwarding chain right to left when one is configured.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0024-authorisation-gates-mount-not-per-handler/">0024 — Authorisation is a gate on the route, not a check inside the handler</a>
+            <br><span class="section-list__desc">The S-8 access matrix is enforced by one middleware that resolves a campaign&#39;s tier, and by three named gates routes mount; no handler re-derives it.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0025-no-first-account-bootstrap-environment-variable/">0025 — The first account is a command, not an environment variable</a>
+            <br><span class="section-list__desc">`semiplane admin create` makes the first account, and no configuration value can bootstrap one; a password in the environment is a password in /proc.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0027-no-front-matter-column-and-the-index-is-a-cache/">0027 — There is no `front_matter` column, and the database index is a cache of the filesystem</a>
+            <br><span class="section-list__desc">The file is the source of truth; a second copy of a regenerable front-matter block is a second copy that can disagree with the first.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0028-render-output-is-permission-neutral/">0028 — Rendered output is permission-neutral: raw HTML is never interpreted, and a block-level element loses its text</a>
+            <br><span class="section-list__desc">goldmark runs without `WithUnsafe()` and bluemonday is an allowlist, so two independent layers stand between a vault and a reader&#39;s DOM.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0031-body-plain-is-derived-from-the-source/">0031 — `body_plain` is derived from the source, never from rendered HTML</a>
+            <br><span class="section-list__desc">The searchable text is flattened from the file&#39;s own bytes, with `[!secret]` callouts excluded in every reveal state, so a search snippet can never carry secret text to a player.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0026-cross-campaign-wikilinks-are-vault-absolute/">0026 — A cross-campaign wikilink is spelled `[[/campaign/Page]]`, with the leading slash</a>
+            <br><span class="section-list__desc">A leading slash is what makes the relative reading and the cross-campaign reading of a wikilink mutually exclusive, and ADR 0017 needs that.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0029-redaction-operates-on-the-source/">0029 — A redactor sees the whole source, and runs before the render</a>
+            <br><span class="section-list__desc">Redaction happens on the document text, not on a parsed Document and not on rendered HTML, so no buffer downstream of it ever holds a secret.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0033-two-conflicts-in-the-ui-record/">0033 — Two conflicts in the UI record, resolved and recorded</a>
+            <br><span class="section-list__desc">Where §4.3 and §6.6 disagree about persisting the collapsed navigation, and where §4.1&#39;s switchers meet §3.7&#39;s canonical DOM, the later and more specific rule governs — and both outcomes are recorded rather than picked in markup.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0032-index-signals-beyond-the-architecture-list/">0032 — Six signals beyond the architecture record&#39;s list</a>
+            <br><span class="section-list__desc">§13.2 fixes the observability contract and phase 4 adds six names to it, because the alternative was a hole in S-12.3 rather than a smaller surface.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0034-tv-mode-not-a-width-band/">0034 — TV mode is a mode, not a width band</a>
+            <br><span class="section-list__desc">A television and a tablet in landscape are indistinguishable to CSS, so the distinction is a resolved root attribute rather than a breakpoint, and it lives in its own stylesheet.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0035-no-vary-cookie-and-one-blocking-script/">0035 — No `Vary: Cookie`, and exactly one blocking inline script</a>
+            <br><span class="section-list__desc">The document never varies by the theme cookie, so no `Vary` header is emitted, and the only JavaScript on the critical path is one inline resolver in `&lt;head&gt;` under a byte budget.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0036-page-titles-are-not-redacted/">0036 — `pages.title` is not redacted, and a title may carry secret text</a>
+            <br><span class="section-list__desc">S-5.11 scopes redaction to `body_plain`, so a front-matter `title:` is indexed verbatim — and a title is the one place a secret is most likely to be written by accident.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0037-zero-bytes-is-not-a-stable-size/">0037 — Zero bytes is not a stable size, and the settle budget is the only clock that can tell a blank note from an unwritten one</a>
+            <br><span class="section-list__desc">S-4.3&#39;s two `stat` samples cannot distinguish a page that is empty from a page whose writer has not started yet, because both are `size == 0`. The filter believed the samples and settled an empty page, which is a wrong `pages` row rather than a merely early one.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0038-target-class-is-applied-by-the-render-pipeline/">0038 — The `.target` class is applied by the render pipeline, after the sanitiser</a>
+            <br><span class="section-list__desc">semiplane adds one attribute to sanitised output rather than removing one, and it is safe because the value is a constant it owns, the element set is fixed, and the pass runs on a tree parsed from bytes the sanitiser already approved.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0039-inert-core-system/">0039 — The inert `core` system, so phase 7 runs against something real</a>
+            <br><span class="section-list__desc">Intent resolution belongs to a gameplay `System` in phase 8. Rather than stub it or reorder the phases, phase 7 registers a system that parses and version-checks intents and resolves nothing — and every operation is refused by name.</span>
+        </li>
+        <li>
+          <a href="/semiplane/decisions/0040-a-settle-is-judged-by-entitlement/">0040 — A settle is judged by entitlement, not by a clock the test does not own</a>
+            <br><span class="section-list__desc">Three tests in the settle filter&#39;s suite asserted that a continuously written page never settles. That is a claim about the test&#39;s own goroutine, not about the filter, and no quiet period is long enough to make it enforceable. The fixture now records when it delivered each event and judges every arrival by whether S-4.3 permitted it.</span>
+        </li>
+    </ul>
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

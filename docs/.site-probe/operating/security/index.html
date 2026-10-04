@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Security — semiplane</title>
+<meta name="description" content="The trust boundary, what semiplane defends against, and how to report a problem.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/operating/security/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Security — semiplane">
+<meta property="og:description" content="The trust boundary, what semiplane defends against, and how to report a problem.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/operating/security/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Security</h1>
+    <p class="lede">The trust boundary, what semiplane defends against, and how to report a problem.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#the-trust-boundary-stated-once">The trust boundary, stated once</a></li>
+    <li><a href="#what-is-defended">What is defended</a></li>
+    <li><a href="#what-is-not-defended-and-why-that-is-the-design">What is not defended, and why that is the design</a></li>
+    <li><a href="#supplied-content-is-treated-as-hostile">Supplied content is treated as hostile</a></li>
+    <li><a href="#reporting-a-vulnerability">Reporting a vulnerability</a></li>
+    <li><a href="#response">Response</a></li>
+  </ul>
+</nav>
+    </details><h2 id="the-trust-boundary-stated-once">The trust boundary, stated once</h2>
+<blockquote>
+<p>semiplane&rsquo;s content root is <strong>untrusted input</strong>. Anyone with filesystem access
+to the vault sees everything, including unrevealed secrets.</p>
+</blockquote>
+<p>The vault is written by an Obsidian sync client, by Obsidian plugins, and by
+every device that syncs it. Any of those may be shared, modified, or compromised
+without the GM&rsquo;s involvement. semiplane treats that the way a web application
+treats a database row: parsed defensively, resolved within an enforced boundary,
+and never trusted to be well-formed.</p>
+<p>Everything below follows from that.</p>
+<h2 id="what-is-defended">What is defended</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Boundary</th>
+					<th>Requirement</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Path traversal</strong></td>
+					<td>Every path — URLs, front matter, wikilinks, assets — is resolved inside a per-campaign <code>os.Root</code>, created at campaign registration. Not <code>filepath.Clean</code> plus a prefix comparison.</td>
+			</tr>
+			<tr>
+					<td><strong>Stored cross-site scripting</strong></td>
+					<td>Raw HTML in campaign content is never enabled, and output is sanitised before it is cached. A player cannot be made to execute script by a GM&rsquo;s sync.</td>
+			</tr>
+			<tr>
+					<td><strong>YAML bombs</strong></td>
+					<td>Front matter is attacker-reachable, so the parser bounds alias expansion and document size.</td>
+			</tr>
+			<tr>
+					<td><strong>Search leakage</strong></td>
+					<td>Search queries are joined against campaign visibility. A bare query must not return private page titles to an anonymous reader.</td>
+			</tr>
+			<tr>
+					<td><strong>Asset leakage</strong></td>
+					<td>Assets inherit campaign visibility, and no cache entry is ever shared across campaigns.</td>
+			</tr>
+			<tr>
+					<td><strong>Authorisation on the realtime plane</strong></td>
+					<td>A WebSocket upgrade authenticates identically to HTTP. Origin is checked explicitly on upgrade.</td>
+			</tr>
+			<tr>
+					<td><strong>Secret leakage</strong></td>
+					<td>A secret body is absent from every non-GM response — not hidden with CSS, not in a comment, not deferred to the client.</td>
+			</tr>
+			<tr>
+					<td><strong>Plugin authority</strong></td>
+					<td>A UI plugin cannot write campaign state. It dispatches intents that a gameplay system resolves, and cannot forge a broadcast.</td>
+			</tr>
+			<tr>
+					<td><strong>Content existence oracle</strong></td>
+					<td>A 404 and a private campaign are indistinguishable to an anonymous user. Both return the same body shape.</td>
+			</tr>
+	</tbody>
+</table>
+<h2 id="what-is-not-defended-and-why-that-is-the-design">What is not defended, and why that is the design</h2>
+<ul>
+<li><strong>Encryption at rest.</strong> The vault is a normal directory of normal files. If you
+need the secrets protected from someone with disk access, disk encryption is
+the layer for that. See [secrets]({{ &ldquo;concepts/secrets/&rdquo; | relURL }}).</li>
+<li><strong>Multiple instances.</strong> See [operating]({{ &ldquo;operating/&rdquo; | relURL }}) — in-memory
+game state is process-local, and a second instance diverges silently.</li>
+<li><strong>A compromised host.</strong> semiplane runs with the privileges of the user you run
+it as. It does not sandbox itself against a root on the same machine.</li>
+<li><strong>Runtime third-party plugins.</strong> Plugins are compiled in. There is no mechanism
+for loading untrusted code at runtime, which removes an entire category of
+attack surface at the cost of the flexibility a plugin marketplace would have
+offered.</li>
+</ul>
+<h2 id="supplied-content-is-treated-as-hostile">Supplied content is treated as hostile</h2>
+<p>Two defaults follow from the threat model and are worth stating because they look
+over-cautious until you have been bitten:</p>
+<ul>
+<li><strong>Raw HTML in markdown is disabled.</strong> Always. This is why <code>{{statblock}}</code> and
+<code>{{dice}}</code> emit sanitised HTML rather than trusting the document: the document
+is untrusted, so the extension&rsquo;s output is sanitised too.</li>
+<li><strong>Symlinks inside a content tree are rejected.</strong> Following them would let a
+synced vault point at files outside its own root, and the watcher&rsquo;s behaviour
+around them is documented as uncertain.</li>
+</ul>
+<h2 id="reporting-a-vulnerability">Reporting a vulnerability</h2>
+<p>Please report privately through
+<a href="https://github.com/PopinjayJohn/semiplane/security/advisories/new">GitHub&rsquo;s private vulnerability reporting</a>.
+<strong>Do not open a public issue for a vulnerability</strong> — not even a
+&ldquo;is this a problem?&rdquo; question, because a public issue is a public disclosure.</p>
+<p><strong>Worth reporting:</strong></p>
+<ul>
+<li>Secret text reaching any response a non-GM viewer can receive — in the body, a
+comment, a header, a JSON field, a search snippet, or a cached variant.</li>
+<li>Any path escaping a campaign&rsquo;s content root, including through front matter,
+wikilinks, or asset URLs.</li>
+<li>Authorisation failures across campaign visibility, or on the WebSocket plane.</li>
+<li>A missing or incorrect <code>Origin</code> check on the WebSocket upgrade.</li>
+<li>The secret reconciliation loop exceeding its cap and leaving a secret revealed,
+or converging on a revealed state after a conflict.</li>
+<li>Rule resolution that is not a pure function of <em>(state, intent, seed)</em>.</li>
+<li>A plugin being able to write campaign state or forge a broadcast.</li>
+</ul>
+<p><strong>Not vulnerabilities, and reported as such:</strong></p>
+<ul>
+<li>Secrets not being encrypted on disk. That is the documented boundary.</li>
+<li>Any indication that secret text is present in a response to a <strong>GM</strong>. A GM is
+inside the trust boundary by definition.</li>
+<li>In-memory state being lost on an unclean stop. The debounce cadence and the
+crash floor are documented.</li>
+<li>Missing rate limiting on authentication. Not implemented yet; noted so the
+absence is a decision rather than an oversight.</li>
+</ul>
+<h2 id="response">Response</h2>
+<p>semiplane is a single-maintainer project in its pre-release phase, so this is
+honest rather than impressive: an acknowledgement within a few days, and a fix or
+a clear statement that the report is by-design within a reasonable time. If a
+report is accepted, credit is offered in the advisory unless you would rather not
+be named.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

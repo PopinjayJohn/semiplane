@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0020 — A forwarding header is evidence of nothing until an operator names the proxy — semiplane</title>
+<meta name="description" content="Client IP resolution trusts no proxy by default, and walks the forwarding chain right to left when one is configured.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0020-trusted-proxies-and-client-ip/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0020 — A forwarding header is evidence of nothing until an operator names the proxy — semiplane">
+<meta property="og:description" content="Client IP resolution trusts no proxy by default, and walks the forwarding chain right to left when one is configured.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0020-trusted-proxies-and-client-ip/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0020 — A forwarding header is evidence of nothing until an operator names the proxy</h1>
+    <p class="lede">Client IP resolution trusts no proxy by default, and walks the forwarding chain right to left when one is configured.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>semiplane is self-hosted. Most operators will put it behind a reverse proxy for TLS, and some
+will expose it directly. In both cases something arrives at the HTTP server claiming to be a
+client address: <code>X-Forwarded-For</code>, <code>X-Real-IP</code>.</p>
+<p>That claim is worthless on its own. <code>X-Forwarded-For</code> is a request header, so anyone who can
+open a socket to the server chooses its value. This matters more than it first appears,
+because the resolved client address is not only a log field. It is the input to every rate
+limit, audit query, abuse report and ban that reads the access log later. A forgeable client
+IP means a ban can be evaded by sending a header.</p>
+<p>There is a second failure, and it is the one most implementations get wrong. A proxy <em>appends</em>
+the address it saw, so a chain reads nearest-proxy-last:</p>
+<pre tabindex="0"><code>X-Forwarded-For: 203.0.113.7, 198.51.100.4
+                 └─ what an earlier hop believed ─┘  └─ what the nearest proxy saw ─┘
+</code></pre><p>Walking left to right returns <code>203.0.113.7</code> — the oldest, and least verifiable, entry, and
+precisely the one a client prepended. Walking right to left returns the address the nearest
+proxy actually saw, which is the one thing in the header that the client did not choose.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>No configured proxy means no header is read. A configured proxy list is the only thing that
+makes a forwarding header evidence, and the chain is walked right to left.</strong></p>
+<p>Concretely, in <code>internal/httpapi/middleware</code>:</p>
+<ul>
+<li><code>SEMIPLANE_TRUSTED_PROXIES</code> is empty by default. When it is empty, the resolved address is
+the transport address and both forwarding headers are ignored without being parsed.</li>
+<li>With proxies configured, the chain is walked from the nearest hop backwards, across header
+lines as well as within them, and the first address outside the trusted set is the client.</li>
+<li>Every hop in the trusted set is skipped rather than terminating the walk, so a deployment
+with two proxies in front still resolves correctly.</li>
+<li>A malformed hop ends the walk and falls back to the transport address. It does <em>not</em> fall
+through to a hop further left: that value is the client-chosen one this record exists to
+avoid.</li>
+<li><code>SEMIPLANE_TRUSTED_PROXIES</code> accepts CIDRs and bare addresses, and unparseable entries are
+dropped with a warning rather than refusing to boot. A typo must not take down a running
+server, and dropping an entry fails toward the transport address, which is the safe side.</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>An operator who puts semiplane behind a proxy and forgets to configure the list gets the
+proxy&rsquo;s address in the logs rather than a client&rsquo;s. That is visible and wrong, and it is
+better than the alternative: the configuration mistake produces obviously-wrong log lines,
+while the permissive default produces plausible ones.</li>
+<li>The empty-list case is a real code path with a test, not a degenerate one. The first
+implementation of this walked the header and <em>then</em> asked whether each hop was trusted —
+which, with an empty list, means every hop is untrusted and the header wins. The code, its
+own comment, and the install documentation all claimed the safe behaviour; the tests are
+what caught the discrepancy.</li>
+<li>The transport address is used for anything the headers do not cover, including the absence
+of <code>RemoteAddr</code>, which is the normal case for in-process tests.</li>
+<li>IPv4-mapped IPv6 addresses are unmapped, so an operator&rsquo;s allowlist written in one form
+matches a client arriving in the other.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Trust <code>X-Forwarded-For</code> unconditionally.</strong> What most frameworks do by default, and the
+reason a deployment behind a proxy &ldquo;just works&rdquo; without configuration. Rejected because the
+value is caller-controlled, and because the failure is silent: the access log looks correct
+and the ban list does not work.</p>
+<p><strong>Trust the leftmost entry, the way <code>X-Forwarded-For: &lt;client&gt;</code> was originally specified.</strong>
+This is the left-to-right walk, and it returns the most spoofable value in the header. It is
+the right answer only if every proxy in the chain is trusted <em>and</em> the first entry cannot be
+prepended — which no proxy guarantees.</p>
+<p><strong>Take the rightmost entry unconditionally.</strong> Simpler, and correct for the common
+single-proxy deployment. Rejected because it breaks the moment there are two proxies, and
+because it means a client that reaches the server directly controls the answer outright.</p>
+<p><strong>A single trusted-proxy setting rather than a list.</strong> Enough for one deployment and not for
+the next; the list is not meaningfully more code than the setting, and the second proxy is
+always the one that arrives after the first is deployed.</p>
+<p><strong>Drop client IP from the access log entirely.</strong> The most secure answer available, and
+rejected because the field is genuinely useful for diagnosing a player&rsquo;s connection problems,
+and because every framework&rsquo;s log tooling is better with it present. Withholding it would
+also be a strange thing to do while still writing the header the client controls.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

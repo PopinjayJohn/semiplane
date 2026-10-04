@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0013 — templ, pinned exactly — semiplane</title>
+<meta name="description" content="Compiled Go templates. Still v0.x, so the version is pinned rather than ranged.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0013-templ/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0013 — templ, pinned exactly — semiplane">
+<meta property="og:description" content="Compiled Go templates. Still v0.x, so the version is pinned rather than ranged.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0013-templ/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0013 — templ, pinned exactly</h1>
+    <p class="lede">Compiled Go templates. Still v0.x, so the version is pinned rather than ranged.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#generated-code-is-not-committed">Generated code is not committed</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Every page is server-rendered: the shell, the wiki, the editor, the conflict diff, the play
+page. The templating layer sits under all of them, and a change in it is a change in every
+response the server produces.</p>
+<p>The obvious alternative — <code>html/template</code> — is in the standard library, is genuinely good, and
+has no dependency cost at all. It is not a serious option for a component tree of this size,
+though: no compile-time checking that a component&rsquo;s parameters match its call site, no
+composition, and template parsing at init time.</p>
+<h2 id="decision">Decision</h2>
+<p><strong><code>github.com/a-h/templ</code>, pinned to exactly v0.3.1020.</strong></p>
+<p>templ compiles <code>.templ</code> files to Go. Two properties make it the right fit:</p>
+<ul>
+<li><strong>Compiled, not interpreted.</strong> A component&rsquo;s parameters and its call sites are checked by the
+Go compiler. A renamed parameter or a wrong argument count is a build error, not a 500 at
+runtime.</li>
+<li><strong>Concurrent component rendering.</strong> v0.3.1020 specifically added safe concurrent rendering of
+components, which matters because the render cache can serve the same component to concurrent
+requests.</li>
+</ul>
+<p>The pin is exact, and the Makefile owns it — the same single-source-of-truth rule as the Go
+toolchain version in [0001]({{ &ldquo;decisions/0001-go-as-implementation-language/&rdquo; | relURL }}).
+CI reads the version from the Makefile rather than repeating it, so the local gate and the CI
+gate cannot drift apart.</p>
+<h3 id="generated-code-is-not-committed">Generated code is not committed</h3>
+<p><code>*_templ.go</code> files are produced by <code>make templ</code>, which <code>make check</code> runs before <code>build</code>. They
+are gitignored. A generated file appearing in a diff means the gate is not being run, which is
+the failure this prevents.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>templ&rsquo;s v0.x status is the main risk. The pin means an upgrade is a deliberate commit with a
+changelog read, not a <code>go get -u</code>.</li>
+<li><code>make check</code> now depends on <code>templ</code> being available. That is a real change to the gate, and it
+is the reason the toolchain is set up in the foundations phase rather than when the first
+template is written — a shell cannot be styled before the CSS toolchain exists.</li>
+<li>The generated code is in the build graph, which means <code>gopls</code> diagnostics on a <code>.templ</code> file
+require the generated <code>.go</code> to exist. Run <code>make templ</code> before expecting editor support.</li>
+<li>Component-level tests are ordinary Go tests that render a component and assert on the output.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong><code>html/template</code>.</strong> Standard library, zero dependencies, and mature. Rejected for a component
+tree of this size: no compile-time parameter checking, no composition model, and template
+parsing cost at init. It remains the tool for a <em>small</em> server, and it would be a defensible
+choice for anything outside <code>internal/web</code>.</p>
+<p><strong>A JSX-like Go runtime (gojaeco/structr, or a Go implementation of a JSX syntax).</strong> Rejected:
+it moves rendering to run time, which is the opposite of what a static asset pipeline wants, and
+none of them are stable.</p>
+<p><strong>Embedding a full frontend framework (Inertia, Livewire-style patterns).</strong> Rejected because the
+frontend here is unusually specific — a canvas the server must not touch, Datastar patching
+around it, and an accessibility contract about exactly how many live regions exist. A framework
+that owns the document owns the parts of it this project has decided deliberately.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

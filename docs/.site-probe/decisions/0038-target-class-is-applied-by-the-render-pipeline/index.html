@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0038 — The `.target` class is applied by the render pipeline, after the sanitiser — semiplane</title>
+<meta name="description" content="semiplane adds one attribute to sanitised output rather than removing one, and it is safe because the value is a constant it owns, the element set is fixed, and the pass runs on a tree parsed from bytes the sanitiser already approved.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0038-target-class-is-applied-by-the-render-pipeline/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0038 — The `.target` class is applied by the render pipeline, after the sanitiser — semiplane">
+<meta property="og:description" content="semiplane adds one attribute to sanitised output rather than removing one, and it is safe because the value is a constant it owns, the element set is fixed, and the pass runs on a tree parsed from bytes the sanitiser already approved.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0038-target-class-is-applied-by-the-render-pipeline/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0038 — The `.target` class is applied by the render pipeline, after the sanitiser</h1>
+    <p class="lede">semiplane adds one attribute to sanitised output rather than removing one, and it is safe because the value is a constant it owns, the element set is fixed, and the pass runs on a tree parsed from bytes the sanitiser already approved.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#why-after-the-sanitiser-and-not-before">Why after the sanitiser, and not before</a></li>
+        <li><a href="#why-it-adds-and-why-that-is-safe">Why it adds, and why that is safe</a></li>
+        <li><a href="#why-a-parsed-tree-and-not-a-regexp">Why a parsed tree, and not a regexp</a></li>
+        <li><a href="#why-target-is-deliberately-absent-from-the-class-allowlist">Why <code>target</code> is deliberately absent from the <code>class</code> allowlist</a></li>
+        <li><a href="#the-pass-reaches-every-a-including-one-with-no-href">The pass reaches every <code>&lt;a&gt;</code>, including one with no <code>href</code></a></li>
+        <li><a href="#idempotence-and-why-it-is-not-an-optimisation">Idempotence, and why it is not an optimisation</a></li>
+        <li><a href="#confinement-to-the-page-body">Confinement to the page body</a></li>
+        <li><a href="#one-byte-difference-stated-rather-than-hidden">One byte difference, stated rather than hidden</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p><strong>Renumbered.</strong> This record was drafted as 0037 and is published as 0038. Two
+independent work items were briefed to write a record without knowing of each
+other, and both took 0037; the settle filter&rsquo;s
+[0037]({{ &ldquo;decisions/0037-zero-bytes-is-not-a-stable-size/&rdquo; | relURL }}) holds the
+number. <code>AGENTS.md</code> says a number is never reused and never renumbered, which
+means a collision is resolved <em>before</em> either merges rather than by whoever
+happened to merge first — and the surviving number is not re-derived from the
+order work happened to land in. This record moved; 0037 did not.</p>
+<p>UI §7.3 makes target size &ldquo;enforced by construction&rdquo;, and says what the construction is: a shared
+<code>.target</code> utility setting <code>min-inline-size</code> and <code>min-block-size</code> from <code>--target-min</code>, used by every
+interactive element — <strong>including plugin components</strong> (§4.11.1). UI §10.6 makes it a gate: &ldquo;grep
+rendered markup for interactive elements missing the class, including plugin output&rdquo;.</p>
+<p><code>internal/web/static/css/shell.css</code> is the utility, and the shell&rsquo;s own chrome carries the class
+because it is templ. The gate is
+<code>TestEveryRouteCarriesTheTargetClassOnEveryFocusStop</code> in <code>internal/httpapi/wiki</code>, and when it was
+written — on this branch&rsquo;s base — it failed on five focus stops inside
+<code>div[data-testid=page-body]</code>, all in the one document a reader is most likely to read:</p>
+<pre tabindex="0"><code>a.wikilink                       internal/content/ext, on [[Greyhaven]]
+a                                goldmark&#39;s link renderer, on [the vault](…)
+a.footnote-ref                   goldmark&#39;s footnote extension
+a.footnote-backref               goldmark&#39;s footnote extension, inside the footnotes list
+a                                goldmark&#39;s linkify extension, on a bare https:// URL
+</code></pre><p>None of them is fixable in a <code>.templ</code> file. Three come out of renderers this repository does not
+write, one out of <code>internal/content/ext</code>, and they all land in the page body — which
+<code>components.WikiArticle</code> inserts as a single <code>@templ.Raw</code>. A wrapper can put a class on the
+<em>container</em>; it cannot reach an element a renderer emitted inside it. So the class has to be applied
+to the bytes, and the bytes are only ever whole at one point in the pipeline.</p>
+<p>{{ &ldquo;decisions/0028-render-output-is-permission-neutral/&rdquo; | relURL }} is the record for that
+pipeline, and everything in it removes something: two layers, both subtractive, and the whole of
+<code>policy.go</code> reads as <em>what is not on the list does not reach a reader&rsquo;s browser</em>. This decision is
+the exception, and an exception on the one surface <code>AGENTS.md</code> calls a security boundary needs its
+own record.</p>
+<h2 id="decision">Decision</h2>
+<p><strong><code>internal/content/target.go</code>&rsquo;s <code>applyTargetClass</code> runs at the end of <code>Renderer.Render</code>, after
+<code>policy.Sanitize</code>, and adds <code>class=&quot;target&quot;</code> to every focusable element in the page body.</strong></p>
+<h3 id="why-after-the-sanitiser-and-not-before">Why after the sanitiser, and not before</h3>
+<p>Because the class is not on the <code>class</code> allowlist, and it must not be. A pass in front of the
+sanitiser would have the sanitiser take the token straight back off again, which is a pass that
+cannot work and a gate that stays red. After, the sanitiser is still the last thing that decided
+which elements and which attributes exist; this pass can add a class and nothing else.</p>
+<p><code>internal/httpapi/wiki</code>&rsquo;s address attachment already runs after the sanitiser, for the same shape of
+reason, and this record is consistent with it: everything between the sanitiser and the browser
+writes markup the policy would also have allowed.</p>
+<h3 id="why-it-adds-and-why-that-is-safe">Why it adds, and why that is safe</h3>
+<p>Four properties, each structural rather than a promise:</p>
+<ul>
+<li><strong>The value is a fixed constant semiplane owns.</strong> <code>targetClass</code> is a literal in <code>target.go</code>.
+Nothing a vault can reach participates in it, so the only token this pass can add is that one, and
+it cannot be shaped by an author.</li>
+<li><strong>The element set is fixed</strong>, and written out rather than computed, so the pass cannot reach an
+element the policy did not already allow and a reader can see the whole set without reading a policy.
+§10.6&rsquo;s list includes &ldquo;anything with a <code>tabindex</code>&rdquo;, which is not an element name, so it could not be
+enumerated anyway; and a list nobody has to keep is the entire point of the exercise.</li>
+<li><strong>The value is a class name, not a behaviour.</strong> <code>.target</code> resolves to two minimum sizes in
+semiplane&rsquo;s own stylesheet. This is {{ &ldquo;decisions/0028-render-output-is-permission-neutral/&rdquo; | relURL }}&rsquo;s
+argument for allowing <code>class</code> at all — an author cannot write a selector, so a class of their
+choosing matches no rule — turned round: semiplane&rsquo;s own class cannot be triggered by anything.</li>
+<li><strong>It runs on a parsed tree, not on markup as a string.</strong> <code>golang.org/x/net/html</code> parses the
+sanitised fragment, the pass mutates the tree, and the tree is re-rendered. See below.</li>
+</ul>
+<h3 id="why-a-parsed-tree-and-not-a-regexp">Why a parsed tree, and not a regexp</h3>
+<p>A string pass would have to <em>promise</em> it cannot resurrect what the sanitiser removed. A parsed tree
+cannot: it is built out of bytes that already contain the answer, so a <code>&lt;script&gt;</code> is not &ldquo;a script
+element with its content stripped&rdquo; that a later match might find — it is <strong>absent</strong>, and there is no
+code path in the pass that puts one back. The difference between a promise and a property is the
+whole of the reason this is not three lines of <code>strings.Replace</code>.</p>
+<p>The reparse is safe for the same reason it is necessary. HTML parsing has error recovery, and the
+places where recovery changes structure — foreign content in <code>&lt;svg&gt;</code>/<code>&lt;math&gt;</code>, raw text in
+<code>&lt;script&gt;</code>/<code>&lt;style&gt;</code>/<code>&lt;noscript&gt;</code>/<code>&lt;textarea&gt;</code>, <code>&lt;template&gt;</code> contents, misnested table cells — all
+live <em>inside</em> elements <code>policy.go</code> removes outright. With none of them present the tokenizer sees only
+the phrasing and flow content the policy allows, and the tree it builds is the tree the sanitiser
+saw. <code>TestTheTargetPassCannotResurrectSanitisedMarkup</code> asserts each of those removals holds after the
+pass, and <code>TestTheRenderedBodyIsTheSanitisedBodyPlusOneTokenPerFocusStop</code> renders <strong>every</strong> golden
+document through the pipeline with and without the pass and compares the two documents attribute by
+attribute — which is this argument stated over the markup goldmark, <code>ext</code> and bluemonday actually
+produce, rather than over markup a person imagined.</p>
+<p>The parse is a <strong>fragment</strong> parse, in a <code>body</code> context. A document parse would wrap the page body in
+<code>&lt;html&gt;&lt;head&gt;&lt;body&gt;</code>, which is a nested document inside a templ shell and a stylesheet that stops
+applying; <code>TestARenderedPageBodyIsAFragmentAndNotADocument</code> is the gate on that, and it is the half
+of the confinement claim that can actually fail (see <em>Consequences</em>).</p>
+<p>The context is named <code>body</code> rather than left to <code>ParseFragment</code>&rsquo;s <code>div</code> default, which is documentation
+rather than a fix: <code>body</code> and <code>div</code> were measured to parse identically for every input a sanitised
+page body can contain. It is written down as documentation <em>because</em> an earlier draft of the code
+commented that <code>div</code> &ldquo;would drop a <code>&lt;li&gt;</code>&rdquo;, which is not true, and a comment a reader has to go and
+disprove is worse than one that says what was measured.</p>
+<h3 id="why-target-is-deliberately-absent-from-the-class-allowlist">Why <code>target</code> is deliberately absent from the <code>class</code> allowlist</h3>
+<p>Adding it to <code>extensionClasses</code> would look like it fixed something and it would not. An author
+writing <code>class=&quot;target&quot;</code> achieves nothing either way, because goldmark drops raw HTML before the
+sanitiser sees it, so the class could only ever have come from the pipeline. It would also be a
+second source of truth for one class — and <code>policy.go</code>&rsquo;s own comment on <code>extensionClasses</code> calls that
+list a maintenance obligation: a new extension adds its class there. A class applied by the pipeline
+needs no entry.</p>
+<p>So the class is <em>semiplane&rsquo;s, applied by semiplane</em>, and the allowlist stays an allowlist of values
+the renderer emits.
+<code>TestTheTargetClassIsNotOnTheClassAllowlist</code> asserts the absence, and it asserts it <strong>through the
+policy</strong> rather than through a render, because no output assertion can distinguish a policy that
+forbids <code>target</code> from one that allows it and never uses it.</p>
+<h3 id="the-pass-reaches-every-a-including-one-with-no-href">The pass reaches every <code>&lt;a&gt;</code>, including one with no <code>href</code></h3>
+<p>§10.6&rsquo;s gate tests <code>a[href]</code>, because by the time a reader has the document every surviving anchor
+has an address. Inside the render pipeline that is not yet true:
+{{ &ldquo;decisions/0017-cross-campaign-links-never-inline/&rdquo; | relURL }} requires rendered output to be
+permission-neutral, so <code>Renderer</code> emits
+<code>&lt;a class=&quot;wikilink&quot; data-ext=&quot;wikilink&quot; data-ref-index=&quot;0&quot;&gt;</code> with <strong>no</strong> <code>href</code> at all, and
+<code>internal/httpapi/wiki</code> writes the address in afterwards. An <code>href</code>-gated pass would skip every
+wikilink in every campaign — three of the five the gate reported.</p>
+<p>Being a <strong>superset</strong> of what the gate can see is the safe direction for that mismatch. The extra
+elements are ones that will not be focusable: a <code>span</code> an address refusal turns a wikilink into, an
+<code>&lt;img&gt;</code> an asset embed becomes, an <code>&lt;a&gt;</code> whose <code>href</code> the URL policy removed. <code>min-inline-size</code> on an
+inline element computes to nothing, so a <code>target</code> class on one of those is inert. A set <em>narrower</em>
+than the gate&rsquo;s is the unsafe direction: a live focus stop left below 44px.</p>
+<h3 id="idempotence-and-why-it-is-not-an-optimisation">Idempotence, and why it is not an optimisation</h3>
+<p>The token is checked before it is written, and a class list that already holds it is left exactly as
+it was. The render is cached (S-5.2) and a miss re-renders, so the pass never sees its own output —
+but &ldquo;the render is deterministic&rdquo; is a claim about this package being careful, and a class list that
+grew <code>target target target</code> would be an accumulating bug in the one place where accumulating is
+visible in the bytes a reader gets.</p>
+<p>The same check is what makes the <em>author-written</em> class a non-event: a fragment that already carries
+<code>target</code> comes back unchanged rather than re-serialised.</p>
+<h3 id="confinement-to-the-page-body">Confinement to the page body</h3>
+<p><code>applyTargetClass</code> is <strong>unexported</strong>, <code>Renderer.Render</code> is its only caller, and <code>Rendered.HTML</code> is
+its only argument. The shell&rsquo;s chrome is templ, carries the class by construction, and never passes
+through here. That is structural: there is no exported API that runs this over a document, so
+ADR 0038&rsquo;s confinement claim is enforced by the compiler rather than by discipline.</p>
+<h3 id="one-byte-difference-stated-rather-than-hidden">One byte difference, stated rather than hidden</h3>
+<p>The pass re-renders through <code>html.Render</code>, which writes a void element as <code>&lt;hr/&gt;</code> where the sanitiser
+writes <code>&lt;hr&gt;</code>. That is HTML5&rsquo;s canonical serialisation and every browser reads it identically. It is
+mentioned here because it moved the golden files, and a record that does not mention why six fixtures
+changed is a record that leaves a reviewer to find out.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong>§10.6&rsquo;s gate is green for the page body</strong>, and it was red for five focus stops on a page a GM
+would write in ten seconds. That is the defect this closes.</li>
+<li><strong>A plugin rendering through this pipeline gets the class for free</strong>, which is the mechanism §4.11.1
+means by &ldquo;a plugin component inherits <code>.target</code>&rdquo;. A plugin that emits its markup through
+<code>internal/content</code> is covered by the gate without knowing this record exists.</li>
+<li><strong>Confining the pass to the page body means the shell is not covered by it</strong>, and that is correct
+rather than a gap: the shell is templ and its own audit in <code>internal/httpapi</code> already walks it.
+What is worth knowing is that this confinement is not observable in the <em>output</em>, because an
+idempotent pass run over a shell that already carries the class changes nothing a reader can see. The
+falsifiable half is the input — the unexported function, and
+<code>TestARenderedPageBodyIsAFragmentAndNotADocument</code> against the document-parse mutation.</li>
+<li><strong>The <code>input</code> element gets the class</strong>, even though a GFM task-list checkbox is
+<code>disabled</code> and therefore not focusable in a browser. §10.6&rsquo;s list says <code>input</code>, the gate counts
+<code>input</code> without reading its <code>disabled</code>, and a <code>min-block-size</code> on a picture of a box is harmless. A
+pass that disagreed with the gate about an inert element would be a pass maintaining a second opinion
+about what is interactive.</li>
+<li><strong>A <code>target</code> class can survive on a <code>span</code>.</strong> An address refusal rewrites a wikilink&rsquo;s <code>&lt;a&gt;</code> into a
+<code>&lt;span&gt;</code> with the refusal&rsquo;s sentence in <code>title</code>, and it keeps the class. §10.6 is about interactive
+elements, a <code>span</code> is not one, and the class is inert on it. The alternative — stripping the class at
+refusal time — is a second pass over markup the route is already rewriting, for no reader-visible
+gain.</li>
+<li><strong><code>internal/content</code> re-serialises the page body.</strong> Six golden files changed. Any <em>other</em> assertion
+in this repository that matched a <code>class</code> attribute as an exact string had to be taught to match a
+class <strong>token</strong> instead; that is a correctness improvement, and it is the same distinction
+<code>route_a11y_test.go</code> makes when it splits on whitespace rather than using <code>strings.Contains</code>.</li>
+<li><strong>The set is written out and will drift from §10.6.</strong> The <code>tabindex</code> branch exists because §10.6&rsquo;s
+list has one and an element map cannot. Three copies of the focus-stop set now exist — <code>target.go</code>,
+<code>route_a11y_test.go</code>, <code>target_test.go</code> — and the right fix is one exported audit package imported by
+<code>httpapi_test</code>, <code>wiki_test</code> and <code>assets_test</code>, which <code>route_a11y_test.go</code> already names as its own
+eventual answer and which is not this change&rsquo;s to build.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Add <code>target</code> to the <code>class</code> allowlist in <code>policy.go</code>.</strong> The obvious move, and wrong twice over. It
+does not fix the defect — the five elements fail because nothing writes the class, not because the
+sanitiser strips it, and an author cannot write it either. And it makes the class author-reachable in
+principle and semiplane-owned in fact, which is the wrong direction for a boundary. It is also the
+second-source-of-truth problem <code>extensionClasses</code>&rsquo;s own comment warns about: a list that has to be
+kept in step with the code that writes the values.</p>
+<p><strong>A regexp pass over the sanitised HTML.</strong> Cheaper, and it is what a first draft of this looks like.
+Rejected because &ldquo;cannot resurrect what the sanitiser removed&rdquo; would be a comment rather than a
+property: a regexp that adds a <code>class</code> before the first <code>&gt;</code> of a tag has no notion of which bytes are
+markup and which are text, so the safety claim rests entirely on nobody later running it over the
+wrong thing. The tree is not slower in any way that matters — a page body is kilobytes and the pass
+does not run at all when it has nothing to write.</p>
+<p><strong>Fix it in <code>components.WikiArticle</code>&rsquo;s template.</strong> Impossible: the page body is one <code>@templ.Raw</code>, and a
+templ component cannot add an attribute to an element a renderer emitted inside it. Named here because
+it is the first thing a reader of this record will try.</p>
+<p><strong>Run the pass in <code>internal/httpapi/wiki</code>, after the addresses are attached.</strong> It would see the final
+document, with every <code>href</code> in place, and could use §10.6&rsquo;s rule exactly as written. Rejected: it
+puts a third post-sanitisation pass in the transport layer, it breaks the confinement to a single place
+(<code>internal/content</code>), and a plugin rendering through the pipeline would not get the class — which is
+the mechanism §4.11.1 asks for.</p>
+<p><strong>Strip <code>.target</code> from an element that the address attachment turns into a <code>span</code> or an <code>img</code>.</strong>
+Rejected as a second pass for no reader-visible gain, and noted under <em>Consequences</em> rather than
+implemented.</p>
+<p><strong>Widen §10.6&rsquo;s gate to exclude the page body, on the grounds that author markup is the author&rsquo;s
+business.</strong> Rejected. §10.6 says &ldquo;including plugin output&rdquo; precisely because the plugin layer&rsquo;s markup
+is in the same tree as everyone else&rsquo;s, and the gate&rsquo;s own message names the owner of a finding for
+exactly this reason — a focus stop the shell wrote is <code>internal/web</code>&rsquo;s, and one inside
+<code>div[data-testid=page-body]</code> is the render pipeline&rsquo;s. The gate was right and the pipeline was
+missing a step.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

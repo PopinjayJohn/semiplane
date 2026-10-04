@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0050 — A dispatch names its own actor, and an actor cannot be decoded from bytes — semiplane</title>
+<meta name="description" content="`Hub.Dispatch` resolves an intent on behalf of an identity rather than a connection, so a UI plugin can dispatch without a socket. The identity is a `realtime.Actor` with unexported fields and a refusing `UnmarshalJSON`, so &#39;every field is server-derived&#39; is a property of the type rather than a habit of its call sites.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0050-a-dispatch-names-its-own-actor/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0050 — A dispatch names its own actor, and an actor cannot be decoded from bytes — semiplane">
+<meta property="og:description" content="`Hub.Dispatch` resolves an intent on behalf of an identity rather than a connection, so a UI plugin can dispatch without a socket. The identity is a `realtime.Actor` with unexported fields and a refusing `UnmarshalJSON`, so &#39;every field is server-derived&#39; is a property of the type rather than a habit of its call sites.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0050-a-dispatch-names-its-own-actor/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0050 — A dispatch names its own actor, and an actor cannot be decoded from bytes</h1>
+    <p class="lede">`Hub.Dispatch` resolves an intent on behalf of an identity rather than a connection, so a UI plugin can dispatch without a socket. The identity is a `realtime.Actor` with unexported fields and a refusing `UnmarshalJSON`, so &#39;every field is server-derived&#39; is a property of the type rather than a habit of its call sites.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>[0042]({{ &ldquo;decisions/0042-the-plugin-registry-is-explicit-and-a-ui-plugin-can-only-emit-known-ops/&rdquo; | relURL }})
+built the UI plugin tier and left one thing conspicuously unwired. Its <code>Emitter</code> is the only
+authority a UI plugin holds over game state, and it dispatches an intent rather than
+holding a state handle — which is [S-10.3]({{ &ldquo;contributing/spec/&rdquo; | relURL }})&rsquo;s whole point, and
+which cannot work. <code>Hub.Apply</code> takes a <code>*Peer</code>, and a <code>Peer</code> is minted by <code>Join</code>: a real
+connection, a presence entry, a slot in the campaign&rsquo;s peer limit.</p>
+<p>A UI plugin renders during an ordinary HTTP request. It has no socket. So the tier shipped
+with an interface and no implementation, and a plugin that rendered a die widget could not
+fire it.</p>
+<p>Two shapes would fix it. The first is a hub method that takes an identity value — a campaign
+id, a user id, a role — and resolves on that. The second is what the tier&rsquo;s own doc comment
+already warned against: a capability. A struct with exported fields, built by whatever
+handler had one, is a struct a future route can populate from a form post, and what it would
+be handing out is the ability to act as any user in any campaign. That is not a new bug. It
+is [0024]({{ &ldquo;decisions/0024-authorisation-gates-mount-not-per-handler/&rdquo; | relURL }})&rsquo;s subject from
+the other direction: authorisation is a gate the route mounts, and a value a route <em>fills in</em>
+has moved the decision back inside the handler where S-8 says it must not be.</p>
+<h2 id="decision">Decision</h2>
+<p><code>Hub.Dispatch(ctx, who Actor, frame) (Resolution, error)</code> resolves an intent as <code>who</code>, tells
+the campaign what changed, and returns the answer. <code>Apply</code> keeps its own order: answer the
+peer&rsquo;s <code>seq</code>, then announce.</p>
+<p>The two share <code>announce</code>, so &ldquo;how a change reaches the table&rdquo; has one implementation. They do
+not share an order, and that is deliberate.</p>
+<p><code>Actor</code>&rsquo;s fields are unexported. <code>NewActor</code> builds one and refuses a campaign that is not
+positive. <code>Dispatch</code> checks again, because the zero value is constructible without
+<code>NewActor</code>. <code>Actor</code> implements <code>UnmarshalJSON</code>, and it refuses.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>A UI plugin can dispatch, on the same road as a keystroke.</strong> The access gate, the codec, the
+codec&rsquo;s bounds and the system&rsquo;s own role check apply to it exactly as they apply to a player,
+because it is the same call.</p>
+<p><strong>&ldquo;Server-derived&rdquo; is now enforced by the type rather than by review.</strong> The forged identity has
+to survive a <code>json.Unmarshal</code>, and the answer is an error at the line that made the mistake.</p>
+<p><strong>The wire order did not change, and finding that out cost three tests.</strong> The first version of
+this had <code>Dispatch</code> publish and <code>Apply</code> answer afterwards, on the argument that the resolver
+has already mutated state by then, so a peer whose answer queue failed must not be the reason
+the other clients went stale. It passed every hub test and failed three in
+<code>internal/httpapi/play</code>, which read the socket&rsquo;s first frame after an intent and require it to
+be the <code>applied</code>. That is the right outcome: the order is client-visible, three committed tests
+pin it, and phase 8 is about plugins. So <code>Apply</code> answers first and the cost is recorded above
+in the code instead of fixed here — a peer whose answer queue has failed is still not told,
+which is phase 7&rsquo;s behaviour, unchanged.</p>
+<p><strong>A refusal is an error from <code>Dispatch</code> and a frame from <code>Apply</code>.</strong> Only a peer has a <code>seq</code> to
+reject; a UI plugin needs the reason as a value it can render, not as a frame nobody would read.</p>
+<p><strong><code>ruleset.Actor</code> was renamed to <code>ruleset.AuditActor</code>.</strong> The package was using one word for two
+identities: <code>Intent.Actor</code> is the user a resolution is performed <em>as</em>, and the audit type is who
+an <code>audit_log</code> row is attributed <em>to</em>, carrying a display name and no campaign and no role.
+The dispatch seam needed the word <code>Actor</code> and found it taken. Two names, each saying which
+question it answers, beat a third word or a collision.</p>
+<p><strong>A test that could not be written is part of the argument.</strong> <code>TestAnActorCannotBeDecodedFromBytes</code>
+was written first against unexported fields and no <code>UnmarshalJSON</code>, and it failed.
+<code>encoding/json</code> does not reject a struct it cannot populate: it returns no error and changes
+nothing. So the decode &ldquo;succeeded&rdquo;, the actor came out zero, and the only thing between that and
+a dispatch as the zero actor was <code>Dispatch</code>&rsquo;s campaign check — one layer away, with a message
+about a campaign. A silent failure wearing a loud-looking one. The method exists because the
+test failed, not because the shape looked right.</p>
+<p><strong>The call-site audit could not see what it was written for, twice.</strong> <code>internal/httpapi</code>&rsquo;s
+<code>TestNoRouteBuildsAnActorFromRequestData</code> walks every handler looking for an identity built out
+of something the client chose. Its first version searched the <em>arguments</em> of a reader call for
+the type name, and passed on a tree containing exactly the forgery it exists to prevent —
+because Go passes variables, not types. Its second version watched the right calls but skipped
+<code>id, _ := strconv.ParseInt(v, 10, 64)</code>, which is the commonest way a handler turns a request
+into a number. Both were caught by injecting the forgery and watching the audit stay green. It
+resolves one hop of local initialisers and says so in its own doc comment, because one hop is
+the honest limit; <code>go/types</code> is the answer if this ever has to survive an adversary rather than
+a refactor.</p>
+<p><strong><code>r.PathValue</code> is deliberately not a client-chosen reader.</strong> A first draft of the reader set
+included it and reported <code>edit/edit.go</code>, because the campaign <em>is</em> meant to come from the URL
+path. The rule is not &ldquo;nothing in the request may reach an identity&rdquo;; it is &ldquo;the campaign comes
+from the path and the user comes from the session&rdquo;, and a reader set that cannot tell those two
+apart would have to be deleted for being wrong.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Let the emitter hold a <code>*realtime.CampaignState</code>.</strong> Rejected: it is the write path the tier
+exists to withhold, and [S-10.2]({{ &ldquo;contributing/spec/&rdquo; | relURL }})&rsquo;s refusal to apply in place
+would be the only thing standing between a UI plugin and <code>campaign_state</code>.</p>
+<p><strong>Export <code>Actor</code>&rsquo;s fields and rely on review.</strong> Rejected, and it is the decision this record
+exists to prevent from being made again by accident. It compiles, it works, and &ldquo;we do not do
+that&rdquo; is a habit.</p>
+<p><strong>Mint a synthetic <code>Peer</code> for a UI plugin&rsquo;s dispatch.</strong> Rejected: a peer is a presence entry and
+occupies a slot in the campaign&rsquo;s peer limit, so every render of a widget would be a ghost
+connection, and a plugin would have been able to address itself to the room rather than answer
+one request.</p>
+<p><strong>Have <code>Apply</code> delegate to <code>Dispatch</code> so there is one publish site.</strong> This is what was built
+first and it did not work: delegating fixes the <em>implementation</em> and inherits the <em>order</em>, so
+the wire changed with it. Sharing <code>announce</code> keeps one implementation and leaves each caller
+choosing when, which is the actual distinction between them.</p>
+<p><strong>Make <code>Actor</code> fields unexported and stop there.</strong> Rejected because it does not work, which is
+the finding rather than a preference: <code>encoding/json</code> walks past an unexported struct and
+returns no error. The type needed the method too.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

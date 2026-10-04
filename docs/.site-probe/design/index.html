@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Design records — semiplane</title>
+<meta name="description" content="The architecture and UI specifications, published verbatim.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/design/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Design records — semiplane">
+<meta property="og:description" content="The architecture and UI specifications, published verbatim.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/design/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/" aria-current="page">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Design records</h1>
+    <p class="lede">The architecture and UI specifications, published verbatim.</p>
+    <p>These are <strong>dated design records</strong>, not user documentation. They are rendered
+straight from the committed files in the repository, so the copy here cannot drift
+from the original. The cost of that choice is that they are also unedited: they
+contain open questions that have since been answered, and sections describing
+behaviour the code does not have yet.</p>
+<p>Read them for intent and for reasoning. For how to run the thing, read
+[install]({{ &ldquo;install/&rdquo; | relURL }}) and [concepts]({{ &ldquo;concepts/&rdquo; | relURL }}).</p>
+<h2 id="the-records">The records</h2>
+<h3 id="technical-architecture-designarchitecture--relurl-">[Technical architecture]({{ &ldquo;design/architecture/&rdquo; | relURL }})</h3>
+<p>The product model, the data model, the content pipeline, editing and conflict
+resolution, the realtime protocol, access control, the plugin system, the
+security boundaries, and the build order.</p>
+<p>Source: <code>.opencode/plans/1790774477695-semiplane-architecture-overview.md</code></p>
+<h3 id="responsive-uiux-specification-designui-ux--relurl-">[Responsive UI/UX specification]({{ &ldquo;design/ui-ux/&rdquo; | relURL }})</h3>
+<p>The five structural components, five width tiers plus a television mode, the
+three-layer token system with both palettes, the accessibility contract, and the
+validation strategy.</p>
+<p>Source: <code>.opencode/plans/1790778908232-responsive-ui-ux-design-spec.md</code></p>
+<h2 id="why-verbatim">Why verbatim</h2>
+<p>Three reasons, in order of weight:</p>
+<ol>
+<li><strong>A retyped copy drifts.</strong> Every future architecture edit would need a
+corresponding edit on the website, and the first one that gets forgotten turns
+the documentation into a confident lie.</li>
+<li><strong>The value is in the reasoning, not the summary.</strong> Both documents argue with
+themselves in writing — they state what was rejected and why. That is the part
+worth reading, and it is exactly what a summary removes.</li>
+<li><strong>They are already public.</strong> They are in the repository, so publishing them
+adds no exposure and no maintenance burden.</li>
+</ol>
+<h2 id="known-staleness">Known staleness</h2>
+<p>Rather than fixing these in place — which would destroy the record&rsquo;s value as a
+record — they are listed here:</p>
+<ul>
+<li>Both documents predate any implementation, so they describe intended behaviour
+throughout. The
+[roadmap]({{ &ldquo;roadmap/&rdquo; | relURL }}) says which phase each part lands in.</li>
+<li>The UI specification introduces a <code>world</code>/<code>session</code> game entity pair, which the
+architecture record had already removed. Where the two conflict, the
+architecture record is correct; the UI document&rsquo;s own terminology table flags the
+discrepancy.</li>
+<li>The server-sent-event routes in the UI specification predate the URL scheme
+settled in the architecture record.</li>
+<li><strong>The architecture record&rsquo;s <code>ETag</code> rule is a defect.</strong> §5.5 says the validator
+is the content hash, and the same section defines two body variants from that
+one hash. A GM&rsquo;s unredacted response and a player&rsquo;s redacted one would
+advertise the same validator, and any cache holding both would serve whichever
+it stored first — a direct secret leak to a player. The correction is
+[0016]({{ &ldquo;decisions/0016-salted-etag/&rdquo; | relURL }}): salt the validator with
+the <code>include_secrets</code> flag.</li>
+<li><strong>The architecture record&rsquo;s build order cannot work as written.</strong> §15 builds
+the templ shell at phase 5 but places the Tailwind toolchain at phase 10, and a
+shell cannot be styled before the CSS toolchain exists. The toolchain moves to
+the foundations phase and the shell becomes its own phase. See
+[0013]({{ &ldquo;decisions/0013-templ/&rdquo; | relURL }}).</li>
+<li><strong>The architecture record&rsquo;s <code>pages</code> table lists a <code>front_matter</code> column, and
+the table does not have one.</strong> The filesystem is the source of truth, so the
+front matter is already in the file; a second copy of a block the parser
+regenerates in a millisecond is a second copy that can disagree with the
+first, and the failure is a per-page disagreement with no error anywhere. See
+[0027]({{ &ldquo;decisions/0027-no-front-matter-column-and-the-index-is-a-cache/&rdquo; | relURL }}).</li>
+<li><strong>The UI specification&rsquo;s <code>§4.3</code> and <code>§6.6</code> disagree about persisting the
+collapsed navigation.</strong> §4.3 puts it in <code>sp_ui</code>; §6.6 fixes <code>sp_ui</code> to two
+fields and says &ldquo;no density field — a dangling token is worse than no token&rdquo;.
+§6.6 governs: it is later, it defines the cookie&rsquo;s schema rather than one
+field&rsquo;s use, and its stated reason covers this case exactly. The collapse is a
+<code>data-nav</code> attribute, so it is per-device rather than per-account. The
+interface consequences of §4.3 — the 3.5rem icon rail, and each row keeping
+its full accessible name — are unaffected. See
+[0033]({{ &ldquo;decisions/0033-two-conflicts-in-the-ui-record/&rdquo; | relURL }}).</li>
+<li><strong>The UI specification&rsquo;s <code>§4.1</code> switchers are deferred to the client layer.</strong>
+It specifies a campaign switcher as a popup menu and a mode switcher as a
+<code>&lt;select&gt;</code>; §3.7 requires one canonical DOM across tiers and forbids the
+document varying by <code>sp_ui</code>, so neither can be server-rendered: a popup needs a
+menu to open, and a <code>&lt;select&gt;</code> that submits its value would make the response
+depend on the cookie. What ships now is the campaign&rsquo;s own address as a link
+(which is also §8.3&rsquo;s rank 1) and a <code>data-chrome</code> hook on each control the
+client will take over. The mode switcher must write <code>sp_ui.ui</code> client-side;
+the server never reads it back into the document. See
+[0033]({{ &ldquo;decisions/0033-two-conflicts-in-the-ui-record/&rdquo; | relURL }}).</li>
+<li><strong>The UI specification&rsquo;s <code>§4.7</code> state table has ten rows where its own task
+list says eleven.</strong> §7.5&rsquo;s live-region table attributes three conditions to
+§4.7, of which two are not designed; the eleventh is <code>ConnectionLost</code>, which
+has state behind it. The twelfth, &ldquo;game ended&rdquo;, is deliberately absent — there
+is no domain state for it, and §4.9 says of exactly this case to flag it
+rather than invent a client-side flag. See the states package&rsquo;s header.</li>
+<li><strong>The records name <code>.kilo/plans/</code> and <code>kilo.json</code>, neither of which exists.</strong>
+The repository has moved to OpenCode as its only agent: the design records now
+live under <code>.opencode/plans/</code> and <code>kilo.json</code> has been deleted in favour of
+<code>.opencode/opencode.jsonc</code>. The records are published here verbatim, so they
+still print the old paths — the file names, <code>make site-plans</code>&rsquo;s source and the
+&ldquo;Source of this page&rdquo; links are all correct, and the prose inside the two
+records is not. This is the intended outcome rather than an oversight: editing
+a dated record to agree with the present would destroy the reason for keeping
+it. See
+[0051]({{ &ldquo;decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/&rdquo; | relURL }}).</li>
+<li><strong>The theme layer is validated when its sheet is read, not &ldquo;at registration,
+and again whenever the watcher sees the manifest change&rdquo;.</strong> UI §4.12.3 states
+the registration-and-watcher timing. The manifest&rsquo;s ordinary writer is a sync
+client, and registration is one moment in a file&rsquo;s life, so the check follows
+the file instead. The consequence is that there is no registration-time
+rejection and no watcher hook — which is a feature where the file is the input
+and a liability where a bad theme should stop a boot. See
+[0054]({{ &ldquo;decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet/&rdquo; | relURL }}).</li>
+<li><strong>The SSE wire format in the records is a bare field list; the shipped one is
+Datastar&rsquo;s framed form.</strong> The records describe <code>selector</code>/<code>mode</code>/<code>elements</code>
+fields, and architecture §7.1&rsquo;s §9 URL table is correct while the frame shape
+it sits beside is not. The shipped stream carries Datastar&rsquo;s
+<code>datastar-patch-elements</code> event with its <code>data-</code> prefix, and the earlier
+implementation wrote the bare form with a reader written to agree — so the
+sidebar would have shipped as a feature that never arrives, with no symptom
+except a page that looks fine. Measured in a browser both ways. See
+[0055]({{ &ldquo;decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/&rdquo; | relURL }}).</li>
+<li>Diagrams render as code blocks. They are readable as source, which is how they
+were written.</li>
+</ul>
+<p>Where a record is wrong, the correction is a
+[decision record]({{ &ldquo;decisions/&rdquo; | relURL }}), never an edit here. That is the
+whole reason this list exists.</p>
+
+    <ul class="section-list" data-testid="section-list">
+        <li>
+          <a href="/semiplane/design/architecture/">Technical architecture</a>
+            <br><span class="section-list__desc">The architecture design record, rendered verbatim from the repository.</span>
+        </li>
+        <li>
+          <a href="/semiplane/design/ui-ux/">Responsive UI/UX specification</a>
+            <br><span class="section-list__desc">The UI design record, rendered verbatim from the repository.</span>
+        </li>
+    </ul>
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

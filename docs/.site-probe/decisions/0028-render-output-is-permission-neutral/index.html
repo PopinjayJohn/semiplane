@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0028 — Rendered output is permission-neutral: raw HTML is never interpreted, and a block-level element loses its text — semiplane</title>
+<meta name="description" content="goldmark runs without `WithUnsafe()` and bluemonday is an allowlist, so two independent layers stand between a vault and a reader&#39;s DOM.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0028-render-output-is-permission-neutral/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0028 — Rendered output is permission-neutral: raw HTML is never interpreted, and a block-level element loses its text — semiplane">
+<meta property="og:description" content="goldmark runs without `WithUnsafe()` and bluemonday is an allowlist, so two independent layers stand between a vault and a reader&#39;s DOM.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0028-render-output-is-permission-neutral/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0028 — Rendered output is permission-neutral: raw HTML is never interpreted, and a block-level element loses its text</h1>
+    <p class="lede">goldmark runs without `WithUnsafe()` and bluemonday is an allowlist, so two independent layers stand between a vault and a reader&#39;s DOM.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#the-consequence-nobody-likes">The consequence nobody likes</a></li>
+        <li><a href="#dice-renders-a-placeholder"><code>{{dice}}</code> renders a placeholder</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>S-3.1 makes a campaign&rsquo;s vault untrusted input: it arrives by Obsidian Sync, from shared vaults,
+from community plugins, and from whatever device last synced. So every byte of a page is
+attacker-reachable by a GM who was persuaded to accept a shared vault, or who installed a plugin
+unread. S-4.6 therefore forbids <code>html.WithUnsafe()</code> and calls the result a security boundary rather
+than a style choice.</p>
+<p>Compliance is not a setting. It is a pipeline with two independent layers, and the interesting
+decisions are the ones where a layer is <em>tighter</em> than the obvious implementation would be.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Layer one: goldmark never interprets raw HTML.</strong> The renderer does not call
+<code>html.WithUnsafe()</code>. A raw HTML element in a markdown file is therefore never converted into markup
+and never reaches a sanitiser as markup.</p>
+<p><strong>Layer two: bluemonday, as an allowlist narrowed from an empty policy.</strong> Every element and
+attribute absent from the policy is removed, so an element nobody thought of is removed too. A
+denylist has to be updated when the attack surface changes and nothing in this repository is in a
+position to know when that is.</p>
+<p>The second layer exists so a future change to the first is not immediately a stored XSS against
+every public campaign. It is defence in depth, not redundancy for its own sake.</p>
+<p>Four narrowing decisions are this project&rsquo;s rather than the library&rsquo;s:</p>
+<ul>
+<li><strong><code>class</code> survives for exactly five values</strong> — the three extension classes on <code>a</code>/<code>span</code>, goldmark&rsquo;s
+three footnote classes, and <code>language-&lt;token&gt;</code> on <code>code</code>. An author <strong>cannot</strong> invent a class that
+does anything: behaviour is bound to a <em>selector</em> in semiplane&rsquo;s own stylesheet, and an author
+cannot write a selector. A class of their choosing matches no rule. There is no
+attacker-reachable class that triggers behaviour, because there is no behaviour to trigger.
+<code>data-testid</code> is refused outright: a vault must not be able to name a test hook.</li>
+<li><strong><code>style</code> survives nowhere.</strong> The most dangerous attribute on any allowlist, and it buys nothing,
+because a page&rsquo;s appearance is the design system&rsquo;s. goldmark&rsquo;s table extension would have emitted
+<code>style=&quot;text-align:…&quot;</code> for alignment, so alignment is carried by <code>align</code> against bluemonday&rsquo;s
+<code>CellAlign</code> instead. Losing <code>style</code> silently would lose table alignment silently, which is why a
+test asserts both halves.</li>
+<li><strong><code>AllowDataAttributes()</code> is not called.</strong> It allows every <code>data-*</code> on every element, and a
+<code>data-</code> attribute is inert until some code reads one — so the failure mode is that a later phase
+adds a client that reads one and vault content starts driving that client. Four names are allowed
+explicitly, which makes adding a fifth a reviewable change.</li>
+<li><strong><code>id</code> is allowed, <code>name</code> is not, and authored ids are not enabled.</strong> <code>id</code> must survive or every
+anchor link and <code>[[Page#Heading]]</code> is dead. goldmark&rsquo;s generator de-duplicates within a document
+(<code>the-coast</code>, <code>the-coast-1</code>), so uniqueness is a property of the <em>generator</em>; a post-pass would
+have to re-derive that numbering. <code>parser.WithAttribute</code> is <strong>not</strong> enabled, so <code>## Heading {#custom}</code> is literal text rather than an author-chosen id, which would make the anchor map the
+author&rsquo;s arithmetic instead of the generator&rsquo;s and plant an id of the vault&rsquo;s choosing.</li>
+</ul>
+<h3 id="the-consequence-nobody-likes">The consequence nobody likes</h3>
+<p>A <strong>block-level</strong> raw HTML element in a markdown file — <code>&lt;p&gt;text&lt;/p&gt;</code>, <code>&lt;h1&gt;heading&lt;/h1&gt;</code>, a
+hand-written <code>&lt;table&gt;</code>, a <code>&lt;script&gt;</code> — is an <em>HTML block</em> in CommonMark terms. goldmark does not
+convert it into the document AST; without <code>WithUnsafe()</code> it emits <code>&lt;!-- raw HTML omitted --&gt;</code> in
+its place, and the element&rsquo;s text is never seen again.</p>
+<p>An <strong>inline</strong> raw element is different: <code>a &lt;span&gt;b&lt;/span&gt; c</code> is parsed, the text survives, and the
+sanitiser strips the tag.</p>
+<p>So the rule a GM needs is that prose goes in markdown, not in HTML. That is not a quirk of this
+implementation — it is what CommonMark specifies, and what Obsidian and GitHub do. What would be
+unacceptable is for it to be an accident nobody wrote down, so
+<code>TestRawHTMLBlockTextIsDropped</code> states it with the inline case beside it, since that distinction is
+the useful part.</p>
+<p><strong>Recovery is not attempted.</strong> Parsing an author&rsquo;s HTML well enough to extract its text is what
+<code>WithUnsafe()</code> does, and it is the thing being refused.</p>
+<h3 id="dice-renders-a-placeholder"><code>{{dice}}</code> renders a placeholder</h3>
+<p><code>{{dice}}</code> emits an empty element carrying the <em>expression</em> in an attribute
+(<code>data-arg=&quot;1d20+5&quot;</code>), so no number exists anywhere in the output. A computed result would differ
+per request, be uncountable, and put a random number into a cache keyed on the content hash
+(S-5.2). Dice are rolled server-side; architecture §7 and the audit trail both depend on it.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>A GM who pastes HTML from a web page finds their paragraph gone. They will report it. The answer
+is in this record, in the policy&rsquo;s package comment, and in a named test.</li>
+<li>The sanitiser is the <strong>second</strong> layer, and the layer that loses the text is the first. A comment
+that attributes the loss to the policy is wrong, and one did, until it was probed: <code>AllowNoAttrs</code>
+does not prevent <code>&lt;p&gt;text&lt;/p&gt;</code> becoming <code>text</code>, because that text is gone before the policy runs.
+The reason for preferring <code>AllowNoAttrs</code> to <code>AllowElements</code> is different and is stated where the
+call is.</li>
+<li>Residual risk, accepted and bounded: <code>id</code> allows DOM clobbering by a heading-text-shaped id.
+Bounded because a clobbered name has to match a name semiplane&rsquo;s own script reads, and the
+element it can shadow must already be one the page contains.</li>
+<li>The extension parser sits at priority 150, <strong>not</strong> &ldquo;low&rdquo;. goldmark&rsquo;s link parser sits at 200 and
+always returns a node for <code>[</code> and <code>!</code>, so a parser behind it is never called — and the symptom is
+<code>[[Page]]</code> rendering as the author&rsquo;s own brackets, which looks like working software.</li>
+<li><code>extension.GFM</code> is decomposed into its four parts rather than registered whole, because it takes
+no options: registering it <em>and</em> a configured table renderer puts two renderers on one node kind
+and the winner depends on an unstable sort. Removing the possibility was cheaper than reproducing
+it.</li>
+<li>Because <code>ext</code> cannot import <code>internal/content</code>, the wikilink label rule exists in both packages,
+held in place by <code>TestLabelAgreesWithTheLinkLayer</code> rather than by discipline.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong><code>html.WithUnsafe()</code> plus a sanitiser.</strong> Rejected by S-4.6, and correctly: with a public tier and
+Obsidian sync as an input, it is a security boundary. Worth noting that the sanitiser would <em>not</em>
+have saved it, because the defect this guards is in what the renderer emits rather than in what the
+sanitiser removes.</p>
+<p><strong>Sanitise, do not suppress.</strong> A defensible alternative: enable <code>WithUnsafe()</code>, then let bluemonday
+strip what it does not allow. It is what many projects do and it is one layer instead of two. It was
+rejected because the first layer&rsquo;s correctness then depends entirely on the second&rsquo;s completeness,
+and because a raw HTML <em>block</em> still loses its text with unsafe rendering on, so the alternative
+does not even buy back the content — it only buys back the markup that the sanitiser would strip.</p>
+<p><strong><code>UGCPolicy()</code> narrowed, rather than a fresh policy.</strong> Rejected: bluemonday has no &ldquo;remove element&rdquo;
+call, so narrowing a base means re-deriving its attribute rules anyway. Inheriting a library default
+and then unpicking it is worse than stating the list.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -313,7 +313,8 @@ A11Y_ROUTE_PKGS := $(wildcard ./internal/httpapi/wiki ./internal/httpapi/search 
 # token list is UI §7.6's **accessibility source of truth** for the tabletop, and
 # the document it renders into is a route document by any reading.
 A11Y_COMPONENT_PKGS := $(wildcard ./internal/web/components/play \
-	./internal/web/components/chat ./internal/web/components/live)
+	./internal/web/components/chat ./internal/web/components/live \
+	./internal/web/components/secret)
 
 A11Y_PKGS := ./internal/web ./internal/web/components ./internal/httpapi \
 	$(A11Y_COMPONENT_PKGS) $(A11Y_ROUTE_PKGS)
