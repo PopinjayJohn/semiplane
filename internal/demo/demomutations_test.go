@@ -755,11 +755,28 @@ func TestDemoTheShippedVaultIsAuditedWhenItExists(t *testing.T) {
 
 	vault := demoVaultUnderTest()
 
-	if _, err := os.Stat(vault); err != nil {
+	// **A campaign, not a directory.** The first version of this test branched on
+	// `os.Stat(vault)`, and wave A's two work items collided on it within minutes of
+	// merging: the seed committed `demo-vault/demo.manifest.yml`, so the directory
+	// existed while holding no campaign at all, and the test began auditing a vault
+	// that had not been written yet.
+	//
+	// The distinction is this file's own — "a directory that exists and is empty is
+	// red rather than a pass, which is the shape of 'the vault was committed with
+	// nothing in it'" — and it applies to the *branch* as much as to the rule. A
+	// manifest is not a vault, so the condition asks the gate's own
+	// `demoCampaignSlugs`, which skips a regular file at the root by shape and counts
+	// a directory holding at least one page.
+	//
+	// Reading directory existence instead would have made this test mean two
+	// different things depending on which work item merged first, and it would have
+	// reported the shipped vault as verified when nothing in it existed.
+	slugs, err := demoCampaignSlugs(vault)
+	if err != nil || len(slugs) == 0 {
 		t.Logf(
-			"%s does not exist yet — phase 11 wave B. The shipped vault is NOT verified "+
-				"by this run; the gate is being proved against %s, and the absent path is "+
-				"required to be red below.",
+			"%s holds no campaign yet — phase 11 wave B. The shipped vault is NOT "+
+				"verified by this run; the gate is being proved against %s, and the "+
+				"absent path is required to be red below.",
 			vault, demoFixtureRoot,
 		)
 
