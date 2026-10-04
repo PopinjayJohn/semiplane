@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4800" height="3200" viewBox="0 0 4800 3200"
+     role="img" aria-label="A hand-drawn map of the moor north of Greyhaven: the town wall with its north gate at the south-west, the north road running north-east across open heather past a standing stone, Marden Mill on the river, the East Signal hill, and Mirror Lake at the north-east corner.">
+  <!--
+    The map Greyhaven's scene page embeds.
+
+    # The two numbers at the top are the load-bearing part
+
+    `width="4800" height="3200"` is not a print size. It is the **declaration of how
+    large the map is**, in map units, and it is what the browser reports as the
+    image's intrinsic size — so it is what `static/js/map/scene.js` reads when the
+    map surface carries no size of its own:
+
+        const map = {
+          width: positive(options.width, texture.width),
+          height: positive(options.height, texture.height)
+        };
+
+    `texture.width` is the fallback; `data-map-width` on the surface overrides it.
+    Declaring the extent here therefore *is* declaring the bounds the grid is laid
+    out over, the bounds fog is clipped to, and the bounds the camera's fit scale is
+    computed from.
+
+    # Why 4800 × 3200 and not something that fits
+
+    A map that fits on screen cannot demonstrate a camera. `camera.js` works in map
+    units per viewport unit, and its far bound is the fit scale for the *current*
+    viewport — so a 1200-unit-wide map on a 1200-unit viewport has nothing to pan
+    to and nothing to zoom out of. At 4800 × 3200, a 3840-wide viewport fits at
+    0.8 map units per viewport unit: the map is larger than the window, so panning
+    runs out of road long after it runs out of map.
+
+    # Why it is a vector file
+
+    A large extent and many bytes are independent properties of an SVG. This one is
+    a few kilobytes, scales without blurring when the camera zooms to the 1:1 bound,
+    and the client tints the placements over the top of it — so the only thing the
+    artwork has to get right is that the terrain under a placement is legible.
+
+    Everything below is drawn from `demo-vault/greyhaven/demo.manifest.yml`'s seeded
+    placements, so the three tokens a reader sees on the Table are standing on
+    terrain this file actually has: the gate, the road, and the standing stone.
+  -->
+
+  <defs>
+    <!-- Heather: the moor's ground texture. Two tones, one pattern, cheap. -->
+    <pattern id="heather" width="180" height="180" patternUnits="userSpaceOnUse">
+      <rect width="180" height="180" fill="#4c5245"/>
+      <path d="M 18 40 l 26 -14 M 74 26 l 22 18 M 128 62 l 30 -20 M 40 118 l 24 -26
+               M 104 140 l 28 16 M 158 106 l -22 -24"
+            stroke="#3f443a" stroke-width="9" stroke-linecap="round" fill="none"/>
+      <circle cx="66" cy="86" r="7" fill="#565b4c"/>
+      <circle cx="146" cy="150" r="6" fill="#565b4c"/>
+    </pattern>
+
+    <!-- Water: horizontal hatching, which reads as a surface rather than as a hole. -->
+    <pattern id="water" width="96" height="64" patternUnits="userSpaceOnUse">
+      <rect width="96" height="64" fill="#3c5a68"/>
+      <path d="M 8 20 h 44 M 56 44 h 32" stroke="#4e7180" stroke-width="7"
+            stroke-linecap="round"/>
+    </pattern>
+
+    <g id="tuft">
+      <path d="M 0 0 l -16 -34 M 0 0 l 4 -40 M 0 0 l 20 -30" stroke="#3a3f36"
+            stroke-width="7" stroke-linecap="round"/>
+    </g>
+  </defs>
+
+  <!-- The moor, edge to edge: the extent is the ground, not a crop of it. -->
+  <rect x="0" y="0" width="4800" height="3200" fill="url(#heather)"/>
+
+  <!--
+    The edge of the extent, drawn. A GM panning past the last feature needs to see
+    that there is nothing further this way, and the camera is deliberately *not*
+    clamped to it — so the border is the map's own statement of where it stops.
+  -->
+  <rect x="70" y="70" width="4660" height="3060" fill="none" stroke="#6d7362"
+        stroke-width="10" stroke-dasharray="48 34"/>
+
+  <!-- Mirror Lake, north-east. -->
+  <ellipse cx="3560" cy="690" rx="560" ry="360" fill="#2e4652"/>
+  <ellipse cx="3560" cy="690" rx="530" ry="330" fill="url(#water)"/>
+  <path d="M 3230 540 q 120 -70 250 -30 M 3620 900 q 140 40 260 -30"
+        stroke="#5b8090" stroke-width="12" fill="none" stroke-linecap="round"/>
+
+  <!-- The river, running south out of the lake and past the mill. -->
+  <path d="M 3400 950 C 3100 1150 2700 1180 2400 1120 C 2050 1050 1850 1300
+           1720 1600 C 1560 1960 1380 2350 1260 3200"
+        fill="none" stroke="#2e4652" stroke-width="74" stroke-linecap="round"/>
+  <path d="M 3400 950 C 3100 1150 2700 1180 2400 1120 C 2050 1050 1850 1300
+           1720 1600 C 1560 1960 1380 2350 1260 3200"
+        fill="none" stroke="#3c5a68" stroke-width="46" stroke-linecap="round"/>
+
+  <!-- East Signal: the hill, and the brazier on it that has gone out. -->
+  <path d="M 2620 1720 C 2760 1360 3020 1240 3300 1330 C 3560 1410 3680 1600 3760 1800 Z"
+        fill="#5b6150" stroke="#434839" stroke-width="8"/>
+  <circle cx="3050" cy="1395" r="34" fill="#2a2d26"/>
+  <circle cx="3050" cy="1395" r="16" fill="#3a3d33"/>
+
+  <!-- Marden Mill, on the river where the road leaves the moor for the fords. -->
+  <rect x="1790" y="1330" width="230" height="150" rx="8" fill="#a49a86"
+        stroke="#6d6759" stroke-width="8"/>
+  <path d="M 1770 1330 L 1905 1225 L 2040 1330 Z" fill="#5f5a4d"/>
+  <path d="M 1878 1330 L 1878 1240 L 1930 1240 L 1930 1330" fill="#7d7666"/>
+  <rect x="1810" y="1490" width="190" height="66" rx="30" fill="#2e4652"/>
+
+  <!--
+    Greyhaven's wall, with the north gate left open in its northern edge.
+
+    The two posts and the lintel are the gap the party is standing in: the seeded
+    `gh-iron-vigil` placement is at (900, 620), which is the road immediately north
+    of it.
+  -->
+  <path d="M 300 1010 L 1420 1010 L 1520 1520 L 1500 2320 L 620 2560 L 300 2260 Z"
+        fill="#5a5f52" fill-opacity="0.28" stroke="#cdc7b6" stroke-width="26"
+        stroke-linejoin="round"/>
+  <path d="M 700 1010 L 900 1010" fill="none" stroke="#4c5245" stroke-width="30"/>
+  <rect x="676" y="930" width="46" height="170" fill="#cdc7b6"/>
+  <rect x="878" y="930" width="46" height="170" fill="#cdc7b6"/>
+  <rect x="676" y="906" width="248" height="42" fill="#b3ac9a"/>
+
+  <!-- Streets and roofs inside the wall: enough to read as a town, no more. -->
+  <path d="M 470 1220 L 1330 1220 M 430 1560 L 1400 1560 M 420 1900 L 1380 1900
+           M 620 1120 L 640 2450 M 940 1120 L 960 2400 M 1230 1120 L 1250 2300"
+        fill="none" stroke="#8d887a" stroke-width="12" stroke-linecap="round"/>
+  <g fill="#a49a86">
+    <rect x="700" y="1290" width="170" height="150" rx="6"/>
+    <rect x="1020" y="1620" width="140" height="130" rx="6"/>
+    <rect x="740" y="1990" width="190" height="140" rx="6"/>
+    <rect x="470" y="1300" width="130" height="120" rx="6"/>
+    <rect x="1080" y="1980" width="150" height="120" rx="6"/>
+  </g>
+  <circle cx="800" cy="1820" r="86" fill="#3c5a68"/>
+  <circle cx="800" cy="1820" r="56" fill="#4e7180"/>
+
+  <!--
+    The north road. It leaves the gate, crosses the moor past the standing stone
+    and ends at the lake. The seeded placements sit on it and beside it:
+
+      gh-iron-vigil    (900, 620)   at the gate
+      gh-mirror-hound  (1240, 700)  in the heather south of the road
+      gh-sealed-cipher (1560, 480)  at the standing stone
+  -->
+  <path d="M 790 1000 L 790 745 L 1060 690 L 1400 700 L 1560 495 L 2000 400
+           L 2560 360 L 3020 430 L 3360 590"
+        fill="none" stroke="#6f6752" stroke-width="62" stroke-linecap="round"
+        stroke-linejoin="round"/>
+  <path d="M 790 1000 L 790 745 L 1060 690 L 1400 700 L 1560 495 L 2000 400
+           L 2560 360 L 3020 430 L 3360 590"
+        fill="none" stroke="#c2b391" stroke-width="44" stroke-linecap="round"
+        stroke-linejoin="round"/>
+
+  <!-- The standing stone: the cipher the sealed placement is on. -->
+  <path d="M 1520 610 L 1560 420 L 1600 610 Z" fill="#8d887a" stroke="#5f5a4d"
+        stroke-width="8" stroke-linejoin="round"/>
+  <circle cx="1560" cy="648" r="72" fill="none" stroke="#7d7666" stroke-width="12"
+          stroke-dasharray="26 20"/>
+
+  <!-- Bog ground, so the moor is not one flat texture from end to end. -->
+  <path d="M 1900 2200 C 2140 2050 2500 2080 2700 2260 C 2880 2430 2820 2700
+           2540 2790 C 2240 2890 1930 2760 1810 2520 Z"
+        fill="#46503f" fill-opacity="0.6" stroke="#5f6a52" stroke-width="10"
+        stroke-dasharray="40 30"/>
+  <g opacity="0.75">
+    <use href="#tuft" x="1960" y="1120"/>
+    <use href="#tuft" x="2240" y="1640"/>
+    <use href="#tuft" x="2680" y="2040"/>
+    <use href="#tuft" x="3120" y="2440"/>
+    <use href="#tuft" x="1620" y="2820"/>
+    <use href="#tuft" x="4020" y="1780"/>
+    <use href="#tuft" x="4340" y="1180"/>
+    <use href="#tuft" x="3820" y="2900"/>
+    <use href="#tuft" x="1180" y="760"/>
+  </g>
+
+  <!-- Place names. Drawn large: the client tints tokens over this, not the text. -->
+  <g fill="#e8e4d8" font-family="Georgia, 'Times New Roman', serif">
+    <text x="700" y="1520" font-size="112" letter-spacing="14">GREYHAVEN</text>
+    <text x="470" y="920" font-size="58">North Gate</text>
+    <text x="1880" y="300" font-size="58">The North Road</text>
+    <text x="1700" y="1640" font-size="58">Marden Mill</text>
+    <text x="2880" y="1900" font-size="58">East Signal</text>
+    <text x="3340" y="1120" font-size="58">Mirror Lake</text>
+    <text x="1980" y="3020" font-size="58">Hollowmoor</text>
+    <text x="260" y="2960" font-size="46" fill="#c8c4b6">Extent 4800 × 3200 map units</text>
+  </g>
+
+  <!-- Scale bar: the only honest way to put a distance on a hand-drawn map. -->
+  <g transform="translate(300 2800)">
+    <rect x="0" y="0" width="400" height="26" fill="#e8e4d8" opacity="0.9"/>
+    <rect x="400" y="0" width="400" height="26" fill="#4c5245" stroke="#e8e4d8"
+          stroke-width="4" opacity="0.9"/>
+    <text x="0" y="86" font-family="Georgia, serif" font-size="46" fill="#e8e4d8"
+          opacity="0.9">800 map units</text>
+  </g>
+
+  <!-- North point, top-left, so the map is not upside down relative to the story. -->
+  <g transform="translate(400 480)" fill="#e8e4d8" opacity="0.85">
+    <path d="M 0 -110 L 46 66 L 0 24 L -46 66 Z"/>
+    <text x="-16" y="140" font-family="Georgia, serif" font-size="54">N</text>
+  </g>
+</svg>
