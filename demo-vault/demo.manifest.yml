@@ -1,0 +1,160 @@
+# demo.manifest.yml — the demo vault's manifest.
+#
+# Read by two things and nothing else:
+#
+#   * `semiplane demo seed --root <dir>` — the install guide's one command. It
+#     refuses when `product` here disagrees with the binary's own release, and
+#     when the instance already has what this file declares.
+#   * `make demo-check` — the completeness gate. It reads `demonstrates` to know
+#     what each campaign exists to prove, because the three campaigns here do not
+#     demonstrate the same things and a uniform checklist would assert that the
+#     boundary campaigns demonstrate features they exist to *not* demonstrate.
+#
+# The campaign directories beside this file are their vaults. A campaign's content
+# root is `<demo root>/<slug>` — the registrar the seed reuses derives it that way
+# and offers no other option, so `vault` must equal `slug` and the seed says so
+# rather than ignoring a mismatch.
+
+# The manifest's own schema. `semiplane demo seed` refuses a value it does not
+# read, because a build that renames a key must move this number rather than go on
+# accepting manifests that name the old one.
+schema: 1
+
+# The semiplane release this artefact was built for. `make demo-artifact` stamps
+# it from the tag being published, and the seed compares it against the binary's
+# own version and refuses a disagreement with both in the message.
+#
+# A build that stamps no version — which is what `productVersion` is today, an
+# empty string until a release workflow injects one — cannot be compared against
+# anything, and the seed says exactly that on stderr rather than pretending.
+product: "0.1.0"
+
+# The instance name a seeded install presents in its header and rail. Empty would
+# keep whatever the instance is configured with, which is right for an operator who
+# set one deliberately; this is here so a fresh demo install announces itself.
+instance: "Semiplane demo"
+
+# The accounts the seed creates.
+#
+# There is no `is_admin` key and no key that could become one: the demo account is a
+# Game Master of the seeded campaigns and nothing else, per plan D14. An account
+# holding instance administration can register campaigns and manage users on an
+# instance that already has any, and the demo vault is the artefact people download
+# and paste into a public issue.
+#
+# One password for every account, drawn at random and printed once unless
+# `--password` was given.
+accounts:
+  - username: demo-gm
+  - username: demo-player
+
+campaigns:
+  # The showcase. Private, every feature demonstrated, and the campaign that
+  # carries the seeded tabletop.
+  - slug: greyhaven
+    name: Greyhaven
+    vault: greyhaven
+    system: dnd5e
+    visibility: private
+    demonstrates:
+      - prose and wikilinks
+      - a hidden secret and a revealed one
+      - embeds
+      - token
+      - scene
+      - handout
+      - journal
+      - index
+      - spell
+      - class
+      - feat
+      - creature
+      - ancestry
+      - statblocks and dice
+      - the live table
+      - house rules
+      - the campaign theme
+      - a cross-campaign link
+      - the boundaries
+    members:
+      - username: demo-gm
+        role: gm
+      - username: demo-player
+        role: player
+    # The seeded tabletop: a scene, partially-depleted hit points, conditions, and
+    # a token the players cannot see. D11 asks for fog and an initiative order too,
+    # and neither is in `realtime.Document` — this schema does not invent fields the
+    # state column would ignore.
+    #
+    # `paused` and each placement's position, hit points, condition set and
+    # visibility are the whole of what a `campaign_state` document holds. Versions
+    # and the revision are computed by the seed: every placement is stamped in
+    # sorted-id order, so no placement is at version 0 and none is above the
+    # revision, which is what `realtime.DecodeDocument` refuses.
+    state:
+      paused: false
+      placements:
+        - id: gh-iron-vigil
+          x: 900
+          y: 620
+          hp: 31
+          max_hp: 44
+          conditions:
+            - concentration
+        - id: gh-mirror-hound
+          x: 1240
+          y: 700
+          hp: 12
+          max_hp: 12
+          conditions:
+            - prone
+        - id: gh-sealed-cipher
+          x: 1560
+          y: 480
+          hp: 1
+          max_hp: 1
+          visible: false
+
+  # The public boundary. Public wiki, no membership needed to read, and a
+  # cross-campaign link that resolves only where the reader may follow it.
+  - slug: public-post
+    name: "The Public Post"
+    vault: public-post
+    system: dnd5e
+    visibility: public
+    demonstrates:
+      - anonymous wiki read
+      - visibility-gated assets
+      - search over a public campaign
+      - a cross-campaign wikilink
+    members:
+      - username: demo-gm
+        role: gm
+    # No `state:` — a public board with an empty tabletop is the honest thing to
+    # show, and `realtime.Registry.Open` writes an empty state immediately.
+
+  # The degraded boundary. `pathfinder-2e` is not registered in this build **on
+  # purpose**: the campaign's pages are served and answer 200, while its game
+  # refuses to start and names the id it wanted. That is §10.8's requirement and
+  # S-14.8's, and this campaign is the only demonstration of it — so
+  # `make demo-check` will turn red if a Pathfinder plugin is ever registered,
+  # and that is the intended behaviour rather than a bug to suppress.
+  #
+  # The consequence here is the `ruleset_version` the seed writes: **empty**, because
+  # this build resolves no system by that id and a fingerprint naming a system that
+  # does not exist would be a fiction in the very column the resume gate compares.
+  # Migration 0005 defines the empty value as "state written under no particular
+  # ruleset" and `realtime.Gate.Inspect` reports it as `Unfingerprinted` without
+  # logging an error.
+  - slug: forgotten-realm
+    name: "The Forgotten Realm"
+    vault: forgotten-realm
+    system: pathfinder-2e
+    visibility: private
+    demonstrates:
+      - an unregistered system
+      - a wiki that still serves while the game refuses
+      - the refusal naming the id it wanted
+    members:
+      - username: demo-gm
+        role: gm
