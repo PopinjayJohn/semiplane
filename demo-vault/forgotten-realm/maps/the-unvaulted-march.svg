@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900"
+     role="img" aria-label="A hand-drawn map of the Unvaulted March: a walled city at the centre with its vault doors drawn as three squares, a ring of standing stones north of it, the Salt Road running west into open ground, and, at the eastern edge, a stretch of coastline with the sea beyond it.">
+  <!--
+    The map embedded on `index.md`.
+
+    # What this map is for, and what it is not for
+
+    This campaign's system is not registered in this build, so there is no tabletop
+    for it and no way to place this file on one. It is in the vault anyway, and it is
+    served — from the same route, under the same access gate, as any other file in
+    this campaign — because **the asset surface and the game surface fail
+    independently.** That is the same claim `index.md` makes about pages and the wiki,
+    made about a drawing instead of a paragraph, and a demo that makes it once in HTML
+    has not shown it.
+
+    So this is deliberately *not* a scene and not a backdrop for a token. There is no
+    grid laid over it, no fog clipped to it, no camera fitted to it, because none of
+    those things can exist for a campaign whose game does not start. It is a picture of
+    a place, in a folder of Markdown files.
+
+    # The extent
+
+    `width="1400" height="900"` is the declaration of how large this map is in map
+    units, which is what a browser reports as its intrinsic size. Modest on purpose:
+    this one is about being fetched, not about being panned across, and the showcase
+    campaign carries the map that demonstrates a camera. Two campaigns, two different
+    arguments, two different maps.
+
+    # Why SVG
+
+    Because the asset route serves it as `image/svg+xml` with
+    `Content-Disposition: attachment` and a sandboxed content security policy: an
+    `<img>` draws it, a navigation to it downloads the file instead of executing it,
+    and a browser that renders it anyway cannot reach the origin that served it. An
+    SVG is a document a browser can run, and that pairing is what makes a vector map
+    servable from an application with accounts on it.
+  -->
+
+  <defs>
+    <pattern id="ground" width="22" height="22" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(-12)">
+      <path d="M0 11 H22" stroke="#cdc4ae" stroke-width="1" fill="none"/>
+    </pattern>
+    <pattern id="sea" width="30" height="16" patternUnits="userSpaceOnUse">
+      <path d="M3 8 q7 -6 14 0 t11 0" stroke="#7ba3bd" stroke-width="1.4" fill="none"/>
+    </pattern>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="900" fill="#f2ece0"/>
+  <rect x="0" y="0" width="1120" height="900" fill="url(#ground)"/>
+  <path d="M1120 0 H1400 V900 H1120 C1140 760 1100 620 1120 480 C1140 340 1100 160 1120 0 Z"
+        fill="url(#sea)"/>
+
+  <!-- The Salt Road, west into open ground, and stopping. -->
+  <path d="M700 470 C560 460 430 440 300 420 C200 405 120 380 60 350"
+        stroke="#a0845c" stroke-width="18" fill="none" stroke-linecap="round"/>
+  <path d="M700 470 C560 460 430 440 300 420 C200 405 120 380 60 350"
+        stroke="#c8ab7d" stroke-width="4" stroke-dasharray="20 24" fill="none"/>
+
+  <!-- The ring of standing stones, north of the city. -->
+  <g stroke="#6d5a3c" stroke-width="6" stroke-linecap="round">
+    <path d="M520 250 v-96"/><path d="M596 232 v-108"/>
+    <path d="M676 228 v-96"/><path d="M752 240 v-112"/>
+    <path d="M820 268 v-92"/>
+  </g>
+  <path d="M486 254 h368" stroke="#6d5a3c" stroke-width="4" stroke-dasharray="14 14"/>
+
+  <!-- The city, and the three vault doors. -->
+  <circle cx="700" cy="470" r="132" fill="#e2d5b8" stroke="#6d5a3c" stroke-width="6"/>
+  <circle cx="700" cy="470" r="116" fill="none" stroke="#6d5a3c" stroke-width="2"
+          stroke-dasharray="10 12"/>
+  <g fill="#6d5a3c">
+    <rect x="612" y="432" width="34" height="30"/>
+    <rect x="683" y="426" width="34" height="30"/>
+    <rect x="754" y="432" width="34" height="30"/>
+  </g>
+  <text x="700" y="646" text-anchor="middle" font-family="serif" font-size="32"
+        fill="#4a3d28">the Unvaulted March</text>
+  <text x="700" y="382" text-anchor="middle" font-family="serif" font-size="26"
+        fill="#4a3d28">the standing stones</text>
+  <text x="470" y="330" text-anchor="middle" font-family="serif" font-size="26"
+        fill="#4a3d28">the Salt Road</text>
+
+  <!-- The coast, labelled, because an unlabelled edge is a crop. -->
+  <text x="1260" y="860" text-anchor="middle" font-family="serif" font-size="26"
+        fill="#3f5f74">the Sunrise Sea</text>
+</svg>

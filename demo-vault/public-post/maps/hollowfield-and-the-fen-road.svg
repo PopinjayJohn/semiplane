@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100"
+     role="img" aria-label="A hand-drawn map of Hollowfield and the fen road: the walled town at the centre-left with the north gate on its road, the fen spreading east as open hatching, the old tollhouse beside the causeway at the centre, and the low crossing where the road stops, south-east.">
+  <!--
+    The map embedded on `town-notice.md` and re-embedded on
+    `assets-follow-the-campaign.md`.
+
+    # The two numbers at the top are the load-bearing part
+
+    `width="1600" height="1100"` is not a print size. It is the **declaration of how
+    large this map is**, in map units, and it is what a browser reports as the
+    image's intrinsic size — so it is what the client's map surface falls back to when
+    it carries no size of its own. Declaring the extent here *is* declaring the bounds
+    the grid is laid out over, the bounds fog is clipped to, and the bounds the
+    camera's fit scale is computed from.
+
+    This one is small on purpose. The showcase campaign carries a map several times
+    larger than any viewport, because a map that fits on screen cannot demonstrate a
+    camera: panning and zooming have nothing to run out of. This page is not
+    demonstrating a camera. It is demonstrating that a **file** in a public campaign is
+    fetchable by a stranger, and a modest hand-drawn map is what that needs. Two
+    different maps, on purpose — the boundary campaign is not a smaller copy of the
+    showcase.
+
+    # Why it is an SVG at all, given what the asset route does with SVGs
+
+    Because the route serves SVG as `image/svg+xml` with
+    `Content-Disposition: attachment` and a sandboxed content security policy, an
+    `<img>` still draws it while a *navigation* to it downloads the file instead of
+    executing it. That pairing is the reason a vector map is servable at all from an
+    application with accounts on it: this document is the thing that would be a
+    stored cross-site scripting attack if it were served inline from the same origin
+    as the pages that reference it. It is hand-authored rather than exported from a
+    drawing program for the same reason a reader can read it: the campaign is a folder
+    of Markdown files, and so is this.
+  -->
+
+  <defs>
+    <pattern id="fen" width="18" height="18" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(35)">
+      <path d="M0 9 H18" stroke="#b9c6bf" stroke-width="1" fill="none"/>
+    </pattern>
+    <pattern id="water" width="26" height="14" patternUnits="userSpaceOnUse">
+      <path d="M2 7 q6 -5 12 0 t10 0" stroke="#8fb4c8" stroke-width="1.4" fill="none"/>
+    </pattern>
+  </defs>
+
+  <!-- The fen the town is named for. -->
+  <rect x="0" y="0" width="1600" height="1100" fill="#f4efe2"/>
+  <path d="M520 0 H1600 V1100 H430 C470 900 470 760 500 640 C530 520 560 300 520 0 Z"
+        fill="url(#fen)"/>
+  <path d="M980 300 q120 60 90 190 q-30 130 60 200 q90 70 60 180 q-30 110 60 170"
+        stroke="url(#water)" stroke-width="34" fill="none" stroke-linecap="round"/>
+
+  <!-- The fen road: out of the north gate, east, and stopped at the low crossing. -->
+  <path d="M300 700 C470 690 640 660 790 640 C930 620 1060 700 1150 800"
+        stroke="#a0845c" stroke-width="22" fill="none" stroke-linecap="round"/>
+  <path d="M300 700 C470 690 640 660 790 640 C930 620 1060 700 1150 800"
+        stroke="#c8ab7d" stroke-width="4" stroke-dasharray="22 26" fill="none"/>
+  <path d="M1150 800 l84 74 M1150 800 l40 108 M1150 800 l-16 -84"
+        stroke="#b4553f" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Hollowfield itself. -->
+  <path d="M300 700 m-118 0 a118 118 0 1 1 236 0 a118 118 0 1 1 -236 0"
+        fill="#e3d6ba" stroke="#6d5a3c" stroke-width="6"/>
+  <circle cx="300" cy="700" r="118" fill="none" stroke="#6d5a3c" stroke-width="6"/>
+  <circle cx="300" cy="700" r="104" fill="none" stroke="#6d5a3c" stroke-width="2"
+          stroke-dasharray="10 12"/>
+  <rect x="284" y="580" width="32" height="26" fill="#6d5a3c"/>
+  <text x="300" y="548" text-anchor="middle" font-family="serif" font-size="34"
+        fill="#4a3d28">Hollowfield</text>
+
+  <!-- The old tollhouse, beside the causeway. -->
+  <rect x="742" y="596" width="96" height="70" fill="#e3d6ba" stroke="#6d5a3c"
+        stroke-width="5"/>
+  <path d="M736 596 L790 556 L844 596 Z" fill="#b4553f" stroke="#6d5a3c"
+        stroke-width="4"/>
+  <text x="790" y="694" text-anchor="middle" font-family="serif" font-size="26"
+        fill="#4a3d28">old tollhouse</text>
+
+  <!-- The low crossing, where the notice says the road stops. -->
+  <path d="M1120 780 q60 40 120 20 q70 -20 120 30 l0 60 q-70 -46 -130 -26
+           q-60 20 -120 -20 Z" fill="url(#water)" opacity="0.9"/>
+  <text x="1250" y="960" text-anchor="middle" font-family="serif" font-size="26"
+        fill="#4a3d28">the low crossing</text>
+
+  <!-- Scale, because a map without one is a drawing. -->
+  <path d="M1180 1040 h240" stroke="#4a3d28" stroke-width="4"/>
+  <path d="M1180 1032 v16 M1420 1032 v16" stroke="#4a3d28" stroke-width="4"/>
+  <text x="1300" y="1024" text-anchor="middle" font-family="serif" font-size="24"
+        fill="#4a3d28">one mile</text>
+</svg>
