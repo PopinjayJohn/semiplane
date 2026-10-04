@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0042 — The plugin registry is explicit, and a UI plugin can only emit known ops — semiplane</title>
+<meta name="description" content="`internal/plugin` is an ordered registry of gameplay systems plus the adapter that turns them into the hub&#39;s one resolver; `internal/web/plugins` is a second tier whose only authority is an emitter that dispatches as the reader. Registration is a call in the composition root, a kind is inert when nothing registers it, and the four constraints §10.6 puts on a UI plugin are enforced by the shape of what it is handed rather than by a check it has to pass.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0042-the-plugin-registry-is-explicit-and-a-ui-plugin-can-only-emit-known-ops/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0042 — The plugin registry is explicit, and a UI plugin can only emit known ops — semiplane">
+<meta property="og:description" content="`internal/plugin` is an ordered registry of gameplay systems plus the adapter that turns them into the hub&#39;s one resolver; `internal/web/plugins` is a second tier whose only authority is an emitter that dispatches as the reader. Registration is a call in the composition root, a kind is inert when nothing registers it, and the four constraints §10.6 puts on a UI plugin are enforced by the shape of what it is handed rather than by a check it has to pass.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0042-the-plugin-registry-is-explicit-and-a-ui-plugin-can-only-emit-known-ops/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0042 — The plugin registry is explicit, and a UI plugin can only emit known ops</h1>
+    <p class="lede">`internal/plugin` is an ordered registry of gameplay systems plus the adapter that turns them into the hub&#39;s one resolver; `internal/web/plugins` is a second tier whose only authority is an emitter that dispatches as the reader. Registration is a call in the composition root, a kind is inert when nothing registers it, and the four constraints §10.6 puts on a UI plugin are enforced by the shape of what it is handed rather than by a check it has to pass.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>[0011]({{ &ldquo;decisions/0011-compiled-in-plugins/&rdquo; | relURL }}) decided that plugins are compiled in and registered in the composition root, and [0012]({{ &ldquo;decisions/0012-plugin-authority/&rdquo; | relURL }}) decided that plugin authority is enforced structurally: a gameplay plugin resolves intents into mutations, a UI plugin may only emit operations a gameplay system already resolves, and neither can write state because resolution <em>returns</em> what should change. [0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }}) built the contract the two tiers are typed against.</p>
+<p>What is left is the machinery those three records assume exists, and each of its three parts had a genuine question in it.</p>
+<p><strong>The vocabulary is the system&rsquo;s answer, and nothing can ask it.</strong> <code>rules.System</code> has nine methods and none of them declares which operations the system resolves. That is deliberate on [0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }})&rsquo;s reasoning — a tenth method makes every future method a breaking change for every plugin — and <code>realtime</code> draws the same line when it validates an op&rsquo;s <em>shape</em> and leaves membership to the system. But §10.3&rsquo;s rule is a question about the build: <em>&ldquo;a UI plugin may only emit operations <strong>some gameplay system already resolves</strong>&rdquo;</em>. Asking it requires the system&rsquo;s answer, and the answer was somewhere nobody could reach.</p>
+<p><strong>A system&rsquo;s mutations are opaque, and somebody has to apply them.</strong> <code>rules.Mutation.Args</code> is the system&rsquo;s own payload, which semiplane transports and never interprets (S-12.3), and <code>realtime.Placement</code> is semiplane&rsquo;s envelope of position, hit points, conditions and visibility. Nothing in either package&rsquo;s vocabulary says what the first means for the second. Only the system can: it is the code that wrote the encoding in <code>Object.Data</code>, so it is the only code that can read it back out of <code>Mutation.Args</code>. Without a named place for that, either the adapter interprets payloads — which is exactly what S-12.3 forbids — or every system reimplements the same projection and the second one disagrees with the first.</p>
+<p><strong>The recovery boundary is wider than <code>Apply</code>.</strong> §10.8&rsquo;s row is <em>&ldquo;gameplay plugin panics inside <code>Apply</code> → <code>recover()</code> at the <code>Apply</code> boundary; return an error; state is not mutated because mutations are returned, never applied in place&rdquo;</em>. Two of those three claims are about the signature and hold by themselves. The third — that state is not mutated — needs the <em>order</em> of the surrounding code to be right, and it turns out that a codec is plugin code too: it runs once building the snapshot a system resolves against and once per mutation decoding a payload. A <code>recover</code> around <code>System.Apply</code> alone contains a system and not a codec, and the first version of this code did exactly that. <code>TestAPanicInsideACodecLeavesTheStateByteIdentical</code> found it, which is the argument for writing the test as a claim about the outcome rather than as a claim about the function.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Two registries, one per tier, and no <code>init()</code> in either.</strong> <code>internal/plugin</code> holds the gameplay systems; <code>internal/web/plugins</code> holds the UI plugins, and the second is built <em>over</em> the first because the one question it asks is a question about the build. Both list in registration order and both return a fresh slice per call: with versioned packs the order is reviewable information (ADR 0011), and a shared slice is mutable global state in a package whose whole argument is that there is none. <code>internal/plugin</code> holds a test that parses the source of every package in the tier for <code>init</code>, because a rule that is easy to lose in a refactor is worth a test rather than a comment.</p>
+<p><strong>Registration asks <code>rules</code> and adds nothing.</strong> <code>Register</code> calls <code>rules.Validate</code>, uses <code>rules.Kind.Valid</code> for a UI page type&rsquo;s kind, and refuses only what nothing upstream has an answer for: a duplicate id, a missing codec, and a name claimed twice within a tier. The test table pins the <em>upstream</em> sentinel for each case rather than &ldquo;some error&rdquo;, so a registry that reimplemented <code>rules</code>&rsquo; checks would fail it. The same rule governs the wire: this package does not keep a second copy of the eight <code>RejectReason</code> words, because <code>realtime</code> verifies what it is given and degrades anything outside the set to <code>server_error</code> — the safe direction.</p>
+<p><strong>An unknown system is a type carrying the id.</strong> <code>Registry.Resolve</code> returns <code>*UnknownSystemError</code>, which satisfies <code>ErrUnknownSystem</code> and names the id it wanted, because S-10.6 and §10.8&rsquo;s first row require the refusal to <em>say which ID it wanted</em> and a bare sentinel makes that a property of the caller. It does not satisfy <code>ErrMalformedPlugin</code>, deliberately: a missing plugin and a malformed registration are different events with different owners.</p>
+<p><strong>A kind is registry-backed, an unknown kind is inert, and two systems may declare the same one.</strong> §10.7 makes <code>kind</code> a property of the running build, so semiplane&rsquo;s five register as built-ins and a system&rsquo;s <code>ContentKinds()</code> join them. What is <em>not</em> enforced is validation against that set, because §10.8&rsquo;s last row makes a stale kind degrade to prose with its content intact and S-3.3 makes a page whose kind nothing registers inert; <code>KnownKind</code> exists for presentations that want to be specific, and every caller that asks it must have the prose answer. And a kind two systems declare is <strong>recorded twice, not refused</strong>: §10.2.1 asks for that in as many words — a system registers its own <code>ancestry</code> &ldquo;without colliding with, or being blocked by, 5e&rsquo;s vocabulary&rdquo; — and both 5e revisions declare <code>spell</code>, so refusing the second declaration would make 5e-2014 unregistrable in any build that has 5e-2024.</p>
+<p><strong>The operation vocabulary is asked through a second, optional interface.</strong> <code>plugin.Operations</code> is one method, <code>Resolves(rules.Op) bool</code>, and it is not on <code>rules.System</code> because [0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }}) argued against exactly that. A system that does not implement it contributes no operations, so a UI plugin that declares one is refused at registration — the safe direction, because the alternative is asking nobody and assuming yes, which is how a plugin ships a button whose operation the game refuses at the table with the plugin&rsquo;s name on it. It is <code>realtime.validOpShape</code>&rsquo;s separation again: shape is checkable anywhere, membership is the system&rsquo;s answer.</p>
+<p><strong><code>Codec</code> is the one thing a system must supply, and <code>PlacementCodec</code> is the one with no opinion in it.</strong> An object is its placement, encoded as that placement&rsquo;s own JSON, and a payload is written back onto a draft. The two halves are one interface and not two seams because the only code that can read a system&rsquo;s payload is the code that wrote its <code>Data</code>, and two seams would be two places to disagree. The draft matters as much as the codec: a decode failure has to arrive <em>before</em> the hub stamps a version, or the placement advances a version while nothing about it changed and a client reconciling against it waits forever for a delta that never comes.</p>
+<p><strong>&ldquo;An error means nothing was applied&rdquo; is enforced by the shape of one function.</strong> <code>settle</code> is the only function that calls <code>System.Apply</code>. It holds the result in a local, every error return is <code>return nil, err</code>, and it returns <code>([]realtime.Change, error)</code> — so there is no value anywhere in this package holding mutations and an error at once, and a system returning <code>([]Mutation{…}, err)</code> has them dropped by the code rather than by a check. A check of the form <code>if err != nil &amp;&amp; len(mutations) &gt; 0</code> is a thing a later edit can delete.</p>
+<p><strong>The recovery boundary is <code>settle</code>, not <code>Apply</code>, and the reason is ordering.</strong> Snapshot, resolve and decode all run plugin code; only <code>commit</code> writes, and it calls <code>internal/realtime</code> and nothing else. So one <code>recover</code> around the whole resolution contains a panicking system <em>and</em> a panicking codec, and when it fires nothing has been written — which is what &ldquo;state is not mutated&rdquo; means, as a consequence of the order rather than a review promise. The residual is stated rather than hidden: a panic inside <code>CampaignState.Mutate</code> itself would also be recovered after the first write, and that is semiplane&rsquo;s own code.</p>
+<p><strong>The panic value is dropped and its type is kept.</strong> A panic value is routinely the payload the resolver choked on, which on this project is a dice result or a <code>[!secret]</code> callout body, and S-12.3 forbids an event carrying either. <code>PanicError</code> records <code>%T</code> and nothing else, so <code>plugin.panicked</code> is an alertable class and a log line cannot leak what a plugin choked on.</p>
+<p><strong>The seed is per resolution, not per campaign.</strong> <code>rules.Context.Rand</code> derives a source from <code>(seed, label)</code>, so one seed per campaign would make every <code>roll</code> in that campaign draw the same number — a roll log that is one value repeated, which is the opposite of §16.3&rsquo;s audit. The adapter mints a fresh seed per resolution from <code>crypto/rand.Reader</code> and hands it to the system; reproducibility rests on the system putting it in its mutation payload, which is where §16.3&rsquo;s per-session seed belongs. <code>crypto/rand</code> here is not the source S-10.4 forbids: the hub is where entropy enters a process and <code>rules.Seed</code> is where it becomes a recorded value.</p>
+<p><strong>The refusal vocabulary is the system&rsquo;s, in a type with two fields.</strong> <code>plugin.Rejection</code> carries a <code>RejectReason</code> and the system&rsquo;s own error, and <code>Error()</code> prints only the reason. <code>rules.System.Apply</code> returns a bare <code>error</code> and <code>realtime.RejectionError</code> is a hub-side type this package must not construct on a system&rsquo;s behalf, so without a bridge every refusal would arrive as <code>server_error</code> — safe and useless, because a GM whose <code>set_hp</code> was refused as <code>not_your_turn</code> and one whose refused <code>set_hp</code> hit a bug would be told the same word. The separation is S-12.3 again: the reason reaches a browser, the detail is reachable through <code>errors.Is</code> and printed by nothing.</p>
+<p><strong>A UI plugin is handed a <code>Reader</code> and an <code>Emitter</code>, and those two types are the whole of its authority.</strong> <code>Reader</code> has three methods — the campaign, the role, and one render query — and <strong>no method that writes and no reference to the hub&rsquo;s state</strong>, which is §10.2&rsquo;s &ldquo;writes <code>campaign_state</code>: UI never&rdquo; as a property of a type rather than an instruction. Its read access is filtered by the reader&rsquo;s campaign visibility <em>before</em> the value reaches the tier, by the same construction ADR 0024 uses for authorisation: a gate mounted, not a check inside a handler. <code>Emitter</code> takes a <code>domain.Requestor</code> and a <code>rules.Intent</code> and nothing in which to name a campaign or a role, so the actor is the account that loaded the page and a plugin cannot escalate by being clever; it dispatches the same intent a keystroke would, so the access gate, the codec&rsquo;s bounds and the system&rsquo;s own role check all apply to it identically (§10.3&rsquo;s &ldquo;identical authorisation and validation&rdquo;).</p>
+<p><strong>A UI plugin&rsquo;s declared operations are checked at registration, and nothing else about it is checked against another package.</strong> <code>Declaration.Emits</code> is the only field whose authority is a question about the build. The check asks whether <em>any</em> registered system resolves the op, not whether the campaign being rendered does: an op is emittable if some system resolves it, and a plugin that emits <code>roll</code> on a campaign whose system does not gets <code>unknown_op</code> from the adapter like anyone else.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>Three seams the composition root must supply, and two of them are one-liners in a package this work item does not own.</strong> The wiring is:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nx">systems</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">plugin</span><span class="p">.</span><span class="nf">New</span><span class="p">()</span><span class="w">                                  </span><span class="c1">// built-ins only, no plugins yet</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">systems</span><span class="p">.</span><span class="nf">Register</span><span class="p">(</span><span class="nx">plugin</span><span class="p">.</span><span class="nx">Entry</span><span class="p">{</span><span class="nx">System</span><span class="p">:</span><span class="w"> </span><span class="nx">dnd5e</span><span class="p">.</span><span class="nf">New2024</span><span class="p">(),</span><span class="w"> </span><span class="nx">Codec</span><span class="p">:</span><span class="w"> </span><span class="nx">dnd5e</span><span class="p">.</span><span class="nx">Codec</span><span class="p">{}})</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">resolver</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">plugin</span><span class="p">.</span><span class="nf">NewResolver</span><span class="p">(</span><span class="nx">plugin</span><span class="p">.</span><span class="nx">ResolverConfig</span><span class="p">{</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">Systems</span><span class="p">:</span><span class="w">  </span><span class="nx">systems</span><span class="p">,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">States</span><span class="p">:</span><span class="w">   </span><span class="nx">states</span><span class="p">,</span><span class="w">                                    </span><span class="c1">// the hub&#39;s realtime.Registry</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nx">SystemOf</span><span class="p">:</span><span class="w"> </span><span class="nx">campaignSystemID</span><span class="p">,</span><span class="w">                          </span><span class="c1">// reads campaigns.system_id</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">})</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">hub</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">realtime</span><span class="p">.</span><span class="nf">NewHub</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">realtime</span><span class="p">.</span><span class="nx">HubConfig</span><span class="p">{</span><span class="nx">States</span><span class="p">:</span><span class="w"> </span><span class="nx">states</span><span class="p">,</span><span class="w"> </span><span class="nx">Resolve</span><span class="p">:</span><span class="w"> </span><span class="nx">resolver</span><span class="p">})</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nx">ui</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">webplugins</span><span class="p">.</span><span class="nf">New</span><span class="p">(</span><span class="nx">systems</span><span class="p">)</span><span class="w">
+</span></span></span></code></pre></div><p><code>SystemOf</code> is a closure over the store, because <code>internal/store</code> is not this package&rsquo;s to read. The <code>Emitter</code> implementation is the one real gap: <code>realtime.Hub.Apply</code> resolves a <code>*ClientIntent</code> against a <code>*Peer</code>, and <code>Peer</code> is admitted by <code>Join</code> — a real connection with a presence entry and a slot in the campaign&rsquo;s peer limit — so a UI plugin has no path to it. <code>internal/realtime</code> needs a method that resolves an intent on behalf of a viewer and broadcasts the result; that is the integrator&rsquo;s to add, and it is the only change outside these three paths this work item needed.</p>
+<p><strong>A page type registered here is unreachable until somebody mounts it.</strong> <code>PageType</code> holds the declaration and <code>internal/httpapi/router.go</code> holds the mount, so this package claims no route and appears in no accessibility audit. A render hook is the same shape: <code>internal/content</code> owns the Markdown pipeline and this package does not import it, so a registered hook is inert until the pipeline&rsquo;s owner asks this registry what it holds, and <code>RenderHook.Kind</code> is the kind of page rather than a Markdown node because the pipeline has no node vocabulary semiplane owns yet. Both are stated on their types rather than left to be discovered.</p>
+<p><strong>The adapter holds no authorisation list and no operation table, deliberately.</strong> §7.2&rsquo;s GM-only rule lives in the system, which branches on <code>call.Role</code> and returns <code>not_permitted</code>; a list here would be a second answer to a question <code>realtime.Core</code> already had to fake, in a function whose own comment calls the fake a shape test rather than an authority. Ordering is preserved by construction: the adapter checks the envelope, the system checks the role.</p>
+<p><strong>Two contract gaps are reported rather than closed.</strong> <code>CampaignState.SetPaused</code> is unreachable through this adapter: <code>rules.Mutation</code> has no campaign-level half, and its own comment says a pause is an intent whose resolution is <em>no mutations</em> — so a pause resolves to nothing observable, which is a gap in the contract rather than in the registry. And <code>realtime.Placement</code> has no per-object field for a system&rsquo;s own state, so a system&rsquo;s <code>Object.Data</code> is derived from the five envelope fields; a system with per-object state of its own needs the <code>realtime</code> side to carry it. Neither is something this work item could fix without editing <code>internal/realtime</code>.</p>
+<p><strong>Three invariant tests were checked by mutation, and one of them found a bug.</strong> Deleting the <code>recover</code> from <code>settle</code> reproduces the panic escaping and fails <code>TestAPanicInsideApplyLeavesTheHubStateByteIdentical</code>; ignoring the error from <code>System.Apply</code> fails <code>TestMutationsReturnedWithAnErrorApplyNothing</code>; dropping the currency precheck fails <code>TestAVersionThatMovedUnderAResolutionIsRefusedWhole</code> with <code>p1</code> partly moved. The duplicate-mutation check is the fourth: it passed before the reason column was pinned, because it and the currency check shared one map and the second mutation naming a placement read the first one&rsquo;s slot as a version of 0 and was refused as <code>stale_version</code> — the right outcome blaming the client for the plugin&rsquo;s mistake. Pinning the reason per case is what turned that into a bug report rather than a green check.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Put the operation vocabulary on <code>rules.System</code> as a tenth method.</strong> Rejected, and [0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }}) already argues why: every future method becomes a breaking change for every plugin. A second optional interface costs one small method on the systems that want to be emittable from, and leaves the rest alone.</p>
+<p><strong>Ask the UI tier to trust the plugin&rsquo;s declaration, or to check at emit time.</strong> Rejected: a trust-based check fails at the table with the plugin&rsquo;s name on the refusal, and a runtime check means the first thing that learns a plugin emits <code>set_hp</code> is the campaign that tried.</p>
+<p><strong>Let the adapter interpret <code>Mutation.Args</code>.</strong> Rejected: S-12.3 and <code>rules.Intent.Args</code>&rsquo;s own comment both say semiplane transports an opaque payload and never interprets it, and a JSON-shaped guess at a system&rsquo;s private schema is a second answer that only holds until the system&rsquo;s second pack.</p>
+<p><strong>Recover around <code>System.Apply</code> alone, as §10.8&rsquo;s row reads.</strong> Rejected by the codec-panic test. The record&rsquo;s row is right about the <em>intent</em> — a panic mutates nothing — and the boundary is wider than the call it names because a codec is plugin code that runs on both sides of it.</p>
+<p><strong>Make the currency precheck unnecessary by holding the hub&rsquo;s lock across a resolution.</strong> Rejected: it would serialise every campaign in the process behind whichever one is resolving, and ADR 0004&rsquo;s whole subject is what this process may and may not share. The precheck buys refusing a stale list <em>whole</em> rather than not existing.</p>
+<p><strong>One registry for both tiers, as ADR 0011&rsquo;s sketch shows.</strong> Rejected: §10.2&rsquo;s table gives each tier its own registration package, <code>rules.View.RendererPlugin</code> says a component lives in the UI tier under the view&rsquo;s name, and <code>internal/domain/rules</code> must not import templ — which it would have to reach a component from a shared registry&rsquo;s map. Two registries, with the UI one holding the gameplay one, keeps the dependency one-way and the reasoning separate.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

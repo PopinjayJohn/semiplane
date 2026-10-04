@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Install — semiplane</title>
+<meta name="description" content="Run semiplane from source, from a release binary, or behind a reverse proxy.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/install/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Install — semiplane">
+<meta property="og:description" content="Run semiplane from source, from a release binary, or behind a reverse proxy.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/install/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/" aria-current="page">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Install</h1>
+    <p class="lede">Run semiplane from source, from a release binary, or behind a reverse proxy.</p>
+    <p>Everything below runs on a machine with a Go toolchain. semiplane is a single
+statically linked binary with no runtime dependencies beyond a writable
+directory and a C library from your distribution.</p>
+<h2 id="from-source">From source</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git clone https://github.com/PopinjayJohn/semiplane.git
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> semiplane
+</span></span><span class="line"><span class="cl">make run
+</span></span></code></pre></div><p>That serves on <code>http://localhost:8080</code>. There is nothing to configure first: the
+server starts and answers <code>/healthz</code> before any database or campaign exists, and
+that is the intended first milestone — a running, empty instance you can log
+into and then fill.</p>
+<h2 id="accounts">Accounts</h2>
+<p>There is no interface to create the first user yet, so there is nothing to do at
+this step. When it lands it will be a CLI subcommand rather than an environment
+variable, so that no password ever sits where <code>ps</code> and shell history can read
+it:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># planned — not implemented yet</span>
+</span></span><span class="line"><span class="cl">semiplane admin create --username you
+</span></span></code></pre></div><h2 id="configuration">Configuration</h2>
+<p>Read from the environment, with defaults chosen so that an empty environment
+works:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Variable</th>
+					<th>Default</th>
+					<th>Meaning</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>SEMIPLANE_ADDR</code></td>
+					<td><code>:8080</code></td>
+					<td>Listen address. Keep it on a private interface behind a proxy.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_DATABASE_URL</code></td>
+					<td><code>file:semiplane.db</code></td>
+					<td>SQLite DSN. <code>sqlite://path</code> is accepted and translated. A DSN that sets a pragma is <strong>rejected</strong>: <code>journal_mode</code>, <code>busy_timeout</code> and <code>foreign_keys</code> are what the server depends on, and a configured one would silently turn them off.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_CONTENT_ROOT_BASE</code></td>
+					<td><code>/var/lib/semiplane/vaults</code></td>
+					<td>Directory campaign vaults live beneath. <strong>Must be absolute</strong> — a campaign&rsquo;s content root is stored absolute, so a relative base would resolve differently after a restart from a different working directory.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_READ_TIMEOUT</code></td>
+					<td><code>10s</code></td>
+					<td>Per-request read timeout.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_WRITE_TIMEOUT</code></td>
+					<td><code>30s</code></td>
+					<td>Per-request response-write timeout, measured on the socket.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_HANDLER_TIMEOUT</code></td>
+					<td><code>25s</code></td>
+					<td>Per-handler budget. A handler that exceeds it gets a <code>504</code>. Separate from the write timeout because that one bounds writing to the socket and this one bounds a handler that has been given the connection and has not returned — a handler blocked on a database read is the case that matters.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_SHUTDOWN_TIMEOUT</code></td>
+					<td><code>15s</code></td>
+					<td>Grace period for in-flight requests on <code>SIGINT</code>/<code>SIGTERM</code>.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_TRUSTED_PROXIES</code></td>
+					<td><em>(empty)</em></td>
+					<td>Comma-separated CIDRs or addresses whose forwarding headers are believed. Empty means believe none, which is correct when the server is reachable directly: an empty list is the only default under which a caller cannot forge its own address in the access log.</td>
+			</tr>
+			<tr>
+					<td><code>SEMIPLANE_ENV</code></td>
+					<td><code>development</code></td>
+					<td><code>production</code> changes what is logged and served.</td>
+			</tr>
+	</tbody>
+</table>
+<h2 id="behind-a-reverse-proxy">Behind a reverse proxy</h2>
+<p>Put TLS and a hostname in front of it. Two things matter specifically:</p>
+<p><strong>Use HTTP/2.</strong> Browsers allow roughly six concurrent connections per origin over
+HTTP/1.1, and every long-lived stream holds one permanently. HTTP/2 removes that
+ceiling entirely. Without it, a tabletop with a live WebSocket and a couple of
+event streams is a handful of connections from the ceiling — which is why
+semiplane confines server-sent events to exactly two places and never uses them
+on the game route at all.</p>
+<p><strong>Do not buffer.</strong> The game route upgrades to a WebSocket and the event routes
+stream; a proxy that buffers responses will hold both open until they time out.</p>
+<p>The trust boundary and what a reverse proxy may and may not see are covered under
+[security]({{ &ldquo;operating/security/&rdquo; | relURL }}).</p>
+<h2 id="verify-the-install">Verify the install</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">curl -fsS http://localhost:8080/healthz   <span class="c1"># {&#34;status&#34;:&#34;ok&#34;}</span>
+</span></span><span class="line"><span class="cl">curl -fsS http://localhost:8080/readyz    <span class="c1"># {&#34;status&#34;:&#34;ready&#34;}</span>
+</span></span></code></pre></div><p><code>/readyz</code> is the one that reflects whether storage is actually usable; <code>/healthz</code>
+only says the process is alive. A difference between them is a campaign whose
+content root has gone missing, which is reported in the interface as a persistent
+banner rather than a transient toast — an ongoing condition, not an event.</p>
+<h2 id="what-is-not-here-yet">What is not here yet</h2>
+<ul>
+<li>Releases are not published, so there is no prebuilt binary and no container
+image. Building from source is the supported path.</li>
+<li><code>admin create</code>, campaign registration, and the content root do not exist yet.
+The server currently serves <code>/healthz</code>, <code>/readyz</code>, and a 404 for everything
+else.</li>
+<li>Tag-triggered release workflows are deliberately out of scope until there is a
+version to release.</li>
+</ul>
+<p>The [roadmap]({{ &ldquo;roadmap/&rdquo; | relURL }}) says which phase each of these lands in.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

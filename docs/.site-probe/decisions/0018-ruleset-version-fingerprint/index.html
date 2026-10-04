@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0018 — ruleset_version fingerprints semantics, not configuration — semiplane</title>
+<meta name="description" content="House-rule enablement is deliberately excluded from the fingerprint that gates resume, and drift is recoverable.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0018-ruleset-version-fingerprint/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0018 — ruleset_version fingerprints semantics, not configuration — semiplane">
+<meta property="og:description" content="House-rule enablement is deliberately excluded from the fingerprint that gates resume, and drift is recoverable.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0018-ruleset-version-fingerprint/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0018 — ruleset_version fingerprints semantics, not configuration</h1>
+    <p class="lede">House-rule enablement is deliberately excluded from the fingerprint that gates resume, and drift is recoverable.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#what-the-fingerprint-contains">What the fingerprint contains</a></li>
+        <li><a href="#what-a-house-rule-may-and-may-not-do">What a house rule may and may not do</a></li>
+        <li><a href="#recovery-from-drift">Recovery from drift</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Two problems in §10.5 and §10.8 of the architecture overview, connected but not connected <em>to
+each other</em>.</p>
+<p><strong>The chain.</strong> §10.5 resolves a campaign&rsquo;s effective ruleset as:</p>
+<blockquote>
+<p>system ID → base pack → overlay → enabled house-rule modules (declared order) → effective
+ruleset (+ <code>ruleset_version</code>)</p>
+</blockquote>
+<p>Read literally, <code>ruleset_version</code> includes the enabled house-rule set. But house rules are
+<strong>data applied at resolution time</strong>: a module may toggle <code>flanking_optional</code>, change a DC formula
+constant, or disable a condition. Turning one on changes <em>outcomes</em>, not the semantics of how
+state is stored or resolved.</p>
+<p>So under the literal reading, a GM enabling a house rule mid-campaign changes
+<code>ruleset_version</code>, and the next resume <strong>refuses to start their own game.</strong> That reads as a bug,
+and it would be &ldquo;fixed&rdquo; the wrong way.</p>
+<p><strong>The recovery path.</strong> §10.8 says:</p>
+<blockquote>
+<p><code>ruleset_version</code> differs from persisted state | Refuse to resume rather than silently
+misresolve; prompt the GM to start a new session</p>
+</blockquote>
+<p>There is no session entity. A campaign has at most one live tabletop (§2.1). So &ldquo;start a new
+session&rdquo; means <strong>discard the current game</strong>. Read literally with no escape, a plugin author
+bumping <code>RulesetVersion()</code> in a patch release strands every live campaign, with a recovery path
+of &ldquo;restore a backup&rdquo;.</p>
+<h2 id="decision">Decision</h2>
+<h3 id="what-the-fingerprint-contains">What the fingerprint contains</h3>
+<p><strong>System ID + the system&rsquo;s <code>RulesetVersion()</code> + base pack and overlay pack versions.</strong></p>
+<p>The enabled house-rule set is <strong>excluded</strong>. It stays stored, ordered by <code>position</code>, and
+audited — it simply is not part of the identity of the resolution semantics.</p>
+<p>Drift then means exactly what §10.8 cares about: <em>the semantics of resolving an intent changed</em>,
+so persisted mutations may no longer replay correctly.</p>
+<h3 id="what-a-house-rule-may-and-may-not-do">What a house rule may and may not do</h3>
+<p>House rules remain <strong>data-level</strong>, and this is what makes the exclusion safe rather than
+convenient:</p>
+<ul>
+<li>May: toggle a flag, change a DC formula constant, disable a condition.</li>
+<li>May not: reorder resolution, or introduce nondeterminism.</li>
+</ul>
+<p>A module that tries is rejected, because replay and audit both depend on determinism — which is
+the same discipline requirement [0012]({{ &ldquo;decisions/0012-plugin-authority/&rdquo; | relURL }}) places
+on rule code generally.</p>
+<p>Conflicts between modules resolve <strong>first-match-wins by <code>position</code></strong>, logged with both module
+IDs. Never last-write-wins, which would make the outcome depend on configuration order.</p>
+<h3 id="recovery-from-drift">Recovery from drift</h3>
+<p><strong>Refuse to resume, with an explicit, audited escape.</strong></p>
+<ul>
+<li><code>/c/{slug}/status</code> names the persisted version, the expected version, and the consequence.</li>
+<li><code>/play</code> shows a GM an alert saying the game cannot resume and why.</li>
+<li>Recovery is a <strong>separate, GM-only, confirmation-gated action</strong> that discards persisted state
+and starts fresh, and it writes to <code>audit_log</code>.</li>
+</ul>
+<p>This satisfies §16.5&rsquo;s actual concern — <em>silently misresolving past state is worse than an extra
+click</em> — without the software inflicting the loss. Nothing resolves past state silently; the GM
+chooses.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Enabling, disabling, or reordering house rules mid-game is safe and does not strand a
+campaign. The rules apply from the next resolution.</li>
+<li>A pack or overlay revision <strong>does</strong> gate resume, which is the intended behaviour: it is the
+case where persisted mutations genuinely might not replay.</li>
+<li>A pack revision still requires a GM decision, so the escape path has to work and be
+discoverable. It is the reason it is surfaced on two pages rather than buried in an error.</li>
+<li><strong><code>ruleset_version</code> must never be hardcoded</strong> by anything that seeds state — including the
+demo seed, which resolves it through the real house-rule path for exactly this reason.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Include the enabled house-rule set, literally as §10.5 reads.</strong> Maximally conservative: any
+change to the effective ruleset forces a re-resolve. Rejected because it makes a routine GM
+action — turning on a house rule at the table — into a destructive-looking error, and because it
+buys a guarantee that is already provided by the data-level restriction on what house rules may
+do.</p>
+<p><strong>Auto-migrate state forward.</strong> Convenient. Rejected because it silently rewrites a persisted
+game state, which is the outcome §16.5 names as worse than an extra click, and it would have to
+be implemented per-system.</p>
+<p><strong>Warn and let the GM continue into the new semantics.</strong> Nothing lost, and no session
+interrupted. Rejected because the persisted state would then mix mutations resolved under two
+different semantics, so replay and the audit trail — both of which depend on determinism — stop
+being trustworthy. It resolves the usability problem by giving up the property the fingerprint
+exists to protect.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Roadmap — semiplane</title>
+<meta name="description" content="The twelve build phases, in the order they will actually be built.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/roadmap/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Roadmap — semiplane">
+<meta property="og:description" content="The twelve build phases, in the order they will actually be built.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/roadmap/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/" aria-current="page">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Roadmap</h1>
+    <p class="lede">The twelve build phases, in the order they will actually be built.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#phases">Phases</a></li>
+    <li><a href="#what-already-runs">What already runs</a></li>
+    <li><a href="#why-this-order">Why this order</a></li>
+    <li><a href="#the-open-questions">The open questions</a></li>
+    <li><a href="#how-to-influence-it">How to influence it</a></li>
+  </ul>
+</nav>
+    </details><p>This is a summary. The
+[architecture record]({{ &ldquo;design/architecture/&rdquo; | relURL }}) owns the reasoning;
+this page exists so you can see the shape without reading 900 lines.</p>
+<h2 id="phases">Phases</h2>
+<table>
+	<thead>
+			<tr>
+					<th>#</th>
+					<th>Phase</th>
+					<th>Lands</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>1</td>
+					<td><strong>Foundations</strong></td>
+					<td>The middleware chain; config for the SQLite path and content-root base; the <code>admin create</code> CLI; the migration skeleton.</td>
+			</tr>
+			<tr>
+					<td>2</td>
+					<td><strong>Identity and tenancy</strong></td>
+					<td>Users, auth sessions, campaigns, membership. Auth middleware, campaign registration, and <code>os.Root</code> creation.</td>
+			</tr>
+			<tr>
+					<td>3</td>
+					<td><strong>Content read path</strong></td>
+					<td>Path confinement; front matter and <code>kind</code> discrimination; markdown render and sanitise; wikilink and embed extensions; the render cache; <code>ETag</code>.</td>
+			</tr>
+			<tr>
+					<td>4</td>
+					<td><strong>Watcher</strong></td>
+					<td>Directory watches, debounce plus size-stable confirmation, full-text index maintenance, degraded mode, campaign-state schema.</td>
+			</tr>
+			<tr>
+					<td>5</td>
+					<td><strong>Wiki surface</strong></td>
+					<td>The templ shell and chrome; wiki and edit routes; the <code>If-Match</code> write path; the conflict view; change notification; search; assets with range requests.</td>
+			</tr>
+			<tr>
+					<td>6</td>
+					<td><strong>Realtime</strong></td>
+					<td>In-memory campaign state; the hub; the protocol codec; placements versus definitions; GM-only operations; debounced persistence; resume by version.</td>
+			</tr>
+			<tr>
+					<td>7</td>
+					<td><strong>Plugin contracts</strong></td>
+					<td>The system, intent and mutation interfaces; the registry, wired explicitly in the composition root; UI page-type and render-hook registration.</td>
+			</tr>
+			<tr>
+					<td>8</td>
+					<td><strong>First systems</strong></td>
+					<td>The 5e engine and base pack, then the 2014 and 2024 overlays and their hooks; two reference UI plugins to prove both contracts are usable.</td>
+			</tr>
+			<tr>
+					<td>9</td>
+					<td><strong>House rules</strong></td>
+					<td>The rule-module table, ordered application, and ruleset-version gating on resume.</td>
+			</tr>
+			<tr>
+					<td>10</td>
+					<td><strong>Client</strong></td>
+					<td>The map canvas; live chrome over a reactive transport; the stylesheet build; the theme layer served from content.</td>
+			</tr>
+			<tr>
+					<td>11</td>
+					<td><strong>Secret callouts</strong></td>
+					<td>The <code>[!secret]</code> extension, the two-variant render, the cache key, the GM-only reveal endpoint with <code>If-Match</code>, the reveal ledger, bounded sync reconciliation, search exclusion.</td>
+			</tr>
+			<tr>
+					<td>12</td>
+					<td><strong>Hardening</strong></td>
+					<td>The security tests, race coverage, failure-mode tests, and the determinism lint rule.</td>
+			</tr>
+	</tbody>
+</table>
+<h2 id="what-already-runs">What already runs</h2>
+<p><code>/healthz</code>, <code>/readyz</code>, the middleware chain, and the security headers. There is no
+campaign, no content, and no interface yet.</p>
+<h2 id="why-this-order">Why this order</h2>
+<p><strong>Each phase is independently runnable.</strong> The server starts and answers
+<code>/healthz</code> from phase 1 onward, so there is never a period where the tree does
+not run.</p>
+<p><strong>Phases 7–9 are separable.</strong> A build with no gameplay plugin still serves the
+wiki, and a campaign whose <code>system_id</code> no longer resolves degrades to wiki-only
+rather than failing to boot. The plugin system is additive to the product, not a
+prerequisite for it.</p>
+<p><strong>Secrets come last because they need everything underneath.</strong> The feature
+refines an already-working render pipeline, and it needs access control (phase
+2), the watcher (phase 4) and conflict resolution (phase 5) in place first. It is
+also the highest-value test in the project, and a security test needs a working
+pipeline to be worth anything.</p>
+<h2 id="the-open-questions">The open questions</h2>
+<p>Deliberately deferred, each with a default chosen for a first release:</p>
+<ol>
+<li><strong>Cross-campaign wikilinks</strong> — resolution already respects the viewer&rsquo;s
+permissions. Whether authors should be able to <em>write</em> them is a product
+decision. Default: allowed within campaigns the viewer can see.</li>
+<li><strong>Storage beyond local disk</strong> — maps are tens of megabytes. Local disk with
+range requests is the self-hosted answer; there is a seam for
+S3-compatible storage rather than a built-in integration.</li>
+<li><strong>Dice expression scope</strong> — expressions only, no system-specific semantics.
+The seed arrives through the call context rather than being fetched, so a
+per-game seed and roll log are auditable at no extra cost.</li>
+<li><strong>Player wiki editing</strong> — settled as GM-only. If a group wants shared notes,
+Obsidian already covers it, and an <code>editor</code> role can be added to the enum later
+without a migration.</li>
+<li><strong>Ruleset-version drift on resume</strong> — the policy is to refuse rather than
+silently misresolve. Default: refuse, because silently misresolving past game
+state is worse than an extra click.</li>
+<li><strong>Plugin API stability</strong> — plugins are compiled in, so there is no semver
+contract to honour. If they ever move out of tree, the intent, mutation and
+kind types need versioning first.</li>
+</ol>
+<h2 id="how-to-influence-it">How to influence it</h2>
+<p>Open a [feature request]({{ site.Params.repo }}/issues/new?template=02-feature.yml).
+The design-impact checklist in that form is what routes a request to
+<code>status: needs-design</code> instead of straight into work — which is the point. The
+cheapest thing you can do for your own timeline is to write down a constraint the
+proposal has to respect.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

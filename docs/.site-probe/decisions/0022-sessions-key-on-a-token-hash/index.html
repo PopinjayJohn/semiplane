@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0022 — `auth_sessions` keys on a hash of the token, because the database is the thing that gets stolen — semiplane</title>
+<meta name="description" content="The session token lives in exactly two places, a cookie and the response that set it; the database stores only its SHA-256.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0022-sessions-key-on-a-token-hash/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0022 — `auth_sessions` keys on a hash of the token, because the database is the thing that gets stolen — semiplane">
+<meta property="og:description" content="The session token lives in exactly two places, a cookie and the response that set it; the database stores only its SHA-256.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0022-sessions-key-on-a-token-hash/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0022 — `auth_sessions` keys on a hash of the token, because the database is the thing that gets stolen</h1>
+    <p class="lede">The session token lives in exactly two places, a cookie and the response that set it; the database stores only its SHA-256.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>semiplane has no session entity in the domain sense — the string &ldquo;session&rdquo; appears nowhere
+in the interface, because an auth session is never surfaced to a user. What exists is the
+mechanism: a random token in a cookie, and a row that says whether it is still valid.</p>
+<p>That makes the row the highest-value table in the database. <code>campaign_state</code> holds a
+snapshot that is worthless on its own; <code>auth_sessions</code> holds credentials that authenticate
+as their owner to the full extent of their role. The threat is not exotic: the database is
+a single SQLite file, which is exactly the artefact that ends up in a backup, a volume
+snapshot, a <code>docker cp</code>, a support bundle, or a stolen laptop.</p>
+<p>Storing the token means that file is a list of live bearer tokens. Anyone who reads it has
+every session, and there is no way to tell an expired token from a live one without
+contacting the server — at which point they have already used them.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>The raw token exists in exactly two places: the <code>Set-Cookie</code> header that issued it, and
+the browser&rsquo;s cookie jar. <code>auth_sessions.token_hash</code> stores the hex SHA-256 of the token,
+and it is the primary key.</strong></p>
+<ul>
+<li>The token is 32 bytes from <code>crypto/rand</code>, base64url without padding so it is a cookie
+value needing no quoting.</li>
+<li><code>NewSessionToken</code> returns the raw token <strong>and</strong> its hash <strong>together</strong>, as one return
+value&rsquo;s worth of two parts. This is the actual mechanism of the decision: a caller
+cannot mint a token and then forget to store its hash, because the hash is already in
+hand and the token is already the thing that belongs in the cookie. Two functions — one
+that mints and one that hashes — would be one refactor away from a token with no row.</li>
+<li>Hashing is a plain SHA-256, <strong>not</strong> the PBKDF2 of [0021]({{ &ldquo;decisions/0021-password-hashing-with-pbkdf2/&rdquo; | relURL }}),
+and that difference is deliberate. There is nothing to brute-force: the input is 32 bytes
+of CSPRNG output, so the search space is the whole token space, not a dictionary of human
+guesses. Stretching would add latency to every authenticated request in exchange for
+defending against an attack that does not exist.</li>
+<li>The token is never logged, never placed in a URL, and never included in an error message.
+A URL puts it in an access log, a <code>Referer</code> header, and a browser history entry — three
+copies that no hashing discipline can take back.</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>Logout is a <code>DELETE</code>, not a flag. There is nothing to disable in the token&rsquo;s own
+representation, so revocation means removing the row, and a removed row is a token that
+cannot be presented usefully even if it is still in someone&rsquo;s cookie jar.</li>
+<li>A leaked token cannot be revoked selectively by changing a stored value; the row must be
+deleted. That is the intended trade — deleting a row is unambiguous, whereas a scheme
+that stores the token could also not hide that the token was once valid.</li>
+<li>Every authenticated request costs one hash and one indexed lookup. The hash is cheaper
+than the database round trip that follows it.</li>
+<li>Comparing a presented token is a hash and a primary-key probe, so it is not a
+constant-time comparison problem: the lookup either finds the row or does not, and there
+is nothing to leak byte-by-byte.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Store the token, protected by encryption at rest.</strong> Rejected: it preserves the property
+that matters least — a reader of the file still obtains working tokens — and it adds a key
+to protect, store, rotate, and lose. The database&rsquo;s confidentiality is not something a
+self-hosted single-file install can actually promise anyway; the access log at the proxy is
+a larger exposure than the SQLite file.</p>
+<p><strong>A signed token, with no server-side row.</strong> JWT-shaped, and rejected on the same grounds
+the single-instance rule ([0004]({{ &ldquo;decisions/0004-single-process-constraint/&rdquo; | relURL }}))
+rejects a second server: it makes revocation impossible without keeping the server-side
+list anyway, so the stateless win is not real and the bearer exposure is identical.</p>
+<p><strong>PBKDF2 for the token as well.</strong> Uniformity for its own sake. It would add roughly half a
+second to every authenticated request to slow an attack against 32 bytes of randomness that
+cannot be conducted. Consistency with [0021]({{ &ldquo;decisions/0021-password-hashing-with-pbkdf2/&rdquo; | relURL }})
+is worth having where the input is human-chosen, and is not worth having where it is not.</p>
+<p><strong>Opaque random session IDs in the URL rather than a cookie.</strong> Rejected earlier in the UI
+spec&rsquo;s own terms, and this record does not reopen it: a token in a path is a token in every
+log on the way to it.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

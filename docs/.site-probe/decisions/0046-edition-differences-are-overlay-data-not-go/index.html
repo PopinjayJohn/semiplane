@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0046 — Edition differences are overlay data, not Go — semiplane</title>
+<meta name="description" content="`internal/domain/systems/dnd5e/overlays` ships 2014 and 2024 as two `go:embed`ed YAML overlays over the engine&#39;s base pack. All four edition differences are rows, switches or a label; no third hook was added, and the diff between the two files is machine-checked so it stays reviewable.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0046-edition-differences-are-overlay-data-not-go/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0046 — Edition differences are overlay data, not Go — semiplane">
+<meta property="og:description" content="`internal/domain/systems/dnd5e/overlays` ships 2014 and 2024 as two `go:embed`ed YAML overlays over the engine&#39;s base pack. All four edition differences are rows, switches or a label; no third hook was added, and the diff between the two files is machine-checked so it stays reviewable.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0046-edition-differences-are-overlay-data-not-go/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0046 — Edition differences are overlay data, not Go</h1>
+    <p class="lede">`internal/domain/systems/dnd5e/overlays` ships 2014 and 2024 as two `go:embed`ed YAML overlays over the engine&#39;s base pack. All four edition differences are rows, switches or a label; no third hook was added, and the diff between the two files is machine-checked so it stays reviewable.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>[0045]({{ &ldquo;decisions/0045-the-5e-engine-is-shared-mechanics-and-a-data-pack/&rdquo; | relURL }}) settled
+what a 5e pack is and drew the line between data and a Go hook. Phase 8&rsquo;s second half had to
+spend that line, and the architecture record states the bill:</p>
+<blockquote>
+<p><em>base pack (shared 5e data)</em>
+<em>├── overlay: 2014 — race naming, crit on 20 only, no mastery properties</em>
+<em>└── overlay: 2024 — species, mastery properties, crit on any natural 20</em></p>
+<p><em>&ldquo;The differences show up as reviewable data diffs. Only genuinely procedural rules — weapon
+mastery resolution, 2024 crit — become Go hooks.&rdquo;</em></p>
+</blockquote>
+<p>Two things make that harder to do than it reads. The first is that <strong>§10.4&rsquo;s three differences
+are not the engine&rsquo;s three</strong>: <code>dnd5e</code>&rsquo;s own <code>hooks.go</code> describes a fourth, the 2024 rule that an
+attack against an incapable, paralysed or unconscious creature does not automatically count as a
+critical hit. A work item that transcribed the architecture list would have shipped an overlay
+that silently dropped it — a rule that quietly does nothing, which is the failure mode this whole
+split is built to avoid and the one a ruleset fingerprint cannot detect.</p>
+<p>The second is that <strong>&ldquo;reviewable&rdquo; is a property of a diff, not of a file</strong>. §10.4&rsquo;s merge rule —
+a collection is merged by slug, a mapping by key, a scalar is replaced when declared and inherited
+when it is not — makes a row-level change readable. It says nothing about what happens when two
+editions want to differ on <em>part of a row</em>, and the engine&rsquo;s answer is that a restated row is
+replaced whole. That is a real cost, in lines of duplicated text, and it had to be paid
+deliberately rather than discovered.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Four differences, all data, and no third hook.</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Difference</th>
+					<th>2014</th>
+					<th>2024</th>
+					<th>Expressed as</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Critical hit</td>
+					<td>a natural 20 from the attack die</td>
+					<td>and a damage die at its own maximum</td>
+					<td><code>toggles.crit_damage_die_max</code></td>
+			</tr>
+			<tr>
+					<td>Attack against a helpless target</td>
+					<td>always crits on a 20</td>
+					<td>not automatically a critical hit</td>
+					<td><code>toggles.crit_ignored_by_incapacitated</code> plus <code>critical_exempt</code> on three condition rows</td>
+			</tr>
+			<tr>
+					<td>Weapon mastery properties</td>
+					<td>do not exist</td>
+					<td>exist</td>
+					<td><code>attack.mastery.enabled</code></td>
+			</tr>
+			<tr>
+					<td>What an ancestry is called</td>
+					<td>&ldquo;Race&rdquo;</td>
+					<td>&ldquo;Species&rdquo;</td>
+					<td>the <code>ancestry</code> kind&rsquo;s <code>label</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>Nothing needed a hook, and that is the finding rather than the coincidence: every one of the four
+is a <strong>policy the shared procedure already reads</strong>. The critical rule takes three booleans the
+pack sets, so the editions differ by two of its inputs and not by its shape; the mastery rule folds
+two lists and 2014 declines to call it. A hook is for a rule whose <em>question</em> differs between
+editions, and none of these four asks a different question. <code>dnd5e</code>&rsquo;s
+<code>TestEveryHookIsNamedInThePackAndThePackNamesNoOther</code> holds the count at two and this work item
+adds nothing to it.</p>
+<p><strong>Each overlay states its own answer for every switch its edition has an opinion about — including
+the one both editions agree on.</strong> So both files carry <code>crit_attack_die_max: true</code>.</p>
+<p>This is the decision worth arguing, because it costs four lines and the obvious alternative is to
+write none of them. The base pack&rsquo;s value for <code>crit_damage_die_max</code> and for
+<code>crit_ignored_by_incapacitated</code> happens to be <strong>2014&rsquo;s</strong> answer. An overlay that relied on it would
+make the base pack&rsquo;s <em>default</em> into an edition&rsquo;s <em>rule</em>: change either line in
+<code>dnd5e/data/base.yaml</code> for an unrelated reason and 2014 silently becomes 2024&rsquo;s critical rule, with
+the diff between the two overlay files showing nothing at all. And a reviewer reading the two files
+side by side could not see the difference without also reading a third. The convention is one
+<code>toggles:</code> block per file that is the complete statement of that edition&rsquo;s critical policy.</p>
+<p><strong>A column-level difference on an inherited row costs a whole row, and the bill was paid rather
+than dodged.</strong> <code>critical_exempt</code> is a column, and 2024&rsquo;s exemption needs it on three rows the
+overlay did not otherwise touch. <code>mergeBySlug</code> replaces a row whole, so those three rows are
+restated in full — nineteen lines of text that is a copy of <code>dnd5e/data/base.yaml</code>&rsquo;s.</p>
+<p>The alternative was leaving 2024&rsquo;s exemption unimplemented, and it was rejected outright: an
+overlay that silently does not apply is the failure a fingerprint cannot detect, because the
+overlay loaded, its version was recorded, and the campaign resolved under 2014&rsquo;s rule while
+claiming 2024&rsquo;s. A duplicated paragraph that is <em>tested</em> against the original is a smaller problem
+than a missing rule. The duplication is held honest by
+<code>TestTheTwentyTwentyfourConditionRowsAreTheBaseRowsPlusTheExemption</code>, which requires every field of
+every restated row to equal the base pack&rsquo;s own except two named exceptions — so a typo fixed in the
+base pack fails a test here rather than forking 2024&rsquo;s copy of that condition forever.</p>
+<p><strong>The exemption covers three conditions and the engine&rsquo;s prose names two.</strong> 2024 exempts an
+<em>Incapacitated</em>, <em>Paralyzed</em> or <em>Unconscious</em> target — which is what the switch is called:
+<code>crit_ignored_by_incapacitated</code>. <code>dnd5e</code>&rsquo;s <code>hooks.go</code> and <code>packfile.go</code> both describe it as
+&ldquo;paralysed or unconscious&rdquo;. The column is the pack&rsquo;s to fill, so the pack fills it with the rule and
+the engine&rsquo;s comment is narrower than the rule it describes. Reported rather than worked around.</p>
+<p><strong>One slug, two labels.</strong> <code>ancestry</code> names the kind in both editions and only its <code>label</code> moves. A
+slug is the identity a campaign&rsquo;s pages and its <code>campaigns</code> row hold; two slugs for one concept
+would be two entries in a kind registry and two answers to &ldquo;which kind is this page&rdquo;, which is a
+data-model change 0045 already decided against for system ids.</p>
+<p><strong>The three refusals a caller can reach.</strong> An id no embedded file answers is
+<code>ErrUnknownEdition</code> — a configuration fault, and deliberately <strong>not</strong> under <code>dnd5e.ErrPack</code>,
+because a composition root asking &ldquo;did the packs load?&rdquo; should not be answered about a pack that
+was never read. The <strong>zero <code>Edition</code> refuses</strong> to build a system, because <code>dnd5e.Overlay.Zero()</code>
+means something real and correct — an empty overlay <em>is</em> the base pack alone, and §10.4 makes that a
+first-class system — while a zero <code>Edition</code> is a value nobody filled in. Building the base pack from
+it would produce a campaign whose fingerprint has an empty <code>overlay</code> component and no way to tell
+that is what happened. And <code>Source</code> hands out a <strong>copy</strong>, because <code>go:embed</code>&rsquo;s value is package
+state and a caller that appended to it would corrupt every edition not yet parsed.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>The reviewable diff is one command, and it is machine-checked.</strong>
+<code>diff data/dnd5e-2014.yaml data/dnd5e-2024.yaml</code> puts every edition difference on the screen and
+nothing else.
+<code>TestTheOnlyDifferencesBetweenTheTwoOverlayFilesAreTheEditionRules</code> flattens both files and compares
+four computed sets against closed lists: what differs, what agrees, what only 2014 declares (nothing)
+and what only 2024 declares (the three condition rows). Because the <em>agreement</em> set is closed, an
+overlay that also restated the proficiency table with the same values fails — so &ldquo;the difference
+between these files is the whole of the difference between these editions&rdquo; is an assertion and not a
+reviewer&rsquo;s diligence.</p>
+<p><strong>Both editions pass all five conformance audits.</strong> <code>TestBothEditionsPassEveryConformanceAudit</code> runs
+<code>conformance.Check</code> per edition, through the suite&rsquo;s <code>Resume</code> and <code>Classify</code> seams with an encoding
+that mirrors <code>internal/realtime</code>&rsquo;s. An edition that failed one would be a <em>system</em> that failed, not a
+fixture that failed: the pack is where a system keeps its rules, so a conformance failure under one
+edition and not the other is the exact shape of a data difference the engine cannot honour.</p>
+<p><strong>An edition&rsquo;s identity is a fingerprint component and a house rule is not.</strong>
+<code>RulesetVersion</code> stays the engine&rsquo;s constant under both editions; the overlay&rsquo;s declared version is
+the third of the four components, the base pack&rsquo;s own is the second, and
+<code>TestTheFingerprintCarriesTheEditionAndNotAHouseRule</code> asserts all five claims including that the same
+house rule, enabled and disabled, produces byte-identical fingerprints and the same campaign still
+resumes. That is [0018]({{ &ldquo;decisions/0018-ruleset-version-fingerprint/&rdquo; | relURL }}) as bytes, and
+it is the claim an overlay could plausibly break by fingerprinting an edition&rsquo;s <em>contents</em> rather
+than its declared version.</p>
+<p><strong><code>mergeBySlug</code> is now the weakest layer in this split, and the fix is small.</strong> Replacing a row whole
+is right for every other collection — a restated ability should be the ability the overlay means —
+and wrong for a column. The narrow fix is a field-wise merge for <code>conditions</code>, with pointer fields
+on the row so absence is visible, which is the same reason <code>packFile</code> has pointers at all. That is an
+edit to <code>dnd5e</code>, which this work item does not own, so it is reported here rather than made.</p>
+<p><strong>An engine defect was found and is not fixed here.</strong> <code>defaultCritical.Critical</code> short-circuits on
+the defender&rsquo;s exemption <em>before</em> it consults the attack die, and <code>resolveAttack</code> asks the same hook
+twice — once for &ldquo;does a natural 20 hit on its own&rdquo; and once for &ldquo;is the hit critical&rdquo;. Under 2024
+that conflates the two: measured against a defender with <code>ac: 30</code> carrying <code>unconscious</code>, a natural
+20 with a total of 21 <strong>misses</strong> (<code>met: false</code>, one mutation), where 2014 and 2024 against an
+unexempted defender resolve the identical roll as an automatic critical hit. In 5e a natural 20 is
+always a hit; 2024 only denies that it <em>automatically counts as a critical hit</em>. The fix belongs to
+the hook&rsquo;s input or to the resolver&rsquo;s two questions, and it is the engine&rsquo;s to make.</p>
+<p><strong>A fifth edition difference needs a new record line.</strong> The two lists in the test file are the whole
+of what these two editions disagree about. A sixth difference — a new edition, a house edition, a
+reflavoured pack — fails those lists rather than arriving quietly, which is the intended friction.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Two Go rules for the two editions&rsquo; critical hit.</strong> Rejected, and 0045 already refuses it. It works,
+it is a dozen lines, and it puts the difference between the editions in a <code>switch</code> in <code>resolve.go</code>
+where an overlay author will not find it. The critical difference here was measurable rather than
+asserted: <code>TestTheEditionsResolveDifferentlyUnderOneSeed</code> resolves the <em>same intent under the same
+seed</em> under both editions and requires different damage — three points of modifier for a finesse
+weapon, exactly one d12 for a damage die at its maximum, and a critical that 2024 suppresses and
+2014 does not. A flag that was merely set cannot produce a damage number twelve larger.</p>
+<p><strong>Rely on the base pack&rsquo;s defaults and declare only what the base got &ldquo;wrong&rdquo; for this edition.</strong>
+Rejected, and the argument is in the Decision above: it makes the base pack&rsquo;s default into the
+edition&rsquo;s rule, and it puts the difference in a third file. The cost is four lines per overlay.</p>
+<p><strong>Restate the whole pack per edition.</strong> Rejected: it is the fork §10.4 exists to avoid, and it makes
+the two editions comparable only by a human reading two hundred lines to find four differences.
+<code>TestAnOverlayRestatesNothingThatTheBasePackAlreadySays</code> asserts each overlay&rsquo;s <em>shape</em> — which
+blocks it declares and how many rows each holds — so a restated <code>formulas:</code> block fails rather than
+shipping.</p>
+<p><strong>Leave 2024&rsquo;s exemption unimplemented to avoid the row copy.</strong> Rejected above, and the asymmetry is
+worth stating plainly: a wrong number in a duplicated paragraph is visible in a diff and testable, and
+a missing rule is invisible until somebody at the table notices they cannot crit an unconscious
+goblin.</p>
+<p><strong>A different <code>kind</code> slug per edition — <code>race</code> and <code>species</code>.</strong> Rejected. It is a data-model change
+with a persisted consequence: the slug is what a campaign&rsquo;s page front matter and <code>campaigns</code> row
+name, so two editions would want two entries in one registry and a GM moving a campaign between
+editions would have to rewrite every page. The word a GM reads is a <code>label</code>; the word a page stores
+is a slug; only one of them is an edition difference.</p>
+<p><strong>A field-wise merge for rows, done here.</strong> Rejected on ownership, not on merit. <code>dnd5e/overlay.go</code>
+and <code>packfile.go</code> are the merged engine&rsquo;s, and this work item&rsquo;s instruction was explicit: report an
+engine bug, do not fix it. The recommendation is in the Consequences.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

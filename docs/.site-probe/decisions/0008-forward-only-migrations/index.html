@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0008 — Forward-only migrations — semiplane</title>
+<meta name="description" content="A shipped migration is never edited. New schema means a new migration, and FTS5 tables are drop-and-recreate.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0008-forward-only-migrations/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0008 — Forward-only migrations — semiplane">
+<meta property="og:description" content="A shipped migration is never edited. New schema means a new migration, and FTS5 tables are drop-and-recreate.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0008-forward-only-migrations/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0008 — Forward-only migrations</h1>
+    <p class="lede">A shipped migration is never edited. New schema means a new migration, and FTS5 tables are drop-and-recreate.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>An installation holds its database across upgrades. There is no &ldquo;reinstall fresh&rdquo; path a user
+can be asked to take, because the database is not the source of truth — it holds <code>campaign_state</code>
+and <code>page_revisions</code>, which are <strong>not</strong> in the vault and are therefore not recoverable from it.</p>
+<p>That makes the upgrade path the only path. A migration that ran yesterday must still be
+correct today.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Migrations are forward-only, ordered, and live under <code>internal/store/migrations/</code>. A shipped
+migration is never edited — only added to.</strong></p>
+<p>Applied migrations are recorded, so the runner knows where to start.</p>
+<p>Two specific consequences:</p>
+<ul>
+<li><strong>A new migration is the only way to change schema.</strong> Not <code>IF NOT EXISTS</code>, not a check for an
+existing column. Write the next migration.</li>
+<li><strong>FTS5 virtual tables are the exception the rule has to carve out.</strong> They cannot be <code>ALTER</code>ed
+at all — not the columns, not the tokenizer. Changing one means dropping and recreating it and
+then running <code>INSERT INTO pages_fts(pages_fts) VALUES('rebuild')</code>.</li>
+</ul>
+<p>The FTS carve-out exists because <code>pages_fts</code> is a view over <code>pages</code>, not a copy of the content.
+Recreating it and rebuilding loses nothing, which is what makes the drop safe here and would not
+make it safe anywhere else.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>A migration is immutable once it has shipped, and that is enforced socially by <code>AGENTS.md</code>
+and by the review checklist rather than by a tool. Reviewers watch for diffs to existing
+migration files.</li>
+<li>Schema history is append-only and readable. Someone upgrading from an old version can read
+every step the schema took to get to where they are.</li>
+<li>Column renames and type changes are expressed as add-then-migrate-then-drop across several
+migrations. That looks like clutter and is the correct cost.</li>
+<li>Changing the FTS tokenizer, as
+[0007]({{ &ldquo;decisions/0007-fts5-tokenizer/&rdquo; | relURL }}) contemplates for trigram, is a drop,
+a recreate, and a rebuild — which is safe only because the content lives in <code>pages</code>.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>A migration tool with automatic down-migrations.</strong> Rollback support is genuinely useful, and
+its absence here is a real limitation. Rejected because an automatic down-migration is a guess:
+it cannot know whether dropping a column loses a value the operator needed. For a tool whose
+database holds irreplaceable game state, a migration that refuses to guess is safer than one
+that does. Recovery, when needed, is a restore from backup.</p>
+<p><strong>Hash-chained migrations, refusing to run if a recorded migration has changed.</strong> This <em>would</em>
+make the immutability rule mechanical rather than social, and it is a small amount of code —
+store each migration&rsquo;s hash with its applied record and compare on startup. It was not adopted
+in phase 0 because the phase already carries a large surface, and it is genuinely worth adding.
+Recorded here as a known gap rather than left as a silent one.</p>
+<p><strong>Rebuild the database on every upgrade.</strong> Defensible, given that most of it is an index — but
+it discards <code>campaign_state</code> and <code>page_revisions</code>, which are the parts that cannot be rebuilt.
+Rejected on that basis alone.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

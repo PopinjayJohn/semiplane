@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0017 — Cross-campaign links never inline — semiplane</title>
+<meta name="description" content="A wikilink may point into another campaign. Its content is never inlined, because inlining breaks the two-variant render cache.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0017-cross-campaign-links-never-inline/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0017 — Cross-campaign links never inline — semiplane">
+<meta property="og:description" content="A wikilink may point into another campaign. Its content is never inlined, because inlining breaks the two-variant render cache.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0017-cross-campaign-links-never-inline/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0017 — Cross-campaign links never inline</h1>
+    <p class="lede">A wikilink may point into another campaign. Its content is never inlined, because inlining breaks the two-variant render cache.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#why-inlining-would-break-it-a-second-time">Why inlining would break it a second time</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>§16.1 of the architecture overview:</p>
+<blockquote>
+<p><strong>Cross-campaign wikilinks</strong> — resolution already respects viewer permissions. Whether authors
+should be able to <em>write</em> them is a product call. Default: allowed within campaigns the viewer
+can see.</p>
+</blockquote>
+<p>Resolution is settled. Writing was left open. Answering it requires connecting it to something
+else in the record.</p>
+<p>§5.5 makes the render cache <strong>permission-neutral by construction</strong>: exactly two variants per
+page, keyed <code>(campaign_id, path, content_hash, include_secrets)</code>, and the explicit statement
+<em>&ldquo;never a per-user cache&rdquo;</em>.</p>
+<p>That invariant has already been broken exactly once, deliberately: <code>[!secret]</code> made the body
+viewer-dependent, which is why [0016]({{ &ldquo;decisions/0016-salted-etag/&rdquo; | relURL }}) had to salt
+the <code>ETag</code>. One exception, accounted for, with a mechanism to keep it from being confused with
+the other variant.</p>
+<h2 id="why-inlining-would-break-it-a-second-time">Why inlining would break it a second time</h2>
+<p>If a cross-campaign link inlined its target&rsquo;s rendered content, the linking page&rsquo;s body would
+depend on <strong>which campaigns the viewer can see</strong>. The number of variants would then be a function
+of the viewer&rsquo;s membership — not two variants, but one per visible-campaign-set. The cache key
+would need that set. That is precisely the per-user cache §5.5 rules out, and unlike the secret
+exception there is no bounded set of variants to enumerate.</p>
+<p>So the trade is not &ldquo;inlining is nicer&rdquo; against &ldquo;inlining is worse&rdquo;. Inlining is not available
+at this price.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>A cross-campaign wikilink renders as a plain hyperlink. Its content is never inlined.</strong></p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-html" data-lang="html"><span class="line"><span class="cl"><span class="p">&lt;</span><span class="nt">a</span> <span class="na">href</span><span class="o">=</span><span class="s">&#34;/c/other-campaign/wiki/Some%20Page&#34;</span><span class="p">&gt;</span>Some Page<span class="p">&lt;/</span><span class="nt">a</span><span class="p">&gt;</span>
+</span></span></code></pre></div><ul>
+<li>The label is the <strong>literal wikilink text</strong> — no lookup of the target&rsquo;s title, no rendering of
+the target&rsquo;s front matter. Nothing is read from the other campaign at render time.</li>
+<li>Therefore the linking page&rsquo;s HTML is <strong>byte-identical for GM, player, and anonymous</strong> alike.
+The cache invariant holds with no new variant.</li>
+<li>A viewer who cannot see the target clicks and gets a 403. The link discloses nothing the
+author did not already choose to write down.</li>
+</ul>
+<p><strong>Cross-campaign <em>embed</em> (<code>![[Page]]</code>) is refused outright.</strong> Embedding is inlining, so it is
+subject to exactly the argument above.</p>
+<p>Index-time resolution still records the link in the broken-link report, scoped to the viewer&rsquo;s
+visibility — never probing a campaign the viewer cannot see.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong>A test asserts the byte-identity.</strong> Render one page containing a cross-campaign link as GM,
+as player, and as anonymous, and diff the three bodies. This is the assertion that keeps the
+implementation from drifting into inlining, which is the intuitive thing to write and the
+thing that would silently destroy the cache.</li>
+<li>There is a real cost: a cross-campaign reference shows the link text, not the target&rsquo;s content.
+A GM who wants a page&rsquo;s prose inlined has to copy it, or accept a link. Accepted.</li>
+<li>Resolution within a campaign is unaffected: relative path first, then basename index within
+the campaign, then within campaigns the viewer can see. That is the existing §5.4 behaviour.</li>
+<li>Authors who genuinely want a plain absolute link can already write one. What this record adds
+is that the <em>wikilink</em> form works across campaigns and renders predictably.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Disallow cross-campaign links entirely.</strong> Simplest, zero new surface. Rejected because it
+leaves no supported way to express a genuine cross-campaign reference, and the demo vault needs
+to demonstrate one.</p>
+<p><strong>Allow inlining, and put the viewer&rsquo;s visible-campaign set in the cache key.</strong> Fully capable,
+and what a user copying a shared vault would expect. Rejected: it is the per-user cache, which
+§5.5 excludes, and it multiplies variants in a way that no salt or <code>Vary</code> header can bound.</p>
+<p><strong>Allow inlining only for public campaigns.</strong> A bounded exception, since an anonymous viewer has
+exactly one view of a public campaign. Rejected as a special case that would need its own cache
+key variant, its own <code>Vary</code>, and its own test — for a case the plain hyperlink already covers.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

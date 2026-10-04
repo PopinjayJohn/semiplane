@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0029 — A redactor sees the whole source, and runs before the render — semiplane</title>
+<meta name="description" content="Redaction happens on the document text, not on a parsed Document and not on rendered HTML, so no buffer downstream of it ever holds a secret.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0029-redaction-operates-on-the-source/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0029 — A redactor sees the whole source, and runs before the render — semiplane">
+<meta property="og:description" content="Redaction happens on the document text, not on a parsed Document and not on rendered HTML, so no buffer downstream of it ever holds a secret.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0029-redaction-operates-on-the-source/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0029 — A redactor sees the whole source, and runs before the render</h1>
+    <p class="lede">Redaction happens on the document text, not on a parsed Document and not on rendered HTML, so no buffer downstream of it ever holds a secret.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#the-whole-source-not-the-body">The whole source, not the body</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p><code>[!secret]</code> is phase 10. Phase 3 built the read path the secret phase refines, and the risk is
+that the ordering is left implicit and phase 10 gets it wrong — because a redactor that runs <em>after</em>
+the render is the intuitive place to add one, and it is the one position that leaks.</p>
+<p>S-5.6 says a secret body is <strong>absent</strong> from every non-GM response: not <code>display:none</code>, not a
+<code>hidden</code> attribute, not a comment, not a class. Every one of those ships the text in the HTML, where
+any player can recover it from view-source. S-5.7 says redaction happens <strong>before</strong> sanitisation and
+before the value reaches any template, so <strong>no intermediate buffer holds an unredacted copy for a
+non-GM</strong>.</p>
+<p>The requirement is about buffers. A redactor after the render means the unredacted body exists in
+the renderer&rsquo;s AST, in the sanitiser&rsquo;s input, and in whatever the render cache holds — three places
+a bug, a log line, a core dump, or a future plugin&rsquo;s render hook would leak it from. A redactor
+before the render means the non-GM pipeline <strong>never constructs the string</strong>.</p>
+<h2 id="decision">Decision</h2>
+<p>The redactor operates on the <strong>source bytes</strong>, before parsing, before rendering, before
+sanitisation.</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span><span class="w"> </span><span class="nx">Redactor</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Redact</span><span class="p">(</span><span class="nx">body</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">includeSecrets</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">}</span><span class="w">
+</span></span></span></code></pre></div><p>Two structural mechanisms hold the order, so a reordering is not a silent regression:</p>
+<ol>
+<li><strong><code>source</code> has exactly one exit.</strong> It holds the bytes and offers one method,
+<code>redact(Redactor, bool) (redacted, error)</code>. <code>redacted</code> holds what came back and offers one
+method, <code>parse(PageKindRegistry) content.Document</code>. Both types are unexported, there is no
+conversion between them that skips the redactor, and there is no method from <code>source</code> to <code>Parse</code>,
+to <code>Render</code>, or to the cache. For a non-GM the bytes cannot reach any of them — the type has no
+other exit.</li>
+<li><strong><code>include_secrets</code> comes from one place.</strong> <code>access.Tier.CanEdit()</code> — that is, the campaign GM
+and nobody else. Not a query parameter, not a cookie, not a header: each is attacker-supplied.
+Not a re-read of the membership: the access gate already resolved it, and re-deriving it here
+would be a second copy of the S-8 matrix (ADR 0024). It feeds exactly two things, the cache
+variant and the redactor&rsquo;s flag.</li>
+</ol>
+<h3 id="the-whole-source-not-the-body">The whole source, not the body</h3>
+<p>The redactor receives the file&rsquo;s entire text, not the markdown body with its front matter removed.
+That is a deliberate reading of the seam, and it is the one phase 10 most needs to know.</p>
+<p>A redactor that saw only the prose could not remove a secret from <strong>front matter</strong> — and front
+matter is attacker-reachable by definition (S-4.7), since the content root is writable by a sync, a
+community plugin, and any device that syncs the vault. A secret in front matter would be rendered
+into a <code>data-</code> attribute, a template parameter, or a page title, and a redactor that only saw the
+body would never see it.</p>
+<p>The cost is that the redactor must itself know where a callout starts and ends, including at the
+very top of the document. That is a real constraint on phase 10, and it is the right trade: the
+alternative is a redaction that is complete for the common case and silent for the reachable one.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong>The guarantee is about buffers, not about memory.</strong> The bytes are necessarily in memory to be
+read and hashed. What is guaranteed is that every buffer <em>downstream of the redactor</em> is clean,
+which is what <code>pipeline.go</code> states rather than overclaiming.</li>
+<li><strong>Phase 10 must supply a whole new <code>Definition</code></strong> whose writer emits nothing for a hidden secret,
+because the render pipeline has already been handed text with no callout in it. A writer that
+emitted a styled span would defeat the omission; a writer that emits nothing is indistinguishable
+from a paragraph that was never written, which is exactly S-5.6&rsquo;s &ldquo;removed entirely&rdquo;.</li>
+<li><strong><code>content.NoSecrets()</code> is what phase 3 installs, and it removes nothing.</strong> Its doc comment says
+so explicitly, because the name reads like a safety guarantee and it is the opposite: until phase
+10, <code>[!secret]</code> content is rendered in full to every viewer. A reader who finds that comment learns
+the real state of the feature; a reader who finds no comment does not.</li>
+<li>The seam is one interface and one call site. Phase 10 changes <code>Redactor</code>&rsquo;s implementation and
+nothing else in the read path.</li>
+<li>The cache key carries <code>include_secrets</code>, so the two variants of a page are two entries and two
+validators (S-5.2, S-5.3, [ADR 0016]({{ &ldquo;decisions/0016-salted-etag/&rdquo; | relURL }})). That was
+phase 3&rsquo;s work; this record exists so phase 10 knows the variant is already plumbed and does not
+add a second one.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Redact the rendered HTML.</strong> Rejected: the unredacted text has already been through the renderer,
+the sanitiser, and potentially the cache. Every one of those is a place the text exists in full for
+a non-GM, which is precisely what S-5.7 forbids.</p>
+<p><strong>Redact the parsed <code>Document</code>&rsquo;s body.</strong> Reasonable, and it is what a first implementation would do
+— but <code>Document</code> only exists after <code>Parse</code>, so front matter has already been read into a struct the
+redactor cannot reach, and a secret in front matter reaches a template. Rejected for the reason
+above.</p>
+<p><strong>Redact after parsing but before rendering, by giving the redactor the <code>Document</code>.</strong> Rejected for
+the same reason, plus one: <code>Parse</code> is a total function with no error return, so a
+<code>Document</code>-shaped redactor interface is a re-parse of the block rather than the bytes, and the
+&ldquo;before&rdquo; in &ldquo;before sanitisation&rdquo; would no longer mean &ldquo;before anything looked at the file&rdquo;.</p>
+<p><strong>Pass the raw token and let the renderer skip the callout.</strong> Rejected: the renderer would then know
+what a secret is, so every extension writer would have a second thing to get right, and a plugin&rsquo;s
+render hook would be a path to the unredacted text. One redactor, upstream of everything, is the only
+shape where a new extension cannot leak.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

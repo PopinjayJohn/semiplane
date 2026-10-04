@@ -1,0 +1,3037 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Responsive UI/UX specification — semiplane</title>
+<meta name="description" content="The UI design record, rendered verbatim from the repository.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/design/ui-ux/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Responsive UI/UX specification — semiplane">
+<meta property="og:description" content="The UI design record, rendered verbatim from the repository.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/design/ui-ux/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Responsive UI/UX specification</h1>
+    <p class="lede">The UI design record, rendered verbatim from the repository.</p>
+    <aside class="banner" data-testid="page-banner">
+      <p>A design record from 2026-09-30, published unedited. Where it conflicts with the architecture record, the architecture record is the newer and correct one.</p>
+    </aside><aside class="banner" data-testid="design-record-banner" aria-labelledby="banner-heading">
+  <h2 class="banner__heading" id="banner-heading">
+    <span class="banner__badge" aria-hidden="true">record</span>
+    Dated design record — 2026-09-30
+  </h2>
+  <p>
+    This is a <strong>design record</strong>, not user documentation. It is
+    published here verbatim from the repository so it cannot drift from the
+    design it records — which also means it may describe behaviour the code does
+    not have yet, or no longer has.
+  </p>
+  <p>
+    For how to run semiplane, start with the
+    <a href="/semiplane/install/">installation guide</a> and the
+    <a href="/semiplane/concepts/">concepts</a>. Source of this page:
+    <a href="https://github.com/PopinjayJohn/semiplane/blob/main/.opencode/plans/1790778908232-responsive-ui-ux-design-spec.md"
+       data-testid="design-record-source"><code>.opencode/plans/1790778908232-responsive-ui-ux-design-spec.md</code></a>.
+  </p>
+</aside>
+
+<p><strong>Status:</strong> implementation-ready design specification, reconciled against architecture overview
+revision 2. Each section ends with its task list; a consolidated build order is in <code>§15</code>.
+<strong>Date:</strong> 2026-09-30 (reconciled). <strong>Repo state:</strong> scaffold only — <code>cmd/server</code>,
+<code>internal/config</code>, <code>internal/httpapi</code> (bare mux, three handlers), empty <code>internal/domain</code>,
+<code>internal/store</code>, <code>internal/web</code>. No templ, no Tailwind, no CSS.
+<strong>Companion:</strong> <code>.kilo/plans/1790774477695-semiplane-architecture-overview.md</code> — the
+<em>Technical Architecture Overview</em>, 1,058 lines. That plan owns domain semantics: the
+terminology table (<code>§2.1</code>), roles (<code>§2.2</code>), the content pipeline (<code>§5</code>), secret callouts
+(<code>§5.6</code>), conflict resolution (<code>§6</code>), the WebSocket protocol (<code>§7</code>), the plugin system (<code>§10</code>),
+and the URL scheme (<code>§9</code>). <strong>This document owns pixels and nothing else.</strong> Where the two
+disagree, the architecture plan wins and the disagreement is called out in-line.</p>
+<h3 id="reconciliation-log">Reconciliation log</h3>
+<p>Revision 2 of the architecture plan changed things this spec had built on. What moved:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Change</th>
+					<th>Effect on this spec</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>world</code> and play-<code>session</code> entities <strong>removed</strong>; a campaign has at most one live tabletop; route is <code>/c/{slug}/play</code></td>
+					<td><code>§1.2</code> vocabulary rewritten; <code>§4.3</code> nav loses its Games list; <code>§4.4</code> route table fixed</td>
+			</tr>
+			<tr>
+					<td>Terminology fixed upstream (<code>§2.1</code>)</td>
+					<td><code>§1.2</code> defers to the plan instead of inventing terms</td>
+			</tr>
+			<tr>
+					<td>Roles settled: <strong><code>gm</code>/<code>player</code>, GM-only content editing</strong></td>
+					<td><code>§4.3</code>, <code>§4.5</code>, <code>§4.8</code> — edit affordances are absent for players, not disabled</td>
+			</tr>
+			<tr>
+					<td>New plugin system (<code>§10</code>): gameplay / UI / theme tiers, registry-backed <code>kind</code></td>
+					<td>new <code>§4.11</code> plugin UI contract, <code>§4.12</code> theme layer contract; <code>§4.3</code> kind labels are registry-driven</td>
+			</tr>
+			<tr>
+					<td>New theme tier: &ldquo;CSS, header background, fonts&rdquo; from the content root</td>
+					<td><code>§5.2</code> webfont ban lifted, conditionally; new <code>§4.12</code>; brand tokens added to <code>§6</code></td>
+			</tr>
+			<tr>
+					<td>New <code>[!secret]</code> callouts (<code>§5.6</code>)</td>
+					<td>new <code>§4.10</code>; <code>§6.2</code>/<code>§6.3</code> gain callout tokens</td>
+			</tr>
+			<tr>
+					<td>Render cache keyed <code>include_secrets</code>; body no longer permission-neutral</td>
+					<td><strong>§3.7&rsquo;s central invariant was false.</strong> Corrected in <code>§3.7</code>; new <code>ETag</code> and cache rules in <code>§6.6</code></td>
+			</tr>
+			<tr>
+					<td>Plan contradicts itself on play-page transport (<code>§7</code> vs <code>§3.1</code>/<code>§9</code>)</td>
+					<td>resolved in <code>§7.5</code>; WS carries state and presence, SSE carries rendered sidebar fragments</td>
+			</tr>
+			<tr>
+					<td>Two new degraded states: unknown <code>system_id</code>, <code>ruleset_version</code> drift (<code>§10.8</code>)</td>
+					<td>added to <code>§4.7</code></td>
+			</tr>
+			<tr>
+					<td>Plan <code>§15</code> builds the shell at phase 5 but Tailwind at phase 10</td>
+					<td><strong>Plan defect.</strong> Flagged in <code>§15.2</code>; this spec&rsquo;s Slice A must attach before phase 5</td>
+			</tr>
+			<tr>
+					<td>Plan <code>§16.1</code> names this spec stale and a blocker on UI work only</td>
+					<td>reconciled here; phases 1–9 and 11 of the plan are unaffected</td>
+			</tr>
+	</tbody>
+</table>
+<hr>
+<h2 id="0-requirement-traceability">0. Requirement traceability</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Requirement</th>
+					<th>Satisfied by</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Persistent header</td>
+					<td><code>§4.1</code> — <code>role=&quot;banner&quot;</code>, every route, never collapses</td>
+			</tr>
+			<tr>
+					<td>Persistent footer</td>
+					<td><code>§4.2</code> — <code>role=&quot;contentinfo&quot;</code>, every route; becomes a bottom nav bar below 1024, and the player&rsquo;s action bar on <code>/play</code></td>
+			</tr>
+			<tr>
+					<td>Left-side navigation sidebar</td>
+					<td><code>§4.3</code> — persistent ≥1024, icon rail in short landscape, sheet below; absent only pre-campaign (<code>§4.6</code>)</td>
+			</tr>
+			<tr>
+					<td>Primary centre content area</td>
+					<td><code>§4.4</code> — <code>role=&quot;main&quot;</code>, one <code>&lt;h1&gt;</code>, the route slot</td>
+			</tr>
+			<tr>
+					<td>Right-side utility/information sidebar</td>
+					<td><code>§4.5</code> — persistent ≥1280, bottom sheet below 640, drawer 640–1279</td>
+			</tr>
+			<tr>
+					<td>1. Responsive breakpoints</td>
+					<td><code>§3</code> — five width tiers, TV as a mode (<code>§3.3</code>), orientation (<code>§3.5</code>), scroll model (<code>§3.6</code>)</td>
+			</tr>
+			<tr>
+					<td>2. Theming, tokens, light + dark</td>
+					<td><code>§6</code> — three token layers, two palettes, campaign brand layer (<code>§4.12</code>), no-flash switching, forced-colors</td>
+			</tr>
+			<tr>
+					<td>3. Accessibility, WCAG, contrast, targets, keyboard</td>
+					<td><code>§7</code> — AA target, AAA where stated, plus 10-foot and D-pad rules</td>
+			</tr>
+			<tr>
+					<td>4. Component hierarchy across input methods</td>
+					<td><code>§8</code> — four tiers, three input modalities, orientation, prominence rules</td>
+			</tr>
+			<tr>
+					<td>Editor + conflict resolution (plan <code>§1</code>, <code>§6</code>)</td>
+					<td><code>§4.8</code> — textarea, split preview, 412 diff in the preview slot, no auto-save</td>
+			</tr>
+			<tr>
+					<td>Player participation on a phone</td>
+					<td><code>§4.9</code> — read-only map, action bar, no positional play</td>
+			</tr>
+			<tr>
+					<td>Secret callouts (plan <code>§5.6</code>)</td>
+					<td><code>§4.10</code> — reveal affordance, redaction, theming, the AT decision</td>
+			</tr>
+			<tr>
+					<td>Plugin system (plan <code>§10</code>)</td>
+					<td><code>§4.11</code> — tokens are the plugin contract; <code>§4.12</code> — theme layer contract</td>
+			</tr>
+	</tbody>
+</table>
+<p>Terminology: this document says <strong>rail</strong> for the two sidebars and <strong>centre</strong> for the content
+column — the brief&rsquo;s &ldquo;left-side navigation sidebar&rdquo;, &ldquo;primary center content area&rdquo; and
+&ldquo;right-side utility sidebar&rdquo;. Only shorter.</p>
+<hr>
+<h2 id="1-scope-and-vocabulary">1. Scope and vocabulary</h2>
+<h3 id="11-platform-model">1.1 Platform model</h3>
+<p>semiplane ships <strong>one responsive web application</strong> from the one Go binary. Laptop, phone and
+television are browser contexts of the same URLs, not separate clients.</p>
+<ul>
+<li>No iOS, Android or tvOS codebase. <strong>This does not amend the plan&rsquo;s out-of-scope list</strong> — a
+responsive surface is not a &ldquo;mobile client&rdquo;, and plan <code>§1</code> stands.</li>
+<li>Layout adapts on viewport geometry and input capability, never device identity. The one
+exception is the TV signal (<code>§3.3</code>), and it is user-overridable.</li>
+<li>Tailwind v4 (pinned by the plan) is the delivery vehicle, but every token here is a CSS
+custom property, so the spec survives a tooling change.</li>
+</ul>
+<h3 id="12-vocabulary--the-plan-owns-the-terms-this-section-owns-the-labels">1.2 Vocabulary — the plan owns the terms, this section owns the labels</h3>
+<p>Plan <code>§2.1</code> fixed the domain vocabulary. That table is authoritative and is not restated
+here. What follows is the <em>interface label</em> for each concept, and the labels the interface
+must never invent.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Domain term (plan <code>§2.1</code>)</th>
+					<th>UI label</th>
+					<th>Note</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>campaign</td>
+					<td>Campaign</td>
+					<td>unchanged</td>
+			</tr>
+			<tr>
+					<td>page</td>
+					<td>Page</td>
+					<td>unchanged</td>
+			</tr>
+			<tr>
+					<td>game object</td>
+					<td>its registered kind label</td>
+					<td><code>kind</code> is <strong>registry-backed</strong> (plan <code>§4.1</code>, <code>§10.2.1</code>), so the label is data, not a string in this document — see <code>§4.11</code></td>
+			</tr>
+			<tr>
+					<td>ruleset</td>
+					<td>&ldquo;System: D&amp;D 5e 2024&rdquo; + house-rule count</td>
+					<td>shown in the campaign rail and header of <code>/play</code></td>
+			</tr>
+			<tr>
+					<td>placement</td>
+					<td>the kind&rsquo;s label — a <code>token</code> placement is a <strong>Token</strong></td>
+					<td>the map and the token list both say <em>Token</em>; a <code>scene</code> placement says <em>Scene</em></td>
+			</tr>
+			<tr>
+					<td>campaign state</td>
+					<td>never surfaced</td>
+					<td></td>
+			</tr>
+			<tr>
+					<td>auth session</td>
+					<td>never surfaced</td>
+					<td></td>
+			</tr>
+	</tbody>
+</table>
+<table>
+	<thead>
+			<tr>
+					<th>Interface concept</th>
+					<th>UI label</th>
+					<th>Note</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>the live tabletop</td>
+					<td><strong>Table</strong></td>
+					<td>the plan uses &ldquo;table&rdquo; in <code>§5.6.1</code>. <strong>Not a domain entity</strong> — a campaign has at most one, so there is no list of them</td>
+			</tr>
+			<tr>
+					<td>playing</td>
+					<td>Play</td>
+					<td>the route is <code>/c/{slug}/play</code>; the nav entry is &ldquo;Table&rdquo;</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Hard rules</strong></p>
+<ul>
+<li><strong>The strings &ldquo;world&rdquo; and &ldquo;session&rdquo; appear nowhere in the interface.</strong> Neither entity
+exists any more. This includes <code>aria-label</code>s, <code>title</code>s, empty states, and error copy. A
+leftover is a bug, and a grep for them is a test (<code>§10.2</code>).</li>
+<li>There is no Games list in the left nav. There is one Table per campaign, so the entry is a
+single link, not a list.</li>
+<li><code>plan §7.1</code> still emits <code>&quot;world_time&quot;</code> in the clock frame. That is a <strong>field name in the
+protocol</strong>, not a UI string; the UI calls it the game clock.</li>
+</ul>
+<h3 id="13-tv-capability">1.3 TV capability</h3>
+<p>The TV is a <strong>table display</strong>. It opens the same <code>/c/{slug}/play</code> as every other client and
+sends <strong>view intents only</strong>.</p>
+<table>
+	<thead>
+			<tr>
+					<th>TV may</th>
+					<th>TV may not</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>pan, zoom, reset view</td>
+					<td>edit content, or open the editor</td>
+			</tr>
+			<tr>
+					<td>spotlight or focus a placement</td>
+					<td>resolve combat, set HP, or reveal a secret</td>
+			</tr>
+			<tr>
+					<td>cycle map layers, toggle the contrast overlay</td>
+					<td>invite, remove, or change roles</td>
+			</tr>
+			<tr>
+					<td>page the chat and dice logs</td>
+					<td>sign in, sign out, manage the instance</td>
+			</tr>
+			<tr>
+					<td>disconnect and reconnect</td>
+					<td>own any authoritative state</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>TV capability is orthogonal to permission.</strong> A GM who signs in on the TV sees the
+unredacted variant of every page, exactly as on a laptop. What the TV cannot do is <em>perform</em>
+a disclosure — a reveal is a GM action with its own audit row (<code>§4.10</code>), and a display device
+is not a GM console. The row above says &ldquo;cannot reveal&rdquo;, not &ldquo;cannot see&rdquo;.</p>
+<p>This preserves the server-authoritative model in plan <code>§7.2</code>: a shared-room display that
+cannot mutate state cannot desynchronise a table, and a focus ring stuck on a TV cannot strand
+a room mid-combat.</p>
+<h3 id="14-out-of-scope">1.4 Out of scope</h3>
+<p>Native clients. Offline-first editing. Right-to-left and vertical writing modes. <strong>Print
+stylesheets entirely.</strong> Human screen-reader audit — <code>§10</code> automates structure, not perception.</p>
+<p>Plan <code>§16.1</code> classifies this spec as a blocker on UI work and <strong>not</strong> on plan phases 1–9 or
+11. Nothing in this document blocks the backend.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Record the label table in <code>§1.2</code> in <code>AGENTS.md</code>; add &ldquo;no <code>world</code>, no <code>session</code> in any user-visible string&rdquo; to the review checklist.</li>
+<li><input disabled="" type="checkbox"> Add a grep-based test asserting neither word appears in rendered HTML.</li>
+</ul>
+<hr>
+<h2 id="2-form-factors-and-the-viewport-matrix">2. Form factors and the viewport matrix</h2>
+<p>The primary target is a <strong>14-inch laptop</strong> — height-constrained, and the whole desktop layout
+is budgeted against it:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Property</th>
+					<th>14&quot; Windows</th>
+					<th>14&quot; MacBook</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>CSS viewport, maximised</td>
+					<td>1366 × 768</td>
+					<td>1512 × 982 (scaled)</td>
+			</tr>
+			<tr>
+					<td>Device pixel ratio</td>
+					<td>1</td>
+					<td>2</td>
+			</tr>
+			<tr>
+					<td>Height lost to browser chrome</td>
+					<td>80–100</td>
+					<td>90–110</td>
+			</tr>
+			<tr>
+					<td>Centre height after header + footer</td>
+					<td><strong>~580–600</strong></td>
+					<td><strong>~790</strong></td>
+			</tr>
+	</tbody>
+</table>
+<p>Verification matrix — every row is a design and test obligation:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Form factor</th>
+					<th>Viewport (CSS px)</th>
+					<th>Tier</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Small phone portrait</td>
+					<td>320 × 568</td>
+					<td>compact</td>
+			</tr>
+			<tr>
+					<td>Phone portrait</td>
+					<td>360 × 640, 390 × 844</td>
+					<td>compact</td>
+			</tr>
+			<tr>
+					<td>Phone landscape</td>
+					<td>844 × 390</td>
+					<td>compact-short</td>
+			</tr>
+			<tr>
+					<td>Tablet portrait</td>
+					<td>768 × 1024</td>
+					<td>compact</td>
+			</tr>
+			<tr>
+					<td>Tablet landscape</td>
+					<td>1024 × 768</td>
+					<td>medium</td>
+			</tr>
+			<tr>
+					<td><strong>14&quot; laptop (primary)</strong></td>
+					<td><strong>1366 × 768, 1440 × 900</strong></td>
+					<td><strong>large</strong></td>
+			</tr>
+			<tr>
+					<td>14&quot; MacBook</td>
+					<td>1512 × 982</td>
+					<td>large</td>
+			</tr>
+			<tr>
+					<td>Desktop</td>
+					<td>1280 × 800, 1920 × 1080</td>
+					<td>large / wide</td>
+			</tr>
+			<tr>
+					<td>Ultrawide</td>
+					<td>2560 × 1080, 3440 × 1440</td>
+					<td>wide</td>
+			</tr>
+			<tr>
+					<td>TV 1080p</td>
+					<td>1920 × 1080, DPR 1–3</td>
+					<td>tv</td>
+			</tr>
+			<tr>
+					<td>TV 4K reporting native CSS px</td>
+					<td>3840 × 2160</td>
+					<td>tv-wide</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Record this matrix as a fixture in the viewport sweep test (<code>§10.3</code>).</li>
+</ul>
+<hr>
+<h2 id="3-breakpoints-and-how-the-layout-shifts">3. Breakpoints and how the layout shifts</h2>
+<h3 id="31-width-tiers">3.1 Width tiers</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Token</th>
+					<th>Value</th>
+					<th>px</th>
+					<th>Tier</th>
+					<th>Left nav</th>
+					<th>Right rail</th>
+					<th>Footer</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>base</td>
+					<td>—</td>
+					<td>0</td>
+					<td>compact</td>
+					<td>drawer from left, <code>min(18rem, 85vw)</code></td>
+					<td><strong>bottom sheet</strong>, ≤70dvh †</td>
+					<td>fixed bottom bar 3.5rem ‡</td>
+			</tr>
+			<tr>
+					<td><code>--breakpoint-sm</code></td>
+					<td>40rem</td>
+					<td>640</td>
+					<td>compact</td>
+					<td>drawer</td>
+					<td><strong>bottom sheet</strong> †</td>
+					<td>bottom bar ‡</td>
+			</tr>
+			<tr>
+					<td><code>--breakpoint-md</code></td>
+					<td>48rem</td>
+					<td>768</td>
+					<td>compact-short</td>
+					<td>3.5rem icon rail, landscape only</td>
+					<td>bottom sheet †</td>
+					<td>none</td>
+			</tr>
+			<tr>
+					<td><code>--breakpoint-lg</code></td>
+					<td>64rem</td>
+					<td>1024</td>
+					<td>medium</td>
+					<td>13rem persistent</td>
+					<td>drawer from right + scrim, 22rem</td>
+					<td>inline 2rem</td>
+			</tr>
+			<tr>
+					<td><code>--breakpoint-xl</code></td>
+					<td>80rem</td>
+					<td>1280</td>
+					<td><strong>large (primary)</strong></td>
+					<td>15rem persistent</td>
+					<td>20rem persistent</td>
+					<td>inline 2rem</td>
+			</tr>
+			<tr>
+					<td><code>--breakpoint-2xl</code></td>
+					<td>96rem</td>
+					<td>1536</td>
+					<td>wide</td>
+					<td>15rem persistent</td>
+					<td>22rem persistent</td>
+					<td>inline 2rem</td>
+			</tr>
+	</tbody>
+</table>
+<p>† On <code>/play</code> at compact the rail sheet anchors <strong>above</strong> the action bar, never over it
+(<code>§4.9</code>). ‡ On <code>/play</code> at compact the bottom bar is the player&rsquo;s action bar, not the nav
+destinations (<code>§4.9</code>).</p>
+<p><strong>The right rail is a bottom sheet below 640px, not a side drawer.</strong> A 20rem (320px) drawer
+and an 18rem (288px) left drawer cannot coexist on a 360px screen — together they exceed it by
+250px — and a single 320px drawer on a 360px screen leaves a 40px sliver and no way to see
+the page behind the scrim. Below 640px <strong>both</strong> rails are bottom sheets and the two side
+edges go unused.</p>
+<p>Three rules govern the shift:</p>
+<ol>
+<li><strong>The right rail persists last and collapses first.</strong> It is the utility panel; on <code>/play</code>
+it holds the initiative tracker, which a GM needs <em>glanceable</em>. It persists from 1280, the
+breakpoint chosen so both 1366 and 1512 get three columns.</li>
+<li><strong>Rails become sheets, never icon rails, below 1024</strong> — except short-landscape (<code>§3.5</code>),
+where vertical space forces an icon rail.</li>
+<li><strong>No tier is a scaled version of another.</strong> Each re-decides what persists, what becomes a
+sheet, and what the primary action is. <code>transform: scale()</code> is prohibited (<code>§5.3</code>).</li>
+</ol>
+<h3 id="32-component-behaviour-per-tier">3.2 Component behaviour per tier</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Component</th>
+					<th>compact (&lt;640)</th>
+					<th>compact-short</th>
+					<th>medium (1024–1279)</th>
+					<th>large (≥1280)</th>
+					<th>wide (≥1536)</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Header</td>
+					<td>3.5rem: menu, title, search, account</td>
+					<td>2.5rem: menu, title, search</td>
+					<td>3.5rem + inline search</td>
+					<td>3.5rem full</td>
+					<td>4rem, wider field</td>
+			</tr>
+			<tr>
+					<td>Left nav</td>
+					<td>bottom sheet 18rem</td>
+					<td>3.5rem icon rail</td>
+					<td>13rem persistent</td>
+					<td>15rem, user-collapsible to 3.5rem</td>
+					<td>15rem</td>
+			</tr>
+			<tr>
+					<td>Centre</td>
+					<td>full width, page scrolls</td>
+					<td>flex, scrolled region</td>
+					<td>~816px, <code>min(100%, 68ch)</code></td>
+					<td>flex, <code>min(100%, 68ch)</code></td>
+					<td>flex, <code>min(100%, 72ch)</code></td>
+			</tr>
+			<tr>
+					<td>Right rail</td>
+					<td>bottom sheet ≤70dvh</td>
+					<td>bottom sheet ≤85dvh</td>
+					<td>right drawer 22rem + scrim</td>
+					<td>20rem persistent, independent scroll</td>
+					<td>22rem persistent</td>
+			</tr>
+			<tr>
+					<td>Footer</td>
+					<td>fixed bottom bar + <code>safe-area-inset-bottom</code></td>
+					<td>none</td>
+					<td>inline 2rem</td>
+					<td>inline 2rem</td>
+					<td>inline 2rem</td>
+			</tr>
+			<tr>
+					<td>Shell scroll</td>
+					<td>document-scrolled</td>
+					<td>shell-locked</td>
+					<td>shell-locked</td>
+					<td>shell-locked</td>
+					<td>shell-locked</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Height budget at 1366 × 768:</strong> header 56 + footer 32 = 88, leaving ~580px of centre.
+Centre width 1366 − 240 − 320 = 806px. The article column is <code>min(100%, 68ch)</code> ≈ 636px at a
+17px base, so ~85px of gutter per side — <strong>the leftover is gutter, never wider prose.</strong> The
+map takes the full 806px, letterboxed to its own aspect ratio rather than distorted.</p>
+<h3 id="33-tv-is-a-mode-not-a-width-band">3.3 TV is a mode, not a width band</h3>
+<p>A 55&quot; television and a 12.9&quot; tablet in landscape are <strong>indistinguishable to CSS</strong>: coarse
+pointer, never hover, wider than 1280px. They need opposite layouts — 10-foot type at 3m
+versus 2-foot type at 30cm.</p>
+<p><strong>Detection, in priority order:</strong></p>
+<ol>
+<li><code>?ui=tv</code> (or <code>?ui=laptop</code>, <code>?ui=phone</code>) — wins, and is bookmarkable.</li>
+<li>The <code>sp_ui</code> cookie — the persisted choice, set by the on-screen mode switcher.</li>
+<li>A narrow user-agent <strong>hint allowlist</strong> — <code>SmartTV</code>, <code>Tizen</code>, <code>webOS</code>, <code>HbbTV</code>, <code>Web0S</code>,
+<code>NetCast</code>, <code>AppleTV</code> — used <strong>only</strong> for the first-visit default, before a cookie exists.
+It never overrides (1) or (2).</li>
+<li>Otherwise media queries alone → laptop layout.</li>
+</ol>
+<p><code>prefers-reduced-motion</code>, <code>prefers-contrast</code> and <code>forced-colors</code> are honoured in every mode
+and never used to infer a form factor.</p>
+<p><strong>Accepted failure mode:</strong> an unrecognised TV browser shows the laptop layout until someone
+flips the switcher — one remote press, persisted thereafter. Correct trade against a stale UA
+list, and against a tablet misclassified as a television.</p>
+<h3 id="34-tv-layout">3.4 TV layout</h3>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-css" data-lang="css"><span class="line"><span class="cl"><span class="c">/* [data-ui=&#34;tv&#34;] */</span>
+</span></span><span class="line"><span class="cl"><span class="p">.</span><span class="nc">shell</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-areas</span><span class="p">:</span> <span class="s2">&#34;header header&#34;</span> <span class="s2">&#34;main rail&#34;</span> <span class="s2">&#34;footer footer&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-rows</span><span class="p">:</span> <span class="mi">5</span><span class="kt">rem</span> <span class="nf">minmax</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="n">fr</span><span class="p">)</span> <span class="mi">3</span><span class="kt">rem</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-columns</span><span class="p">:</span> <span class="nf">minmax</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="n">fr</span><span class="p">)</span> <span class="mi">26</span><span class="kt">rem</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><ul>
+<li><strong>No left rail.</strong> D-pad traversal of a 40-entry wiki tree is punishing. Navigation becomes
+a horizontal focusable strip in the header (Home · Wiki · Search · Table · Settings) plus a
+campaign tile grid on the home route.</li>
+<li>Map centre ≈1504 × 968; right rail 26rem.</li>
+<li>At 3840 CSS px (<code>--breakpoint-tv-wide: 137.5rem</code>), <code>--type-scale</code> rises to 1.75 and
+<code>--rail-right</code> to 30rem. The centre is capped, never allowed to run to the raw edge.</li>
+<li>4K TVs reporting DPR 2 see a 1920 × 1080 CSS viewport and are unaffected.</li>
+</ul>
+<h3 id="35-orientation">3.5 Orientation</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Case</th>
+					<th>Rule</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Phone portrait → landscape</td>
+					<td>Rails stay bottom sheets. Centre scroll position and any unsaved editor buffer survive.</td>
+			</tr>
+			<tr>
+					<td>Short landscape (<code>max-height: 480px</code>)</td>
+					<td>Header collapses to 2.5rem, bottom bar removed entirely, left nav becomes a permanent 3.5rem icon rail. A 390px-tall viewport cannot afford 56 + 56 of chrome.</td>
+			</tr>
+			<tr>
+					<td>Tablet landscape</td>
+					<td>Treated as <code>medium</code>.</td>
+			</tr>
+			<tr>
+					<td>Laptop resize across a breakpoint</td>
+					<td>Reflows with no modal, no reload, no loss of editor buffer.</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="36-shell-scroll-model">3.6 Shell scroll model</h3>
+<p>At <code>medium</code> and above the shell is <strong>viewport-locked</strong>: <code>height: 100dvh; overflow: hidden</code> on
+the grid, <code>overflow-y: auto</code> on the centre and each rail, <code>overscroll-behavior: contain</code> so a
+rail reaching its end does not chain-scroll the page.</p>
+<p>At <code>compact</code> the shell is <strong>document-scrolled</strong> — one page scroll, because a nested scroll
+region inside a mobile viewport fights momentum scrolling and the URL bar. Bottom-bar space
+is reserved with <code>padding-block-end</code>.</p>
+<p><code>dvh</code> throughout, never bare <code>vh</code>; <code>vh</code> appears only as a fallback declaration preceding
+<code>dvh</code>.</p>
+<h3 id="37-two-root-attributes-resolved-before-first-paint">3.7 Two root attributes, resolved before first paint</h3>
+<p>The whole responsive system hangs off two root attributes:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Attribute</th>
+					<th>Values</th>
+					<th>Set by</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>data-theme</code></td>
+					<td><code>light</code> | <code>dark</code></td>
+					<td>the inline head script, from cookie or <code>prefers-color-scheme</code></td>
+			</tr>
+			<tr>
+					<td><code>data-ui</code></td>
+					<td><code>compact</code> | <code>compact-short</code> | <code>medium</code> | <code>large</code> | <code>wide</code> | <code>tv</code> | <code>tv-wide</code></td>
+					<td>the same script, from cookie, <code>?ui=</code>, UA hint, then media queries</td>
+			</tr>
+	</tbody>
+</table>
+<p>One blocking inline script in <code>&lt;head&gt;</code>, before the first paint, resolves both. Consequences,
+all deliberate:</p>
+<ul>
+<li><strong>The document still does not vary by <code>sp_ui</code>.</strong> Therefore <strong>no <code>Vary: Cookie</code> is emitted
+and none is needed.</strong> This is the load-bearing conclusion of the earlier revision and it
+survives: plan <code>§5.5</code>&rsquo;s &ldquo;<code>ETag</code> = the same hash&rdquo; is about the <em>content</em> hash, and the
+content hash is not a function of a theme preference.</li>
+<li>All tiers and both themes are CSS variants of one canonical DOM, so tiers cannot drift.</li>
+<li>A no-JS visitor gets the OS polarity from <code>&lt;meta name=&quot;color-scheme&quot; content=&quot;light dark&quot;&gt;</code>
+and <code>color-scheme: light dark</code> on <code>:root</code>, losing the cookie override but not coherence.</li>
+<li>This is the only JavaScript on the critical path.</li>
+</ul>
+<p><strong>What the document <em>does</em> vary by</strong> — corrected against plan <code>§5.5</code> and <code>§5.6</code>:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Varies by</th>
+					<th>Why</th>
+					<th>Consequence</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>access tier</td>
+					<td>chrome differs per request (plan <code>§6.5</code>)</td>
+					<td>already true in revision 1</td>
+			</tr>
+			<tr>
+					<td><code>include_secrets</code></td>
+					<td>two body variants from one <code>content_hash</code> (plan <code>§5.5</code>)</td>
+					<td><strong>the body is no longer permission-neutral.</strong> See the <code>ETag</code> and cache rules in <code>§6.6</code> — this is a security boundary, not a caching nicety</td>
+			</tr>
+			<tr>
+					<td>campaign</td>
+					<td>each campaign may serve its own theme stylesheet (<code>§4.12</code>)</td>
+					<td><code>&lt;link&gt;</code> to <code>/c/{slug}/theme.css</code>, server-rendered</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Declare every layout constant as a custom property so the grid and component queries read one source.</li>
+<li><input disabled="" type="checkbox"> Write the inline head resolver: <code>sp_ui</code>, then <code>?ui=</code>, then the UA hint list, then media queries; writes both attributes; writes the cookie when <code>?ui=</code> or the switcher is used. Inline, synchronous, under ~1KB.</li>
+<li><input disabled="" type="checkbox"> Emit <code>&lt;meta name=&quot;color-scheme&quot; content=&quot;light dark&quot;&gt;</code> and <code>color-scheme</code> in the root token block.</li>
+<li><input disabled="" type="checkbox"> Serve the below-640px rails as bottom sheets, re-parenting on resize rather than re-rendering.</li>
+<li><input disabled="" type="checkbox"> Assert in the viewport sweep that no horizontal scrollbar exists at 320px and both sheets leave ≥40px of context.</li>
+</ul>
+<hr>
+<h2 id="4-the-shell-five-structural-components">4. The shell: five structural components</h2>
+<pre tabindex="0"><code>┌───────────────────────────────────────────────────────────────┐
+│ header   banner — campaign · search · connection · theme · user │  56px
+├──────────────┬─────────────────────────────┬──────────────────┤
+│ nav          │ main                        │ aside            │
+│ Campaign     │  route slot: article | map |  complementary    │
+│ Wiki         │  editor | search | tables   │  route slot      │  ~580px
+│ Table        │                             │  TOC · table     │
+│ Admin        │                             │  panel · facets  │
+├──────────────┴─────────────────────────────┴──────────────────┤
+│ footer  contentinfo — version · status · latency · degraded    │  32px
+└───────────────────────────────────────────────────────────────┘
+</code></pre><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-css" data-lang="css"><span class="line"><span class="cl"><span class="p">.</span><span class="nc">shell</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="k">display</span><span class="p">:</span> <span class="k">grid</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">height</span><span class="p">:</span> <span class="mi">100</span><span class="n">dvh</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">overflow</span><span class="p">:</span> <span class="kc">hidden</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-areas</span><span class="p">:</span> <span class="s2">&#34;header header header&#34;</span> <span class="s2">&#34;nav main rail&#34;</span> <span class="s2">&#34;footer footer footer&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-rows</span><span class="p">:</span> <span class="nf">var</span><span class="p">(</span><span class="o">--</span><span class="n">header</span><span class="o">-</span><span class="n">h</span><span class="p">)</span> <span class="nf">minmax</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="n">fr</span><span class="p">)</span> <span class="nf">var</span><span class="p">(</span><span class="o">--</span><span class="n">footer</span><span class="o">-</span><span class="n">h</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-columns</span><span class="p">:</span> <span class="nf">var</span><span class="p">(</span><span class="o">--</span><span class="n">rail</span><span class="o">-</span><span class="kc">left</span><span class="p">)</span> <span class="nf">minmax</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="n">fr</span><span class="p">)</span> <span class="nf">var</span><span class="p">(</span><span class="o">--</span><span class="n">rail</span><span class="o">-</span><span class="kc">right</span><span class="p">);</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p><code>minmax(0, 1fr)</code> is load-bearing: a plain <code>1fr</code> track blows out to <code>min-content</code> on any long
+unbroken string in a heading. <code>grid-template-areas</code> is used rather than <code>subgrid</code>; no
+load-bearing rule uses <code>:has()</code> or container queries, because old TV browsers are a supported
+target (<code>§9</code>).</p>
+<h3 id="41-header--rolebanner">4.1 Header — <code>role=&quot;banner&quot;</code></h3>
+<table>
+	<thead>
+			<tr>
+					<th>Zone</th>
+					<th>Contents</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Left</td>
+					<td>Menu button (compact only); campaign switcher; mode switcher</td>
+			</tr>
+			<tr>
+					<td>Centre</td>
+					<td><code>&lt;form role=&quot;search&quot;&gt;</code> with <code>&lt;input type=&quot;search&quot; name=&quot;q&quot;&gt;</code>, submitting to <code>/c/{slug}/search</code></td>
+			</tr>
+			<tr>
+					<td>Right</td>
+					<td>Connection indicator (live routes only); theme switcher; account menu</td>
+			</tr>
+	</tbody>
+</table>
+<ul>
+<li>Campaign switcher is a <code>&lt;button aria-haspopup=&quot;menu&quot;&gt;</code> + <code>role=&quot;menu&quot;</code> popup on pointer
+tiers, a native <code>&lt;select&gt;</code> on TV.</li>
+<li>The <strong>mode switcher</strong> (<code>§3.3</code>) is a <code>&lt;select&gt;</code> listing auto / laptop / phone / TV; on TV it
+is the first tile on the home grid, because a remote cannot open a popup menu reliably.</li>
+<li>Theme switcher is a <strong>single button cycling auto → light → dark</strong>, with <code>aria-pressed</code> and a
+label naming the <em>result</em> (&ldquo;Theme: auto&rdquo;), never the action.</li>
+<li>Connection indicator: <code>role=&quot;status&quot;</code>, <code>aria-live=&quot;polite&quot;</code>, and a <strong>text</strong> label
+(&ldquo;Live&rdquo;, &ldquo;Reconnecting&rdquo;, &ldquo;Offline&rdquo;) — never colour alone.</li>
+<li>The <strong>skip link is the first focusable element in the document</strong> (<code>§7.2</code>).</li>
+</ul>
+<h3 id="42-footer--rolecontentinfo">4.2 Footer — <code>role=&quot;contentinfo&quot;</code></h3>
+<p>Exactly one per page, <code>/play</code> included. A deliberate adaptation of &ldquo;persistent footer&rdquo;, not a
+removal: at <code>compact</code> it <em>becomes</em> the primary navigation, because a thumb cannot reach the top
+of an 844px screen.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Content</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Desktop</td>
+					<td>version/commit, instance status link, live latency, degraded-campaign warning</td>
+			</tr>
+			<tr>
+					<td>Compact</td>
+					<td>fixed bottom bar, <code>3.5rem</code> + <code>env(safe-area-inset-bottom)</code>, <code>role=&quot;navigation&quot;</code>, <code>aria-label=&quot;Primary&quot;</code>: Wiki · Search · Table · More. On <code>/play</code> the four are <strong>replaced by the player&rsquo;s action bar</strong> (<code>§4.9</code>).</td>
+			</tr>
+			<tr>
+					<td><code>/play</code></td>
+					<td>game clock, connection state, &ldquo;Leave table&rdquo;</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Instance status</strong> is a footer link on every tier, not just <code>/admin</code>. Plan <code>§13.2</code> names four
+subsystems that fail silently by default — a watcher that stops watching, a cache serving a
+stale tier, a reconciliation loop that quits, a hub that leaks connections. A GM needs to see
+<code>secret.reconcile_capped</code> without a shell. The status view renders the counters <code>/readyz</code>
+exposes as JSON as a table, using the same component as <code>/admin</code> (<code>§7.8</code>).</p>
+<p>The degraded-campaign banner lives here permanently, not as a toast: a campaign whose content
+root has gone missing is an ongoing condition, not an event.</p>
+<h3 id="43-left-nav--rolenavigation-aria-labelcampaign">4.3 Left nav — <code>role=&quot;navigation&quot;</code>, <code>aria-label=&quot;Campaign&quot;</code></h3>
+<p>Sections in order: <strong>Campaigns</strong>, <strong>Wiki</strong>, <strong>Table</strong>, <strong>Search</strong>, <strong>Admin</strong>.</p>
+<ul>
+<li><strong>Table is a single link, not a list.</strong> A campaign has at most one live tabletop
+(plan <code>§2.1</code>), so there is nothing to enumerate. The link is present for members and absent
+for anonymous readers.</li>
+<li><strong>Edit affordances are absent, not disabled.</strong> Plan <code>§2.2</code> settles roles as
+<code>gm | player</code> with GM-only content editing. A <code>player</code> and an <code>anonymous</code> viewer get no
+&ldquo;New page&rdquo;, no edit link, and no <code>kind</code>-creation control anywhere in the DOM. This is
+<code>§4.5</code>&rsquo;s server-side-absence rule made concrete.</li>
+<li><strong>Nested lists of links, not <code>role=&quot;tree&quot;</code>.</strong> A tree pattern obliges roving tabindex,
+arrow-key semantics and typeahead — machinery that buys nothing for a server-rendered list
+changing on every navigation, and that would need re-implementing for every disclosure.
+Nested <code>&lt;ul&gt;</code> inside a labelled <code>nav</code> makes every item a tab stop: predictable, robust, no
+JavaScript. The cost is a long tab sequence, mitigated by the skip link and capped depth.</li>
+<li>Folder expand/collapse is a <code>&lt;button aria-expanded&gt;</code> on the row, not a tree node.</li>
+<li><strong>Game-object and kind labels are registry-driven, not hard-coded</strong> (<code>§4.11</code>). The wiki tree
+renders a <code>kind</code> badge whose label comes from the registry, so a UI plugin registering a new
+kind needs no shell change.</li>
+<li>User may collapse to a 3.5rem icon rail, persisted in <code>sp_ui</code>. At ≤1279 it is not
+user-collapsible — no room for a collapsed state that still works. Each icon link keeps its
+full name in <code>aria-label</code>; the tooltip is <code>aria-hidden</code> decoration.</li>
+</ul>
+<h3 id="44-centre--rolemain-one-h1-per-page">4.4 Centre — <code>role=&quot;main&quot;</code>, one <code>&lt;h1&gt;</code> per page</h3>
+<p>The centre is a <strong>slot</strong>. Each route declares what it puts there. This contract is what keeps
+five structural components from becoming five special cases.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Route</th>
+					<th>Centre</th>
+					<th>Right rail (<code>complementary</code>)</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>/</code></td>
+					<td>campaign list, or first-run empty state (<code>§4.7</code>)</td>
+					<td>instance status: degraded campaigns, version</td>
+			</tr>
+			<tr>
+					<td><code>/login</code></td>
+					<td>credentials form, centred</td>
+					<td>instance identity, version, degraded warning</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}</code></td>
+					<td>campaign overview, recent changes</td>
+					<td><strong>system + house rules</strong>, roster, who is online</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/wiki/{path...}</code></td>
+					<td>rendered page, secrets redacted for non-GM (<code>§4.10</code>)</td>
+					<td>page outline (h2/h3), metadata, sibling pages, revisions link</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/edit/{path...}</code></td>
+					<td><strong>GM only</strong> — editor, 412 diff in the preview slot (<code>§4.8</code>)</td>
+					<td>outline, external-change indicator, save state, revision list</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/secrets/{path...}</code></td>
+					<td><strong>GM only</strong> — reveal/unreveal, <code>If-Match</code> (plan <code>§5.6</code>); no page of its own, a POST target</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/search</code></td>
+					<td>result list, submit-to-navigate (<code>§7.5</code>)</td>
+					<td>facets, saved searches</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/settings</code></td>
+					<td><strong>GM only</strong> — tabs: Rules · Members · System</td>
+					<td>instance status, audit entries</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/status</code></td>
+					<td>instance status table (plan <code>§13.2</code>)</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/play</code></td>
+					<td>PixiJS map; <strong>read-only readout at compact</strong> (<code>§4.9</code>)</td>
+					<td><strong>tabbed</strong>: Tokens · Initiative · Chat · Dice</td>
+			</tr>
+	</tbody>
+</table>
+<p><code>/c/{slug}/settings</code> is an addition: the plan&rsquo;s <code>§9</code> enumerates content routes, not the app&rsquo;s
+whole route surface (it has no <code>/login</code> either). House rules need a GM surface — plan <code>§10.5</code>
+gives them ordering and conflict resolution, and a campaign with unorderable house rules has no
+explanation anywhere else.</p>
+<h3 id="45-right-rail--rolecomplementary-aria-labelutilities">4.5 Right rail — <code>role=&quot;complementary&quot;</code>, <code>aria-label=&quot;Utilities&quot;</code></h3>
+<p>Persistent at ≥1280, right drawer at 640–1279, bottom sheet below 640. As a sheet or drawer it
+is modal: focus trapped, <code>Escape</code> closes, focus returns to the trigger, content behind is
+<code>inert</code>.</p>
+<p><strong>Server-rendered, not client-filtered: a tier&rsquo;s panels are absent from the DOM for viewers
+below that tier, never CSS-hidden.</strong> Plan <code>§6.5</code> lets chrome vary per request, which makes
+server-side absence simpler <em>and</em> safer than a client role check — a hidden GM panel is one
+CSS rule away from being visible.</p>
+<p>The same rule, harder, applies to secrets: plan <code>§5.6.1</code> requires the body to be <strong>absent</strong>,
+not <code>display:none</code>, not commented out, not a class. The UI honours that literally (<code>§4.10</code>).</p>
+<h3 id="46-pre-campaign-routes">4.6 Pre-campaign routes</h3>
+<p>Before a campaign exists, <strong>the left nav is absent; header, centre, right rail and footer all
+render.</strong> The left nav is entirely campaign-scoped and its content model is undefined with zero
+campaigns. The persistent header/footer requirement is never violated, and the right rail
+still earns its place: instance identity, version, degraded warning.</p>
+<p><code>/</code>, <code>/login</code> and first-run use <code>&quot;header header&quot; &quot;main rail&quot; &quot;footer footer&quot;</code>.</p>
+<p>Note that a user may exist with zero campaigns — plan <code>§13.1</code> provisions the first user via
+<code>semiplane admin create</code> before any browser session. First-run is a <em>campaign</em> empty state,
+not a <em>user</em> one.</p>
+<h3 id="47-empty-error-and-degraded-states">4.7 Empty, error and degraded states</h3>
+<p>Every one is a designed surface using the full shell.</p>
+<table>
+	<thead>
+			<tr>
+					<th>State</th>
+					<th>Centre</th>
+					<th>Right rail</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>First run, zero campaigns</td>
+					<td>one primary CTA, &ldquo;Register your first campaign&rdquo;, two lines of explanation, a docs link. Not a marketing page — this is a self-hosted tool.</td>
+					<td>instance identity, version</td>
+			</tr>
+			<tr>
+					<td>Campaign with no pages</td>
+					<td>&ldquo;This campaign has no pages yet&rdquo; + GM-only &ldquo;Create a page&rdquo;</td>
+					<td>roster, empty outline</td>
+			</tr>
+			<tr>
+					<td>Search, no query</td>
+					<td>search field, focused, with a hint</td>
+					<td>facets, empty</td>
+			</tr>
+			<tr>
+					<td>Search, no results</td>
+					<td>&ldquo;No results for <em>q</em>&rdquo;, query echoed back</td>
+					<td>facets, empty</td>
+			</tr>
+			<tr>
+					<td><code>403</code></td>
+					<td>&ldquo;You do not have access to this campaign&rdquo; + the campaign name, so the message is specific</td>
+					<td>empty</td>
+			</tr>
+			<tr>
+					<td><code>404</code></td>
+					<td>&ldquo;No page at <em>path</em>&rdquo; + a link to the campaign root, never a raw server path echo</td>
+					<td>empty</td>
+			</tr>
+			<tr>
+					<td><code>412</code></td>
+					<td>not an error page. The conflict diff (<code>§4.8</code>) in the editor&rsquo;s preview slot</td>
+					<td>unchanged</td>
+			</tr>
+			<tr>
+					<td><code>500</code></td>
+					<td>request ID from the RequestID middleware (plan <code>§3</code>)</td>
+					<td>empty</td>
+			</tr>
+			<tr>
+					<td><strong>Unknown <code>system_id</code></strong> (plan <code>§10.8</code>)</td>
+					<td>the wiki <strong>still serves</strong>. The Table link is absent, not disabled, and the campaign overview carries a persistent notice: &ldquo;This campaign&rsquo;s gameplay system (ID) is not installed. The wiki is unaffected.&rdquo;</td>
+					<td>system panel shows the missing ID</td>
+			</tr>
+			<tr>
+					<td><strong><code>ruleset_version</code> drift</strong> (plan <code>§10.8</code>, <code>§16.5</code>)</td>
+					<td>an <code>role=&quot;alert&quot;</code> block on <code>/play</code>: &ldquo;This table was last played under a different rules version. Resuming is blocked.&rdquo; with a link to the campaign&rsquo;s Rules tab. Default is refuse (<code>§16.5</code>) and the UI states the refusal as a decision, not an error.</td>
+					<td>system panel shows both versions</td>
+			</tr>
+	</tbody>
+</table>
+<p>Both new states are <code>assertive</code>-adjacent: a GM who expected a playable table must be told
+plainly. Neither is a toast — both are conditions that persist until someone fixes them.</p>
+<p>A <code>404</code> and a private campaign must not be distinguishable to an anonymous user, or the error
+page becomes a campaign-existence oracle. Both return the same body shape.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Create the shell template with the five landmarks, the two-column pre-campaign variant, and <code>centre</code> / <code>rail</code> slots.</li>
+<li><input disabled="" type="checkbox"> Define the slot contract as a Go value (<code>domain.PageLayout{ Centre, Rail }</code>) so handlers declare layout without touching markup; <code>domain</code> stays free of I/O.</li>
+<li><input disabled="" type="checkbox"> Build header, footer, left nav and right rail as separate templ components taking a <code>domain.ShellPrefs</code>.</li>
+<li><input disabled="" type="checkbox"> Add <code>?ui=</code> handling and the inline resolver.</li>
+<li><input disabled="" type="checkbox"> Render all eleven states in <code>§4.7</code>, each with a <code>data-testid</code>.</li>
+</ul>
+<hr>
+<h2 id="48-the-editor-surface">4.8 The editor surface</h2>
+<p>The editor is a <strong>plain <code>&lt;textarea&gt;</code> with a split preview</strong> — not a code editor, not a rich
+editor. It is the most accessibility-sensitive component in the app, and a textarea is correct
+for keyboard and screen reader for free, with no JavaScript and no dependency.</p>
+<pre tabindex="0"><code>┌─────────────────────────────────────────┬──────────────────────┐
+│ toolbar  role=&#34;toolbar&#34;  (Bold Italic   │                      │
+│          Link Wikilink Code Heading     │  preview             │
+│          Statblock Dice)                │  (server-rendered)   │
+├─────────────────────────────────────────┼──────────────────────┤
+│ &lt;textarea&gt;  --font-mono, spellcheck=off │  aria-live=&#34;off&#34;     │
+│                                          │                      │
+├─────────────────────────────────────────┴──────────────────────┤
+│ status  Idle · Saving · Saved · Conflict · Error · Ln 12, Col 3│
+└──────────────────────────────────────────────────────────────┘
+   ≥1024: two columns          &lt;1024: Edit | Preview tabs
+</code></pre><table>
+	<thead>
+			<tr>
+					<th>Decision</th>
+					<th>Rule</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Access</td>
+					<td><strong>GM only</strong> (plan <code>§2.2</code>). The route is absent for <code>player</code> and <code>anonymous</code>; there is no read-only editor mode.</td>
+			</tr>
+			<tr>
+					<td>Element</td>
+					<td><code>&lt;textarea&gt;</code> with a real <code>&lt;label for&gt;</code> (&ldquo;Page content&rdquo;) and a description listing the extensions (<code>[[wikilink]]</code>, <code>![[embed]]</code>, <code>{{statblock}}</code>, <code>{{dice}}</code>, <code>[!secret]</code>, per plan <code>§5.4</code>). Never a placeholder-only field.</td>
+			</tr>
+			<tr>
+					<td>Attributes</td>
+					<td><code>spellcheck=&quot;false&quot;</code>, <code>autocapitalize=&quot;off&quot;</code>, <code>autocorrect=&quot;off&quot;</code>, <code>autocomplete=&quot;off&quot;</code>. Markdown is not prose.</td>
+			</tr>
+			<tr>
+					<td>Line numbers</td>
+					<td>a sibling <code>aria-hidden=&quot;true&quot;</code> gutter. The textarea cannot render them, and they must never be the only report of position — the status line carries <code>Ln</code>/<code>Col</code> as <strong>plain text, not a live region</strong>, so a cursor move does not interrupt.</td>
+			</tr>
+			<tr>
+					<td>Toolbar</td>
+					<td><code>role=&quot;toolbar&quot;</code>, roving <code>tabindex</code>, arrow traversal, real <code>&lt;button&gt;</code>s with <code>aria-label</code>. Insertion uses <strong><code>setRangeText()</code></strong>, not <code>.value</code> — a <code>.value</code> assignment destroys the native undo stack, and losing undo in an editor whose whole conflict story is &ldquo;you can always go back&rdquo; is unacceptable.</td>
+			</tr>
+			<tr>
+					<td>Preview</td>
+					<td>rendered <strong>by the server</strong>, not a client markdown library. Debounced ~800ms after the last keystroke plus on demand, <code>POST</code> to a render endpoint returning sanitised HTML from the same goldmark pipeline that produces the published page. A client renderer would have to reproduce five custom extensions exactly and could not, so the preview would lie.</td>
+			</tr>
+			<tr>
+					<td>Preview and secrets</td>
+					<td>the preview is rendered with <code>include_secrets=true</code> — the GM&rsquo;s buffer is their own content, and the editor is not a disclosure surface. See <code>§4.10</code>.</td>
+			</tr>
+			<tr>
+					<td>Preview a11y</td>
+					<td><code>aria-live=&quot;off&quot;</code>. A preview re-rendering on a timer inside a live region is a screen-reader storm.</td>
+			</tr>
+			<tr>
+					<td><strong>Never auto-save</strong></td>
+					<td>Save is explicit (<code>Ctrl</code>/<code>Cmd</code>+<code>S</code> plus a button). Auto-save makes the <code>If-Match</code> model incoherent: it would commit a <code>412</code> the user never saw, which is exactly what plan <code>§6.1</code> exists to prevent.</td>
+			</tr>
+			<tr>
+					<td>Save state</td>
+					<td><code>Idle</code> / <code>Saving</code> / <code>Saved</code> / <code>Conflict</code> / <code>Error</code> in a <code>role=&quot;status&quot;</code> region, plus <code>aria-busy</code> on the textarea while saving.</td>
+			</tr>
+			<tr>
+					<td>External change</td>
+					<td>SSE <code>/c/{slug}/events</code> raises a <code>role=&quot;status&quot;</code> banner, &ldquo;This page changed on disk&rdquo;, with a <strong>Review</strong> button that loads current disk content into the diff. Never auto-merges, never discards the buffer.</td>
+			</tr>
+			<tr>
+					<td><code>412</code> conflict</td>
+					<td><strong>replaces the preview pane</strong> at ≥1024 with a two-column diff (your buffer vs disk), each column independently scrollable, per-hunk accept/reject, then save with <code>If-Match</code> set to the new hash. Below 1024, a full-height layer above the Edit/Preview tabs.</td>
+			</tr>
+			<tr>
+					<td>Buffer safety</td>
+					<td>survives orientation change, resize across breakpoints, tab switch, and <code>412</code>. Never discarded without an explicit confirmation naming the loss.</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> <code>POST /c/{slug}/render</code> returning sanitised HTML from the publication pipeline; assert the response cannot contain unescaped author HTML.</li>
+<li><input disabled="" type="checkbox"> Build the toolbar with <code>setRangeText</code> insertion; add a test that the native undo stack survives a toolbar action.</li>
+<li><input disabled="" type="checkbox"> Add the 412 diff view in the preview slot, with per-hunk accept/reject and <code>If-Match</code> on the follow-up save.</li>
+<li><input disabled="" type="checkbox"> Add the SSE external-change banner; assert the buffer is untouched when it fires.</li>
+</ul>
+<h2 id="49-the-phone-player-surface-on-play">4.9 The phone player surface on <code>/play</code></h2>
+<p>A phone player is a <strong>full participant</strong> (unlike the TV, <code>§1.3</code>). At coarse-pointer tiers the
+map is a <strong>read-only readout</strong>: it renders, it never takes a gesture, and it never reaches the
+bottom of the screen.</p>
+<pre tabindex="0"><code>┌──────────────────────────────┐
+│ header  table name · live    │  3.5rem
+├──────────────────────────────┤
+│   map (readout, letterboxed) │  flex, no interaction
+│   canvas aria-hidden         │
+├──────────────────────────────┤
+│ action bar                   │  4.5rem + safe-area
+│ [token] [Roll] [End turn] [Chat]
+└──────────────────────────────┘
+   utility rail opens as a sheet anchored ABOVE the action bar
+</code></pre><table>
+	<thead>
+			<tr>
+					<th>Rule</th>
+					<th>Detail</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Action bar replaces nav</td>
+					<td>on compact <code>/play</code> the persistent footer <strong>becomes the player&rsquo;s action bar</strong> rather than the 4-destination nav (<code>§4.2</code>). Height 4.5rem — larger than the 3.5rem nav bar, because these are the primary actions.</td>
+			</tr>
+			<tr>
+					<td>Controls</td>
+					<td><strong>Token</strong> chip (which placement you are acting as; opens the Tokens sheet) · <strong>Roll</strong> (primary; a die sheet for the system&rsquo;s grammar, per plan <code>§10.3</code> <code>Grammar()</code> — <em>not</em> a hard-coded d20) · <strong>End turn</strong> (enabled only on your turn, disabled with a stated reason) · <strong>Chat</strong>.</td>
+			</tr>
+			<tr>
+					<td>No positional play</td>
+					<td><strong>there is no Move control on a phone.</strong> Positional interaction exists at fine-pointer tiers and on TV via the token list (<code>§7.6</code>). A phone player reads positions and acts through discrete intents. Stated plainly because a player will look for it, and an absent control is worse than a disabled one with a reason.</td>
+			</tr>
+			<tr>
+					<td>Layer collision</td>
+					<td>the compact rail is a bottom sheet <strong>anchored above the action bar</strong> (<code>inset-block-end: var(--action-bar-h)</code>), never over it. The action bar is never obscured, at any tier.</td>
+			</tr>
+			<tr>
+					<td>No TV action bar</td>
+					<td>the TV is view-only; its view intents live on the map, and <code>End turn</code> is a player action.</td>
+			</tr>
+			<tr>
+					<td>Gesture safety</td>
+					<td>because the map takes no input at this tier, there is no drag-versus-bottom-bar or drag-versus-sheet conflict.</td>
+			</tr>
+			<tr>
+					<td>Dependency</td>
+					<td><code>roll</code> and turn-end must exist in the plan&rsquo;s <code>§7.1</code> intent set. If turn-end is not an op, the UI cannot ship without a plan amendment — flag it, do not invent a client-side turn flag.</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement the compact action bar; assert it replaces the nav on <code>/play</code> only.</li>
+<li><input disabled="" type="checkbox"> Assert the compact map canvas carries <code>aria-hidden=&quot;true&quot;</code> and no pointer handler.</li>
+<li><input disabled="" type="checkbox"> Anchor the compact rail sheet above the action bar; assert it is never covered at 320 × 568.</li>
+</ul>
+<h2 id="410-secret-callouts--the-disclosure-surface">4.10 Secret callouts — the disclosure surface</h2>
+<p>Plan <code>§5.6</code> adds <code>[!secret]</code> callouts. It names four UI consequences; this section is all four.
+The governing rule is plan <code>§5.6.1</code>: <strong>the secret body is absent from the response for
+non-GM viewers — not <code>display:none</code>, not a comment, not a class.</strong></p>
+<h3 id="4101-the-accessibility-decision">4.10.1 The accessibility decision</h3>
+<p><strong>A redacted secret is not announced to assistive technology, and nothing is left in its
+place.</strong></p>
+<p>When the stub is off (the default), the callout is <strong>not in the DOM at all</strong> — no element, no
+<code>aria-hidden</code>, no placeholder, no <code>role=&quot;presentation&quot;</code>. A screen-reader user and a sighted
+user therefore receive <em>identical</em> information, which is the entire point of omission.</p>
+<p>The consequence must be stated rather than discovered: a sighted player may notice a seam in
+the prose where a callout used to be, and a screen-reader user will not perceive it. <strong>That
+asymmetry is the correct behaviour under the default</strong>, and it is precisely why plan <code>§5.6.1</code>
+offers an opt-in stub — the GM chooses to close the gap at the cost of disclosing existence.</p>
+<p>The alternative — announcing &ldquo;a GM-only note was removed&rdquo; — is rejected: it hands every
+non-GM an oracle for where secrets are, which plan <code>§5.6.1</code> already identifies as itself
+disclosing information.</p>
+<h3 id="4102-the-opt-in-stub">4.10.2 The opt-in stub</h3>
+<p>Per-campaign, off by default, per plan <code>§5.6.1</code>. When on, each redacted callout renders an
+empty <code>&lt;blockquote&gt;</code> carrying one non-secret label, &ldquo;A GM-only note&rdquo;, in <code>--callout-secret</code>
+styling. It is a real, readable, focusable-free block — screen-reader users get the same thing
+sighted users get. No per-user or per-role variation: the choice is the campaign&rsquo;s.</p>
+<p><strong>Prose-gap warning in the editor.</strong> A secret at a block boundary leaves a clean gap. Mid-
+paragraph, omission leaves a sentence that reads oddly. The editor raises a <strong>non-blocking
+notice</strong> on any <code>[!secret]</code> callout not starting at a block boundary, and a stronger one when
+the campaign&rsquo;s stub setting is off. It never blocks a save.</p>
+<h3 id="4103-the-gm-reveal-affordance">4.10.3 The GM reveal affordance</h3>
+<p>Reveal is <strong>not</strong> a save. Plan <code>§5.6.4</code> makes it a disclosure action with its own audit row,
+its own ledger row, and its own <code>If-Match</code> endpoint (<code>/c/{slug}/secrets/{path...}</code>). It gets
+its own control, in the editor&rsquo;s <strong>preview pane</strong> — where the GM already sees the secret:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Control</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Per-callout <strong>Reveal</strong> / <strong>Unreveal</strong></td>
+					<td>a button inside the callout&rsquo;s rendered chrome, GM tier only, in the preview. Confirm on reveal: it is visible to every member.</td>
+			</tr>
+			<tr>
+					<td><strong>Reveal all on this page</strong></td>
+					<td>with a confirmation naming the count. One click rewrites N markers; each is a one-byte diff, which is what makes this safe against Obsidian (plan <code>§5.6</code>).</td>
+			</tr>
+			<tr>
+					<td>Stale <code>If-Match</code></td>
+					<td>a reveal can <code>412</code> exactly like a save, because it is a file write. It routes to the <strong>same</strong> conflict diff (<code>§4.8</code>), not a second implementation.</td>
+			</tr>
+			<tr>
+					<td>Audit</td>
+					<td>after a successful reveal, a <code>role=&quot;status&quot;</code> line names the audit consequence: &ldquo;Revealed. Logged to the audit trail.&rdquo;</td>
+			</tr>
+			<tr>
+					<td>Reconcile-capped</td>
+					<td>plan <code>§13.2</code>&rsquo;s <code>secret.reconcile_capped</code> is an <strong>error</strong>-level event because the system <em>chose</em> to hide something. It surfaces on <code>/c/{slug}/status</code> and, for a GM, as a <code>role=&quot;alert&quot;</code> banner on <code>/play</code> — never silently.</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Non-GM viewers get no reveal control, no placeholder for one, and no tooltip.</strong> Server-side
+absence again (<code>§4.5</code>).</p>
+<h3 id="4104-theming-and-the-revealed-marker">4.10.4 Theming, and the revealed marker</h3>
+<p><code>[!secret]-</code> (hidden, GM-only) and <code>[!secret]+</code> (revealed, public) need distinct treatments, and
+the distinction is gameplay-critical, so <strong>it is never hue-only</strong>.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Variant</th>
+					<th>Tokens</th>
+					<th>Treatment</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>hidden (GM only)</td>
+					<td><code>--callout-secret</code></td>
+					<td>recessive on purpose — a GM scanning a page mid-session should not be drawn to unrevealed secrets. <code>--surface-sunken</code> ground, <code>--text-muted</code> body, <strong>dashed</strong> <code>--callout-border</code> bar.</td>
+			</tr>
+			<tr>
+					<td>revealed (public)</td>
+					<td><code>--callout-revealed</code></td>
+					<td><code>--accent-surface</code> ground, <code>--accent</code> body. Indistinguishable in content styling from an ordinary callout, so prose reads naturally.</td>
+			</tr>
+			<tr>
+					<td>&ldquo;Revealed&rdquo; marker</td>
+					<td><code>--callout-revealed-marker</code></td>
+					<td>a text marker, <strong>on in the editor, off on the published page</strong>, per campaign. Fiction breaks around a &ldquo;Revealed&rdquo; label during play; a GM auditing wants it.</td>
+			</tr>
+	</tbody>
+</table>
+<p>The marker is a text label, not an icon, because it is the one place the UI must be understood
+without sight <em>or</em> without colour perception.</p>
+<h3 id="4105-search">4.10.5 Search</h3>
+<p><code>body_plain</code> excludes callout content for <strong>every</strong> role (plan <code>§5.6.5</code>). So a GM searching
+for a secret&rsquo;s text gets nothing, and the GM&rsquo;s own editor preview is the only place the text
+is findable. The UI must <strong>not</strong> promise a &ldquo;3 results hidden because they are secret&rdquo;
+affordance — the backend cannot produce that count. Document it instead; do not build it.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Reveal/unreveal controls in the preview pane, GM only, with confirmation and the same 412 path as save.</li>
+<li><input disabled="" type="checkbox"> Assert no reveal control appears in any non-GM response.</li>
+<li><input disabled="" type="checkbox"> Add the block-boundary notice and the gap warning.</li>
+<li><input disabled="" type="checkbox"> Add <code>secret.reconcile_capped</code> to the <code>/play</code> GM alert banner and to <code>/c/{slug}/status</code>.</li>
+<li><input disabled="" type="checkbox"> Add an a11y test asserting the secret text and any stub label are absent from the player DOM <em>and</em> from the accessibility tree.</li>
+</ul>
+<h2 id="411-plugin-ui-contract">4.11 Plugin UI contract</h2>
+<p>Plan <code>§10</code> adds three plugin tiers. Only the UI tier and the theme tier touch this document,
+and both impose hard obligations on the shell.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>UI consequence</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Gameplay</td>
+					<td>none directly. It owns <code>ContentKinds()</code> and the <code>op</code> vocabulary; the shell is system-agnostic by design (plan <code>§10.2.1</code>)</td>
+			</tr>
+			<tr>
+					<td>UI</td>
+					<td>ships templ components, page <code>kind</code>s, render hooks, Datastar observers — <strong>and inherits this accessibility contract</strong> (<code>§4.11.1</code>)</td>
+			</tr>
+			<tr>
+					<td>Theme</td>
+					<td>a campaign stylesheet — <strong>and is constrained</strong> (<code>§4.12</code>)</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="4111-tokens-are-the-plugin-contract">4.11.1 Tokens are the plugin contract</h3>
+<p>A plugin component <strong>must</strong> consume layer-2 semantic tokens (<code>--text-*</code>, <code>--surface-*</code>,
+<code>--accent*</code>, <code>--border*</code>, <code>--callout-*</code>) and must use the <code>.target</code> utility for interactive
+elements. It may not define its own colour constants. If a plugin genuinely needs a new
+colour it declares <strong>its own</strong> <code>--plugin-*</code> tokens in its own block and passes the same
+contrast test — a plugin may add tokens, never bypass the floor.</p>
+<p><strong>The structural accessibility test applies to plugin output unmodified.</strong> A plugin page type
+that renders a second <code>&lt;h1&gt;</code>, a positive <code>tabindex</code>, an unlabelled landmark, or an
+<code>outline: none</code> is a conformance failure, not an exempt island. Concretely:</p>
+<ul>
+<li>A plugin page type renders <strong>into the centre slot</strong>. The shell owns the landmarks; a plugin
+owns content.</li>
+<li>A plugin cannot add or remove a landmark. It contributes an <code>&lt;h2&gt;</code> or deeper.</li>
+<li>Plugin static assets register <strong>declaratively</strong> at the composition root. Plan <code>§11</code> forbids
+<code>init()</code>-based registration for Go packages; the same reasoning applies to a plugin&rsquo;s client
+files, which must be listed, not injected by a side effect.</li>
+</ul>
+<h3 id="4112-a-plugin-control-is-an-intent-like-any-other">4.11.2 A plugin control is an intent, like any other</h3>
+<p>Plan <code>§10.2</code> — a UI plugin may only emit operations a gameplay system already resolves — and
+<code>§10.6</code> — it cannot write <code>campaign_state</code>. So a plugin&rsquo;s interactive control is
+indistinguishable in the authorization path from a human&rsquo;s. Two UI consequences:</p>
+<ul>
+<li>Plugin controls obey the same target-size, focus and D-pad rules, and participate in the
+same <code>role=&quot;toolbar&quot;</code> / list / grid patterns. There is no &ldquo;plugin widget&rdquo; exemption.</li>
+<li><strong>The worked consequence in plan <code>§10.6</code> is a testable UI rule.</strong> The graphical dice roller
+must not roll client-side, because a client-side roll is unverifiable. So the die widget
+shows a <strong>pending</strong> state from send until the server&rsquo;s <code>applied</code> frame arrives, and a
+client-side result is never displayed — not even optimistically. An optimistic roll would be
+the single most damaging thing a plugin could do to the audit trail.</li>
+</ul>
+<h3 id="4113-registry-driven-labels">4.11.3 Registry-driven labels</h3>
+<p><code>kind</code> is <strong>registry-backed</strong> (plan <code>§4.1</code>, <code>§10.2.1</code>), not a fixed enum. So the shell never
+hard-codes a kind label: the wiki tree&rsquo;s kind badge, the create-page form&rsquo;s type list, the
+create-placement control, and the <code>/play</code> rail tab names are all <strong>data-driven from the
+registry</strong>. A UI plugin registering a new <code>kind</code> needs no shell change — and an unknown <code>kind</code>
+degrades to prose with the label &ldquo;Page&rdquo;, never an error.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Render kind labels from the registry everywhere; assert the shell contains no hard-coded kind string.</li>
+<li><input disabled="" type="checkbox"> Extend the structural a11y test to run against each registered plugin page type.</li>
+<li><input disabled="" type="checkbox"> Add the pending-then-applied rule for any plugin that emits <code>roll</code>; assert no client-side result is ever displayed.</li>
+<li><input disabled="" type="checkbox"> Require declarative registration of plugin client assets.</li>
+</ul>
+<h2 id="412-the-theme-layer-contract">4.12 The theme layer contract</h2>
+<p>Plan <code>§10.1</code> defines a third tier: &ldquo;plain files in the campaign content root — CSS, header
+background, fonts&rdquo;. That directly contradicts revision 1 of this spec, which specified system
+stacks and no webfont. Resolved: <strong>the theme layer is real, and it is token-constrained.</strong></p>
+<h3 id="4121-overridable-and-not">4.12.1 Overridable and not</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Overridable by a campaign</th>
+					<th>Not overridable — ever</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--brand-accent</code>, <code>--brand-accent-ink</code></td>
+					<td><code>--text-*</code>, <code>--border*</code>, <code>--focus-ring</code>, <code>--callout-*</code></td>
+			</tr>
+			<tr>
+					<td><code>--brand-header-image</code></td>
+					<td><code>--type-scale</code>, <code>--space-scale</code>, <code>--target-min</code></td>
+			</tr>
+			<tr>
+					<td><code>--font-prose</code> / <code>--font-ui</code> via <code>@font-face</code> (system stack always retained as fallback)</td>
+					<td><code>--dur-*</code>, <code>--radius-*</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>The right-hand column is the accessibility contract. A campaign stylesheet that could set
+<code>--focus-ring</code> or <code>--target-min</code> could silently break 1.4.11, 1.4.3 or 2.5.5, and no gate
+could catch it across every campaign.</p>
+<h3 id="4122-enforcement-is-server-side-by-construction">4.12.2 Enforcement is server-side, by construction</h3>
+<p><strong>A campaign cannot ship arbitrary CSS.</strong> The content root carries a <em>theme manifest</em>; the
+server validates it and <strong>generates</strong> <code>/c/{slug}/theme.css</code>. The protected variables above are
+never emitted into that stylesheet, so a campaign cannot set them even by writing a raw
+<code>.css</code> file — a raw file in the content root is served as a <em>static asset</em> under
+<code>/c/{slug}/assets/</code> with <code>Content-Type: text/css</code>, and is never linked from the shell.</p>
+<p>The manifest is attacker-reachable (Obsidian sync writes it), so it gets the same treatment as
+front matter (plan <code>§12</code>): YAML parsed with alias-expansion limits, font <code>src</code> paths resolved
+inside <code>os.Root</code> and rewritten to <code>/c/{slug}/assets/…</code>, <code>font-display: swap</code> forced,
+document size capped.</p>
+<h3 id="4123-the-brand-pair-is-validated-and-fails-toward-the-default">4.12.3 The brand pair is validated, and fails toward the default</h3>
+<p>At registration, and again whenever the watcher sees the manifest change, the server checks
+<code>--brand-accent</code> against <code>--brand-accent-ink</code> at ≥4.5:1, and <code>--brand-accent</code> against <code>--bg</code> at
+≥3:1. On failure:</p>
+<ol>
+<li>the last known-good theme stays in effect, or the core theme if there never was one;</li>
+<li>a <code>theme.brand_invalid</code> <strong>error</strong> event is logged with <code>campaign_id</code> — plan <code>§13.2</code>&rsquo;s
+principle, since a silently unreadable brand colour is a silent failure;</li>
+<li>the campaign overview shows a GM notice naming the rejected pair.</li>
+</ol>
+<p><strong>A rejected theme degrades to the default. It never ships an unreadable UI.</strong> This is the same
+fail-toward-safety direction as plan <code>§5.6.2</code>&rsquo;s reconciliation cap.</p>
+<h3 id="4124-per-campaign-not-per-user">4.12.4 Per-campaign, not per-user</h3>
+<p>A campaign theme is a property of the campaign. It is <em>not</em> a <code>sp_ui</code> preference, so it does
+not affect the <code>no Vary: Cookie</code> conclusion in <code>§3.7</code> — the <code>&lt;link&gt;</code> is rendered from the
+campaign slug, which is already in the path.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Define the theme manifest schema; validate the brand pair and font paths; emit <code>/c/{slug}/theme.css</code> from the manifest.</li>
+<li><input disabled="" type="checkbox"> Assert a raw <code>.css</code> in a content root is never linked from the shell.</li>
+<li><input disabled="" type="checkbox"> Add <code>theme.brand_invalid</code> as an error-level event; add the GM notice.</li>
+<li><input disabled="" type="checkbox"> Add a fixture campaign theme to the contrast test, and assert every protected variable is absent from the generated stylesheet.</li>
+</ul>
+<hr>
+<h2 id="5-scaling-and-density">5. Scaling and density</h2>
+<h3 id="51-scale-model">5.1 Scale model</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Token</th>
+					<th>compact</th>
+					<th>medium / large</th>
+					<th>tv</th>
+					<th>tv-wide</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--type-scale</code></td>
+					<td>1.0625</td>
+					<td>1</td>
+					<td>1.5</td>
+					<td>1.75</td>
+			</tr>
+			<tr>
+					<td><code>--space-scale</code></td>
+					<td>1.125</td>
+					<td>1</td>
+					<td>1.5</td>
+					<td>1.75</td>
+			</tr>
+			<tr>
+					<td><code>--target-min</code></td>
+					<td>2.75rem (44px)</td>
+					<td>2.25rem (36px)</td>
+					<td>3.5rem (56px)</td>
+					<td>3.5rem</td>
+			</tr>
+	</tbody>
+</table>
+<p><code>html { font-size: 100% }</code> always. Every size is <code>rem</code> derived from a token — never a <code>px</code>
+font-size, never a fixed <code>height</code> on a text container. This is what keeps 1.4.4 and 1.4.12
+satisfiable while letting TV mode scale the interface.</p>
+<p>Type scale at <code>--type-scale: 1</code>:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Token</th>
+					<th>rem</th>
+					<th>px</th>
+					<th>Use</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--text-xs</code></td>
+					<td>0.75</td>
+					<td>12</td>
+					<td>footer legal line only; never body, never a control label on TV</td>
+			</tr>
+			<tr>
+					<td><code>--text-sm</code></td>
+					<td>0.875</td>
+					<td>14</td>
+					<td>metadata, table headers, badges, kind badges</td>
+			</tr>
+			<tr>
+					<td><code>--text-base</code></td>
+					<td>1.0625</td>
+					<td>17</td>
+					<td>UI chrome</td>
+			</tr>
+			<tr>
+					<td><code>--text-md</code></td>
+					<td>1.25</td>
+					<td>20</td>
+					<td>article prose base, h4, lead</td>
+			</tr>
+			<tr>
+					<td><code>--text-lg</code></td>
+					<td>1.5</td>
+					<td>24</td>
+					<td>h3</td>
+			</tr>
+			<tr>
+					<td><code>--text-xl</code></td>
+					<td>1.875</td>
+					<td>30</td>
+					<td>h2</td>
+			</tr>
+			<tr>
+					<td><code>--text-2xl</code></td>
+					<td>2.25</td>
+					<td>36</td>
+					<td>h1</td>
+			</tr>
+			<tr>
+					<td><code>--text-3xl</code></td>
+					<td>3</td>
+					<td>48</td>
+					<td>display — campaign name on <code>/play</code> and TV</td>
+			</tr>
+	</tbody>
+</table>
+<p>TV floor: nothing below <code>--text-md</code> except the footer legal line.</p>
+<p>Line heights unitless (1.5 prose, 1.2 headings, 1.5 chrome). Paragraph margins in <code>em</code>. No
+text container has a fixed height. 1.4.12 compliance depends on all three.</p>
+<h3 id="52-typeface">5.2 Typeface</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Role</th>
+					<th>Default stack</th>
+					<th>Campaign override</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--font-ui</code></td>
+					<td><code>system-ui, -apple-system, &quot;Segoe UI&quot;, Roboto, &quot;Helvetica Neue&quot;, Arial, sans-serif</code></td>
+					<td><code>@font-face</code> <strong>prepended</strong>, system stack retained as fallback</td>
+			</tr>
+			<tr>
+					<td><code>--font-prose</code></td>
+					<td><code>ui-serif, Georgia, Cambria, &quot;Times New Roman&quot;, Times, serif</code></td>
+					<td><code>@font-face</code> <strong>prepended</strong>, system stack retained as fallback</td>
+			</tr>
+			<tr>
+					<td><code>--font-mono</code></td>
+					<td><code>ui-monospace, SFMono-Regular, &quot;Cascadia Mono&quot;, Menlo, Consolas, monospace</code></td>
+					<td><strong>not overridable</strong> — code and dice expressions must stay monospaced</td>
+			</tr>
+	</tbody>
+</table>
+<p>The two defaults are system stacks: no webfont, no FOUT, no extra bytes, no licence obligation.
+Serif prose is what readers expect from a wiki. Plan <code>§10.1</code> adds campaign fonts, so a campaign
+<em>may</em> supply one — but the system stack is never removed, so a font that fails to load degrades
+to today&rsquo;s design rather than to a broken one. <code>font-display: swap</code> is forced by the server
+(<code>§4.12.2</code>).</p>
+<p><code>{{statblock}}</code> and <code>{{dice}}</code> render in <code>--font-mono</code> because they are code-like. Plan <code>§5.4</code>
+emits them as sanitised HTML, so this is styling, not tokenisation.</p>
+<h3 id="53-prohibited-scaling-techniques">5.3 Prohibited scaling techniques</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Technique</th>
+					<th>Why banned</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>transform: scale()</code> on a shell</td>
+					<td>breaks hit-testing against visual bounds, blurs text, desynchronises focus rings</td>
+			</tr>
+			<tr>
+					<td><code>px</code> font-size</td>
+					<td>fights the user&rsquo;s browser zoom</td>
+			</tr>
+			<tr>
+					<td>Fixed pixel <code>height</code> on a text container</td>
+					<td>clips at 200% zoom and under 1.4.12</td>
+			</tr>
+			<tr>
+					<td><code>user-scalable=no</code> / <code>maximum-scale=1</code></td>
+					<td>fails 1.4.4 outright</td>
+			</tr>
+			<tr>
+					<td>Viewport units for type</td>
+					<td>non-linear scaling breaks 1.4.4; <code>clamp()</code> permitted only for the article measure</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement <code>--type-scale</code> / <code>--space-scale</code> as <code>calc()</code> multipliers applied per <code>[data-ui]</code>.</li>
+<li><input disabled="" type="checkbox"> Assert no rule sets a <code>px</code> font-size and the viewport meta has no <code>maximum-scale</code>.</li>
+</ul>
+<hr>
+<h2 id="6-theming">6. Theming</h2>
+<h3 id="61-token-layers">6.1 Token layers</h3>
+<ol>
+<li><strong>Primitive</strong> — <code>oklch</code> ramps, <code>--space-*</code>, <code>--radius-*</code>, <code>--dur-*</code>. No meaning.</li>
+<li><strong>Semantic</strong> — <code>--bg</code>, <code>--surface</code>, <code>--text</code>, <code>--accent</code>, <code>--callout-*</code>, <code>--brand-*</code>, …
+Meaning, no component knowledge.</li>
+<li><strong>Component</strong> — <code>--btn-primary-bg</code>, <code>--tab-selected-fg</code>. The small set that cannot be
+expressed semantically.</li>
+</ol>
+<p>Layers 2 and 3 are defined for <code>[data-theme=&quot;light&quot;]</code> and <code>[data-theme=&quot;dark&quot;]</code>. <strong>A token
+present in only one theme is a bug</strong>, and the contrast test fails on it.</p>
+<h3 id="62-light-theme--parchment-and-ink">6.2 Light theme — &ldquo;parchment and ink&rdquo;</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Token</th>
+					<th>Value</th>
+					<th>Luminance</th>
+					<th>Ratio on <code>--bg</code></th>
+					<th>Floor</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--bg</code></td>
+					<td><code>#F7F6F3</code></td>
+					<td>0.9216</td>
+					<td>—</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--surface</code></td>
+					<td><code>#FFFFFF</code></td>
+					<td>1.0000</td>
+					<td>1.08</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--surface-sunken</code></td>
+					<td><code>#EFEDE8</code></td>
+					<td>0.8557</td>
+					<td>1.08</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--text</code></td>
+					<td><code>#16130F</code></td>
+					<td>0.0067</td>
+					<td><strong>17.13</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--text-muted</code></td>
+					<td><code>#4A443C</code></td>
+					<td>0.0592</td>
+					<td><strong>8.90</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--text-subtle</code></td>
+					<td><code>#5F594F</code></td>
+					<td>0.1015</td>
+					<td><strong>6.42</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--border-subtle</code></td>
+					<td><code>#D6D2C9</code></td>
+					<td>0.6461</td>
+					<td>1.41</td>
+					<td>decorative only</td>
+			</tr>
+			<tr>
+					<td><code>--border</code></td>
+					<td><code>#8A8377</code></td>
+					<td>0.2297</td>
+					<td><strong>3.47</strong></td>
+					<td>3.0</td>
+			</tr>
+			<tr>
+					<td><code>--accent</code></td>
+					<td><code>#1B4D8F</code></td>
+					<td>0.0753</td>
+					<td><strong>7.76</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--accent-solid</code></td>
+					<td><code>#1B4D8F</code></td>
+					<td>0.0753</td>
+					<td>7.76</td>
+					<td>3.0 boundary</td>
+			</tr>
+			<tr>
+					<td><code>--on-accent</code></td>
+					<td><code>#FFFFFF</code></td>
+					<td>1.0000</td>
+					<td><strong>8.38</strong> on <code>--accent-solid</code></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--accent-surface</code></td>
+					<td><code>#E8EFF8</code></td>
+					<td>0.8567</td>
+					<td>1.08</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--callout-surface</code></td>
+					<td><code>#EFEDE8</code></td>
+					<td>0.8557</td>
+					<td>1.08</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--callout-border</code></td>
+					<td><code>#8A8377</code></td>
+					<td>0.2297</td>
+					<td><strong>3.24</strong> on <code>--callout-surface</code></td>
+					<td>3.0</td>
+			</tr>
+			<tr>
+					<td><code>--callout-secret</code></td>
+					<td><code>#4A443C</code></td>
+					<td>0.0592</td>
+					<td><strong>8.30</strong> on <code>--callout-surface</code></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--callout-revealed</code></td>
+					<td><code>#1B4D8F</code></td>
+					<td>0.0753</td>
+					<td><strong>7.24</strong> on <code>--accent-surface</code></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--success</code></td>
+					<td><code>#1E6B3A</code></td>
+					<td>0.1110</td>
+					<td><strong>6.04</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--warning</code></td>
+					<td><code>#8A5A00</code></td>
+					<td>0.1271</td>
+					<td><strong>5.49</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--danger</code></td>
+					<td><code>#A4262C</code></td>
+					<td>0.0946</td>
+					<td><strong>6.72</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--focus-ring</code></td>
+					<td><code>#0A58CA</code></td>
+					<td>0.1131</td>
+					<td><strong>5.96</strong></td>
+					<td>3.0</td>
+			</tr>
+			<tr>
+					<td><code>--brand-accent</code></td>
+					<td><em>defaults to</em> <code>--accent</code></td>
+					<td>—</td>
+					<td>—</td>
+					<td>validated <code>§4.12.3</code></td>
+			</tr>
+			<tr>
+					<td><code>--brand-accent-ink</code></td>
+					<td><em>defaults to</em> <code>--on-accent</code></td>
+					<td>—</td>
+					<td>—</td>
+					<td>validated <code>§4.12.3</code></td>
+			</tr>
+			<tr>
+					<td><code>--map-dim</code></td>
+					<td><code>rgb(0 0 0 / 0.18)</code></td>
+					<td>—</td>
+					<td>—</td>
+					<td>3:1 via <code>--map-outline</code></td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="63-dark-theme--slate-and-ember">6.3 Dark theme — &ldquo;slate and ember&rdquo;</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Token</th>
+					<th>Value</th>
+					<th>Luminance</th>
+					<th>Ratio on <code>--bg</code></th>
+					<th>Floor</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>--bg</code></td>
+					<td><code>#14181D</code></td>
+					<td>0.0089</td>
+					<td>—</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--surface</code></td>
+					<td><code>#1B2027</code></td>
+					<td>0.0141</td>
+					<td>1.06</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--surface-sunken</code></td>
+					<td><code>#0E1116</code></td>
+					<td>0.0055</td>
+					<td>1.03</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--text</code></td>
+					<td><code>#EDEEF0</code></td>
+					<td>0.8545</td>
+					<td><strong>15.35</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--text-muted</code></td>
+					<td><code>#A8B0BA</code></td>
+					<td>0.4292</td>
+					<td><strong>8.13</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--text-subtle</code></td>
+					<td><code>#8B94A0</code></td>
+					<td>0.2921</td>
+					<td><strong>5.81</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--border-subtle</code></td>
+					<td><code>#2B323B</code></td>
+					<td>0.0311</td>
+					<td>1.13</td>
+					<td>decorative only</td>
+			</tr>
+			<tr>
+					<td><code>--border</code></td>
+					<td><code>#6B7684</code></td>
+					<td>0.1774</td>
+					<td><strong>3.86</strong></td>
+					<td>3.0</td>
+			</tr>
+			<tr>
+					<td><code>--accent</code></td>
+					<td><code>#7FB2F0</code></td>
+					<td>0.4265</td>
+					<td><strong>8.09</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--accent-solid</code></td>
+					<td><code>#5B9BE8</code></td>
+					<td>0.3149</td>
+					<td><strong>6.19</strong></td>
+					<td>3.0 boundary</td>
+			</tr>
+			<tr>
+					<td><code>--on-accent</code></td>
+					<td><code>#0B1220</code></td>
+					<td>0.0061</td>
+					<td><strong>6.51</strong> on <code>--accent-solid</code></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--accent-surface</code></td>
+					<td><code>#1D2A3D</code></td>
+					<td>0.0225</td>
+					<td>1.15</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--callout-surface</code></td>
+					<td><code>#0E1116</code></td>
+					<td>0.0055</td>
+					<td>1.03</td>
+					<td>—</td>
+			</tr>
+			<tr>
+					<td><code>--callout-border</code></td>
+					<td><code>#6B7684</code></td>
+					<td>0.1774</td>
+					<td><strong>4.10</strong> on <code>--callout-surface</code></td>
+					<td>3.0</td>
+			</tr>
+			<tr>
+					<td><code>--callout-secret</code></td>
+					<td><code>#A8B0BA</code></td>
+					<td>0.4292</td>
+					<td><strong>8.63</strong> on <code>--callout-surface</code></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--callout-revealed</code></td>
+					<td><code>#7FB2F0</code></td>
+					<td>0.4265</td>
+					<td><strong>6.57</strong> on <code>--accent-surface</code></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--success</code></td>
+					<td><code>#5FCB8E</code></td>
+					<td>0.4709</td>
+					<td><strong>8.84</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--warning</code></td>
+					<td><code>#E0B341</code></td>
+					<td>0.4847</td>
+					<td><strong>9.08</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--danger</code></td>
+					<td><code>#F0877F</code></td>
+					<td>0.3739</td>
+					<td><strong>7.20</strong></td>
+					<td>4.5</td>
+			</tr>
+			<tr>
+					<td><code>--focus-ring</code></td>
+					<td><code>#9CC4FF</code></td>
+					<td>0.5376</td>
+					<td><strong>9.97</strong></td>
+					<td>3.0</td>
+			</tr>
+			<tr>
+					<td><code>--brand-accent</code></td>
+					<td><em>defaults to</em> <code>--accent</code></td>
+					<td>—</td>
+					<td>—</td>
+					<td>validated <code>§4.12.3</code></td>
+			</tr>
+			<tr>
+					<td><code>--brand-accent-ink</code></td>
+					<td><em>defaults to</em> <code>--on-accent</code></td>
+					<td>—</td>
+					<td>—</td>
+					<td>validated <code>§4.12.3</code></td>
+			</tr>
+			<tr>
+					<td><code>--map-dim</code></td>
+					<td><code>rgb(0 0 0 / 0.32)</code></td>
+					<td>—</td>
+					<td>—</td>
+					<td>3:1 via <code>--map-outline</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>Every ratio was computed by hand with the WCAG relative-luminance formula and is a <strong>design
+target, not a verified value</strong> — <code>§10.1</code> makes machine verification a gate.</p>
+<h3 id="64-the-dark-mode-polarity-rule">6.4 The dark-mode polarity rule</h3>
+<p><strong>Solid fills invert in dark mode.</strong> A <code>#1B4D8F</code> button on a <code>#14181D</code> page measures 2.13:1
+against its own background: its label passes at 8.38:1 and its <strong>shape fails the 3:1 non-text
+requirement of 1.4.11</strong>. Dark mode therefore uses a light fill (<code>--accent-solid: #5B9BE8</code>)
+with a near-black label (<code>--on-accent</code>): 6.19:1 against the page, 6.51:1 for the label. Same
+for <code>--danger</code> and every other filled control. A hard requirement, not a preference.</p>
+<h3 id="65-semantic-guarantees">6.5 Semantic guarantees</h3>
+<ul>
+<li><strong>Never colour alone.</strong> Every status pairs hue with an icon, a text label, or both. The
+initiative current-turn marker carries the token&rsquo;s name in a bold weight and a left bar — the
+most-glanced element in the app. The revealed-secret marker is a <em>text</em> label (<code>§4.10.4</code>).</li>
+<li><strong><code>--warning</code> is a text/icon colour, never a fill.</strong> Dark amber on white is the classic
+illegible pairing.</li>
+<li><strong><code>--border-subtle</code> may not be the only boundary of an interactive element.</strong> Control outlines
+use <code>--border</code> (≥3:1). This is what 1.4.11 asks for.</li>
+<li><strong>Focus rings are two-tone</strong> — <code>--focus-ring</code> plus a <code>--focus-ring-offset</code> matching the local
+surface colour, so the ring survives landing on a same-hue control. Focus on a solid fill
+inverts the ring to <code>--on-accent</code>.</li>
+<li><strong>Protected variables</strong> (<code>§4.12.1</code>) are not just &ldquo;don&rsquo;t set&rdquo; — the theme generator does not
+emit them, so no campaign value can reach them.</li>
+</ul>
+<h3 id="66-theme-state-etag-and-the-cache-rules">6.6 Theme state, <code>ETag</code>, and the cache rules</h3>
+<p><strong><code>sp_ui</code> carries two fields only:</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Field</th>
+					<th>Values</th>
+					<th>Default</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>theme</code></td>
+					<td><code>auto</code> | <code>light</code> | <code>dark</code></td>
+					<td><code>auto</code></td>
+			</tr>
+			<tr>
+					<td><code>ui</code></td>
+					<td><code>auto</code> | <code>laptop</code> | <code>phone</code> | <code>tv</code></td>
+					<td><code>auto</code></td>
+			</tr>
+	</tbody>
+</table>
+<p><code>SameSite=Lax; Path=/; Max-Age=31536000</code>, not HttpOnly, no sensitive data. <strong>No density field</strong>
+— density was not selected, and a dangling token is worse than no token.</p>
+<p>Resolution is entirely client-side before first paint (<code>§3.7</code>). <strong>No <code>Vary: Cookie</code> is emitted
+and none is needed</strong>, because <code>sp_ui</code> never varies the document.</p>
+<p><strong><code>ETag</code>. Plan <code>§5.5</code> says &ldquo;<code>ETag</code> = the same hash&rdquo;, but the same section defines two body
+variants from one <code>content_hash</code>. Those cannot share an <code>ETag</code> — so this is a defect in the
+plan, and the rule this spec requires is:</strong></p>
+<pre tabindex="0"><code>ETag = W/&#34;&lt;sha256(content_hash + &#39;:&#39; + include_secrets_flag)&gt;&#34;
+</code></pre><p>Without the salt, a GM&rsquo;s unredacted response and a player&rsquo;s redacted one would advertise the
+same validator, and any cache holding both would serve whichever it stored first — a <strong>direct
+secret leak to a player</strong>. This is the UI half of plan <code>§14</code>&rsquo;s &ldquo;highest-value security test&rdquo;.</p>
+<p><strong>Cache directives:</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Response</th>
+					<th><code>Cache-Control</code></th>
+					<th>Why</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Wiki page, <code>include_secrets=false</code> (player, anonymous)</td>
+					<td>normal, <code>ETag</code>-revalidated</td>
+					<td>the common case; plan <code>§5.5</code>&rsquo;s shared-cache story is safe here because the body is identical for every reader in this tier</td>
+			</tr>
+			<tr>
+					<td>Wiki page, <code>include_secrets=true</code> (GM)</td>
+					<td><strong><code>private, no-store</code></strong></td>
+					<td>must never enter a shared cache under any configuration</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/theme.css</code></td>
+					<td>public, <code>ETag</code></td>
+					<td>derived from the manifest, not from a viewer</td>
+			</tr>
+			<tr>
+					<td><code>/c/{slug}/assets/…</code></td>
+					<td>private if the campaign is private (plan <code>§9</code>)</td>
+					<td></td>
+			</tr>
+	</tbody>
+</table>
+<p>A redacted page is permission-neutral <em>within its tier</em>, which is why only the GM variant needs
+<code>no-store</code>. The cost is that a GM navigating between wiki pages re-fetches — negligible next to
+the alternative.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Implement <code>sp_ui</code> read/write with exactly the two fields.</li>
+<li><input disabled="" type="checkbox"> Salt the <code>ETag</code> with the <code>include_secrets</code> flag; add a test asserting a GM and a player response never share a validator.</li>
+<li><input disabled="" type="checkbox"> Set <code>private, no-store</code> on every <code>include_secrets=true</code> response; assert in a test.</li>
+<li><input disabled="" type="checkbox"> Emit the inline head resolver; assert the served document contains neither <code>data-theme</code> nor <code>data-ui</code> before script execution.</li>
+<li><input disabled="" type="checkbox"> Add the <code>forced-colors</code> border fallbacks for every elevation token.</li>
+</ul>
+<h3 id="67-forced-colours-contrast-motion">6.7 Forced colours, contrast, motion</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Query</th>
+					<th>Response</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>forced-colors: active</code></td>
+					<td>our palette does not survive. <code>forced-color-adjust: auto</code> throughout; <strong>every shadow-based separation gets a 1px <code>ButtonBorder</code>/<code>CanvasText</code> fallback</strong>, because shadows are dropped in this mode. Focus indicators switch to <code>Highlight</code>.</td>
+			</tr>
+			<tr>
+					<td><code>prefers-contrast: more</code></td>
+					<td><code>--text-muted</code> and <code>--text-subtle</code> promote to <code>--text</code>; <code>--border</code> thickens to 2px.</td>
+			</tr>
+			<tr>
+					<td><code>prefers-reduced-motion: reduce</code></td>
+					<td>all <code>--dur-*</code> → 1ms. Map pan and zoom become instant. No auto-advancing content, no parallax, no animated dice. Nothing may depend on an animation to become visible.</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Write <code>tokens.css</code> with all three layers, <code>oklch</code> primitives and both theme blocks, emitted through Tailwind v4&rsquo;s CSS-first <code>@theme</code>.</li>
+<li><input disabled="" type="checkbox"> <code>tokens_contrast_test.go</code> in <code>internal/web</code>: parse the token file, assert every pair in <code>§6.2</code>/<code>§6.3</code> against its floor, assert no token is missing from a theme, and run the whole set again with the fixture campaign theme applied.</li>
+</ul>
+<hr>
+<h2 id="7-accessibility-contract">7. Accessibility contract</h2>
+<p><strong>Target: WCAG 2.2 Level AA, with AAA claimed only where stated.</strong></p>
+<h3 id="71-contrast">7.1 Contrast</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Content</th>
+					<th>Requirement</th>
+					<th>Status</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Body and control text</td>
+					<td>≥4.5:1 (1.4.3)</td>
+					<td>every pair clears it; minimum observed 5.49:1</td>
+			</tr>
+			<tr>
+					<td>Large text (≥24px, ≥18.66px bold)</td>
+					<td>≥3:1</td>
+					<td>≥4.5:1 taken anyway</td>
+			</tr>
+			<tr>
+					<td>Component boundaries, focus rings, selected states</td>
+					<td>≥3:1 (1.4.11)</td>
+					<td><code>--border</code>, <code>--focus-ring</code>; solids follow <code>§6.4</code></td>
+			</tr>
+			<tr>
+					<td>Graphics and meaningful images</td>
+					<td>≥3:1 (1.1.1)</td>
+					<td>map outlines, dice pips, the revealed-secret marker</td>
+			</tr>
+			<tr>
+					<td>Disabled controls</td>
+					<td>exempt from 1.4.3</td>
+					<td>still legible</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="72-landmarks-structure-skip-links">7.2 Landmarks, structure, skip links</h3>
+<pre tabindex="0"><code>header[banner]  nav[navigation][aria-label=&#34;Campaign&#34;]  main  aside[complementary]  footer[contentinfo]
+</code></pre><p>The compact bottom bar is a second <code>nav</code>, so <strong>both must carry distinguishing labels.</strong>
+Unlabelled duplicates make landmark navigation useless — a gate failure, not a style nit. A
+plugin page type may not add a landmark (<code>§4.11.1</code>).</p>
+<p><strong>Skip links</strong>, first focusable elements in the document, in order:</p>
+<ol>
+<li>&ldquo;Skip to content&rdquo; → <code>#main</code></li>
+<li>&ldquo;Skip to campaign navigation&rdquo; → <code>#nav</code> (only where the nav exists, <code>§4.6</code>)</li>
+<li>&ldquo;Skip to utilities&rdquo; → <code>#rail</code> (only where the rail is persistent or reachable)</li>
+<li>On <code>/play</code> only: &ldquo;Skip to the token list&rdquo;</li>
+</ol>
+<p>Targets are real focusable elements with <code>tabindex=&quot;-1&quot;</code>, so focus lands somewhere a screen
+reader will announce.</p>
+<p>Structural rules: exactly one <code>&lt;h1&gt;</code>; heading levels never skip; <code>lang</code> on <code>&lt;html&gt;</code>; <code>&lt;title&gt;</code>
+follows <code>Page — Section — Campaign</code>. <strong>No <code>world</code>, no <code>session</code> in any rendered string</strong>
+(<code>§1.2</code>).</p>
+<h3 id="73-target-size">7.3 Target size</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Input</th>
+					<th>Minimum</th>
+					<th>Standard</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Pointer / desktop</td>
+					<td>24 × 24 CSS px</td>
+					<td>WCAG 2.2 SC 2.5.8 (AA) — a floor, not the goal</td>
+			</tr>
+			<tr>
+					<td>Touch</td>
+					<td>44 × 44 CSS px</td>
+					<td>WCAG 2.5.5 (AAA), Apple HIG 44pt, Material 48dp</td>
+			</tr>
+			<tr>
+					<td>TV / D-pad</td>
+					<td>56px along the movement axis, 40px across, ≥16px gutter</td>
+					<td>no WCAG criterion covers 10-foot; platform norm</td>
+			</tr>
+	</tbody>
+</table>
+<p>Enforced by construction: a shared <code>.target</code> utility sets
+<code>min-inline-size: var(--target-min); min-block-size: var(--target-min)</code>, and every interactive
+element — <strong>including plugin components</strong> (<code>§4.11.1</code>) — uses it. Small-looking controls get
+hit-slop padding. ≥8px separation at touch, ≥16px on TV, so a mis-aimed remote press cannot
+land on a neighbour.</p>
+<h3 id="74-keyboard-and-d-pad">7.4 Keyboard and D-pad</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Key</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>Tab</code> / <code>Shift+Tab</code></td>
+					<td>natural document order. <strong>No positive <code>tabindex</code>, anywhere</strong> — gate failure</td>
+			</tr>
+			<tr>
+					<td><code>Enter</code> / <code>Space</code></td>
+					<td>activate. Both, on every control</td>
+			</tr>
+			<tr>
+					<td><code>Escape</code></td>
+					<td>close the topmost layer; return focus to its trigger</td>
+			</tr>
+			<tr>
+					<td>Arrows</td>
+					<td>within a composite widget (tabs, menu, toolbar, token list) move between items; elsewhere page scroll</td>
+			</tr>
+			<tr>
+					<td><code>/</code></td>
+					<td>focus the search field</td>
+			</tr>
+			<tr>
+					<td><code>?</code></td>
+					<td>open the shortcut sheet</td>
+			</tr>
+			<tr>
+					<td><code>g</code> then <code>w</code> / <code>s</code> / <code>p</code></td>
+					<td>go to wiki / search / play</td>
+			</tr>
+			<tr>
+					<td><code>Home</code> / <code>End</code></td>
+					<td>first / last item in a composite widget</td>
+			</tr>
+			<tr>
+					<td>Remote <code>OK</code> / <code>Back</code></td>
+					<td>map to <code>Enter</code> / <code>Escape</code></td>
+			</tr>
+			<tr>
+					<td>Remote arrows</td>
+					<td>spatial focus; history within a region; never a scroll trap</td>
+			</tr>
+	</tbody>
+</table>
+<ul>
+<li><code>:focus-visible</code> for pointer tiers. <strong>On TV, <code>:focus</code> and <code>:focus-visible</code> are styled
+identically</strong> — some TV browsers lack <code>:focus-visible</code>, and a ring that appears only for
+keyboard input may then never appear at all.</li>
+<li><code>outline: none</code> without a visible replacement is prohibited.</li>
+<li><strong>Focus is never moved by a background event.</strong> A dice roll, a presence change or a reconnect
+must not steal focus.</li>
+<li>TV auto-dim is permitted <strong>only</strong> for navigation affordances, never for information, never
+with a dialog open, and never within 4s of a focus movement or a dice result. Initiative,
+clock, chat and connection state never auto-hide.</li>
+</ul>
+<h3 id="75-live-regions-and-which-transport-feeds-them">7.5 Live regions, and which transport feeds them</h3>
+<p>The plan contradicts itself on the play page: <code>§7</code> says &ldquo;no SSE on the VTT page&rdquo; and &ldquo;SSE
+appears only for live game chrome&rdquo;; <code>§3.1</code> lists initiative/chat/presence as Datastar/SSE
+fragments; <code>§9</code> routes <code>/c/{slug}/events</code> as &ldquo;SSE (editors + live chrome)&rdquo;; and <code>§7.1</code>&rsquo;s
+WebSocket protocol also carries <code>presence</code>. <strong>Resolution:</strong></p>
+<table>
+	<thead>
+			<tr>
+					<th>Channel</th>
+					<th>Carries</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>WebSocket</strong> <code>/c/{slug}/ws</code></td>
+					<td>client → server: intents, presence. server → client: ordered state — placement deltas, rolls, clock, snapshot, <code>applied</code>/<code>rejected</code> — consumed by PixiJS as structured data</td>
+			</tr>
+			<tr>
+					<td><strong>SSE</strong> <code>/c/{slug}/events</code></td>
+					<td>server → client: <strong>rendered DOM fragments</strong> for the sidebar — initiative, chat, dice log, connection and degraded notices — patched by Datastar. Plus the editor&rsquo;s external-change notice on <code>/edit</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>One hub, two egress representations of the same state: the canvas needs structured deltas, the
+sidebar needs HTML. Two connections on the play page, against plan <code>§7</code>&rsquo;s ~6 ceiling. <code>§7</code>&rsquo;s
+&ldquo;no SSE on the VTT page&rdquo; is read as <strong>no SSE for map state</strong>. Presence rides the WebSocket,
+because the plan&rsquo;s <code>§7.1</code> protocol already defines it there and it needs no versioning.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Announced content</th>
+					<th>Channel</th>
+					<th>Region</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Dice result, HP change, turn change, chat line, delta applied</td>
+					<td>SSE fragment → sidebar</td>
+					<td><code>role=&quot;status&quot;</code>, <code>aria-live=&quot;polite&quot;</code></td>
+			</tr>
+			<tr>
+					<td>Presence join/leave</td>
+					<td>WebSocket</td>
+					<td><code>role=&quot;status&quot;</code>, polite</td>
+			</tr>
+			<tr>
+					<td>Presence cursors</td>
+					<td>WebSocket</td>
+					<td><strong>no live region</strong> — visual only, <code>aria-hidden</code></td>
+			</tr>
+			<tr>
+					<td>Map-side state (placements moved, camera)</td>
+					<td>WebSocket → canvas</td>
+					<td>no live region; the token list is the accessible equivalent (<code>§7.6</code>)</td>
+			</tr>
+			<tr>
+					<td>Editor external-change notice</td>
+					<td>SSE</td>
+					<td><code>role=&quot;status&quot;</code>, polite</td>
+			</tr>
+			<tr>
+					<td>Editor save state</td>
+					<td>HTTP response</td>
+					<td><code>role=&quot;status&quot;</code>, polite (<code>§4.8</code>)</td>
+			</tr>
+			<tr>
+					<td><strong><code>412</code> conflict on save or reveal</strong></td>
+					<td>HTTP response</td>
+					<td><code>role=&quot;alert&quot;</code>, <code>aria-live=&quot;assertive&quot;</code></td>
+			</tr>
+			<tr>
+					<td>Secret reveal, reconcile-capped</td>
+					<td>SSE fragment / status page</td>
+					<td><code>role=&quot;alert&quot;</code>, assertive (<code>§4.10.3</code>)</td>
+			</tr>
+			<tr>
+					<td>Ruleset drift, game ended, connection lost</td>
+					<td>WebSocket</td>
+					<td><code>role=&quot;alert&quot;</code>, assertive (<code>§4.7</code>)</td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Patches must never touch the focused element</strong>, and insertions into a live region are
+throttled to 1/second. The chat and dice logs must not replay history into a live region on
+connect — a user joining mid-table would otherwise hear the whole table read aloud.</p>
+<p><strong>Search has no live region, because search is not live.</strong> Type-ahead is content delivery, which
+plan <code>§3.1</code> confines to two SSE uses, and a result list over FTS is exactly the cacheable,
+session-stable content the plan says never flows through a reactive transport. Search is
+<strong>submit-to-navigate</strong> over ordinary HTTP, <code>GET /c/{slug}/search?q=</code>, <code>ETag</code>-cacheable. The
+count lives in the <code>&lt;h1&gt;</code> (&ldquo;12 results for <em>goblin</em>&rdquo;). A client-side search renderer is
+prohibited: it could not reproduce the server&rsquo;s FTS tokenisation (plan <code>§4.3</code>).</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Assert no <code>aria-live</code> region exists on the search route; assert the response carries an <code>ETag</code>.</li>
+<li><input disabled="" type="checkbox"> Assert the play page opens exactly one WS and one SSE.</li>
+</ul>
+<h3 id="76-the-map-canvas-accessibility-contract">7.6 The map canvas accessibility contract</h3>
+<p>The PixiJS canvas is <code>aria-hidden=&quot;true&quot;</code> and is a <strong>decorative mirror</strong>. The accessible
+representation is real DOM:</p>
+<ul>
+<li>The rail&rsquo;s <strong>Tokens</strong> tab is a <code>&lt;ul&gt;</code> of <code>&lt;button&gt;</code> elements, one per placement, each naming
+it, its hit points, its conditions and its layer. This list is the accessibility source of
+truth; the canvas is the visual one.</li>
+<li><code>ArrowUp</code>/<code>ArrowDown</code> move focus between placements; <code>Enter</code> selects and moves the camera;
+selection mirrors to the canvas.</li>
+<li>On TV the token list is the <strong>primary</strong> way to change what the map shows, because dragging is
+unavailable. On a phone the whole map is a readout (<code>§4.9</code>) and the list is the only
+representation — which makes this component, not the canvas, the load-bearing one.</li>
+<li>A <strong>map contrast overlay</strong> is a first-class control: <code>--map-dim</code> on the map layer, 3px
+<code>--map-outline</code> on every placement and grid line. Much VTT artwork is low-contrast by
+design; without this the map fails 1.4.11 in practice.</li>
+<li><code>role=&quot;application&quot;</code> is <strong>prohibited</strong>.</li>
+<li>Map labels inside the canvas scale with <code>--type-scale</code>.</li>
+<li><strong>Camera rule on resize:</strong> zoom is expressed in world coordinate units, never pixels. The
+client fits the world bounds to the viewport and preserves the world centre across resize and
+orientation change. Without this the map re-frames on every breakpoint crossing — which at
+the 14&quot; target happens constantly.</li>
+</ul>
+<h3 id="77-forms-dialogs-menus">7.7 Forms, dialogs, menus</h3>
+<ul>
+<li>Labels are <code>&lt;label for&gt;</code>, never placeholders.</li>
+<li>Errors: a summary at the top of the form linking to each field, plus <code>aria-invalid</code> and
+<code>aria-describedby</code>. Focus the first error.</li>
+<li>Dialogs: <code>role=&quot;dialog&quot;</code>, <code>aria-modal=&quot;true&quot;</code>, labelled by their heading, focus trapped,
+<code>Escape</code> closes, focus returns to the trigger.</li>
+<li>The <code>412</code> conflict diff <strong>replaces the editor&rsquo;s preview pane</strong> at ≥1024 and is a full-height
+layer above the Edit/Preview tabs below that. Never a modal: the editor is already a split
+view, so a modal hides one side of the comparison (<code>§4.8</code>).</li>
+<li>Menus use the WAI-ARIA menu-button pattern. <strong>On touch and TV a menu is a full-width bottom
+sheet</strong>, not a popover anchored to a 44px trigger.</li>
+</ul>
+<h3 id="78-tables">7.8 Tables</h3>
+<ul>
+<li>Row height ≥44px at touch, ≥36px desktop. Header row sticky within the centre&rsquo;s scroll region.</li>
+<li>Sort is a <code>&lt;button&gt;</code> inside <code>&lt;th scope=&quot;col&quot;&gt;</code> with <code>aria-sort</code>.</li>
+<li>Row actions live in an overflow menu cell, not four always-visible icon buttons — 80 tab stops
+destroys usability.</li>
+<li><strong>Below 640px every table becomes a stacked card form</strong>: each row an <code>&lt;article&gt;</code> with <code>&lt;dl&gt;</code>
+pairs and its own overflow menu. Required by 1.4.10 and the only thing that works at 360px.</li>
+</ul>
+<h3 id="79-reflow-resize-orientation">7.9 Reflow, resize, orientation</h3>
+<ul>
+<li><strong>320 × 256 CSS px with no two-axis scrolling</strong> (1.4.10).</li>
+<li>200% zoom on a 1366px laptop gives a 683px viewport and correctly drops a tier. Nothing is
+lost; the editor buffer survives.</li>
+<li>400% zoom equivalent (320px) reaches everything.</li>
+<li>1.4.12 overrides clip nothing.</li>
+<li>Orientation change preserves scroll position, focus and unsaved state.</li>
+</ul>
+<h3 id="710-prohibited">7.10 Prohibited</h3>
+<p><code>role=&quot;application&quot;</code> · positive <code>tabindex</code> · <code>outline: none</code> without replacement ·
+<code>user-scalable=no</code> · colour as the sole carrier of state · hover-only affordances · unpausable
+autoplaying motion · target sizes below <code>§7.3</code> · <code>aria-hidden</code> on a focusable element · a live
+region firing more than once per second · <code>:has()</code> or container queries for anything
+load-bearing on a TV · a plugin component exempt from any of the above.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Build the primitive library to this contract: dialog, menu-button, tabs, disclosure, bottom sheet, skip link, target utility, two-tone focus ring.</li>
+<li><input disabled="" type="checkbox"> Implement the token list as real DOM; assert the canvas carries <code>aria-hidden=&quot;true&quot;</code> and the list is keyboard-operable end to end.</li>
+<li><input disabled="" type="checkbox"> Add the <code>prefers-reduced-motion</code> and <code>forced-colors</code> blocks to every component.</li>
+<li><input disabled="" type="checkbox"> Add the structural a11y test and make it gate-blocking.</li>
+<li><input disabled="" type="checkbox"> Implement the table component with the &lt;640px stacked form.</li>
+</ul>
+<hr>
+<h2 id="8-component-hierarchy-across-input-methods">8. Component hierarchy across input methods</h2>
+<h3 id="81-four-tiers">8.1 Four tiers</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Contents</th>
+					<th>May collapse?</th>
+					<th>May be sticky?</th>
+					<th>Owns focus?</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>1 — Chrome</strong></td>
+					<td>header, footer, left nav</td>
+					<td>never — both required to persist</td>
+					<td>yes</td>
+					<td>yes, on open</td>
+			</tr>
+			<tr>
+					<td><strong>2 — Rails</strong></td>
+					<td>left nav contents, right utility panels</td>
+					<td>yes, to an icon rail; sheets/drawers below 1024</td>
+					<td>yes</td>
+					<td>yes, when a sheet or drawer</td>
+			</tr>
+			<tr>
+					<td><strong>3 — Content surface</strong></td>
+					<td>page, map, editor, result list, tables, plugin page types</td>
+					<td>no</td>
+					<td>the page outline only</td>
+					<td>no</td>
+			</tr>
+			<tr>
+					<td><strong>4 — Transient</strong></td>
+					<td>dialogs, sheets, menus, toasts, tooltips</td>
+					<td>n/a</td>
+					<td>sheets only</td>
+					<td>yes, exclusively</td>
+			</tr>
+	</tbody>
+</table>
+<p>Tier 4 is modal and traps focus; nothing in tiers 1–3 is modal. A transient layer never obscures
+a tier-1 element on touch, and on TV never obscures focus. Focus order is 1 → 2 → 3 → 4, and
+tier 4 returns focus on close.</p>
+<h3 id="82-input-modality-matrix">8.2 Input-modality matrix</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Behaviour</th>
+					<th>Fine pointer</th>
+					<th>Coarse pointer</th>
+					<th>TV</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Primary affordance</td>
+					<td>visible label</td>
+					<td>persistent labelled control, ≥44px</td>
+					<td>≥56px along the movement axis</td>
+			</tr>
+			<tr>
+					<td>Secondary actions</td>
+					<td>hover-revealed <strong>and</strong> keyboard-reachable</td>
+					<td>always visible; no hover</td>
+					<td>always visible; no hover</td>
+			</tr>
+			<tr>
+					<td>Context menu</td>
+					<td>right-click, with a keyboard equivalent in the overflow menu</td>
+					<td>long-press → bottom sheet</td>
+					<td><strong>overflow menu tile</strong>, not long-press</td>
+			</tr>
+			<tr>
+					<td>Tooltips</td>
+					<td>hover + focus</td>
+					<td>tap-to-toggle via <code>aria-describedby</code></td>
+					<td><strong>absent</strong> — no hover, no hover text</td>
+			</tr>
+			<tr>
+					<td>Focus ring</td>
+					<td>2px + 2px offset</td>
+					<td>2px + 2px offset</td>
+					<td>4px + 4px offset, never suppressed</td>
+			</tr>
+			<tr>
+					<td>Mode switcher</td>
+					<td>header menu</td>
+					<td>&ldquo;More&rdquo; sheet</td>
+					<td>first tile on the home grid</td>
+			</tr>
+			<tr>
+					<td><strong>Text entry</strong></td>
+					<td>full</td>
+					<td>full</td>
+					<td><strong>none</strong></td>
+			</tr>
+			<tr>
+					<td>Selection</td>
+					<td>click, shift-click, marquee</td>
+					<td>tap, long-press</td>
+					<td>single focus, <code>Enter</code> selects</td>
+			</tr>
+			<tr>
+					<td>Scroll</td>
+					<td>wheel, trackpad, scrollbar</td>
+					<td>momentum</td>
+					<td>D-pad, focused element scrolled into view</td>
+			</tr>
+	</tbody>
+</table>
+<p>The load-bearing row is <strong>text entry</strong>. There is no typing on a TV remote, so any control
+requiring text is unreachable there <em>by construction</em>. On TV every such control needs a
+non-typing equivalent — a picker, a chip, or a tile grid. The search field, the Rules tab&rsquo;s
+module config, and <code>/c/{slug}/settings</code> all need one.</p>
+<h3 id="83-visual-hierarchy">8.3 Visual hierarchy</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Rank</th>
+					<th>Element</th>
+					<th>Treatment</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>1</td>
+					<td>Current location (h1, campaign name)</td>
+					<td><code>--text-2xl</code>; <code>--text-3xl</code> on <code>/play</code> and TV</td>
+			</tr>
+			<tr>
+					<td>2</td>
+					<td>Primary action per view</td>
+					<td>exactly one solid <code>--accent-solid</code> per panel; never two competing</td>
+			</tr>
+			<tr>
+					<td>3</td>
+					<td>Section headings (h2)</td>
+					<td><code>--text-xl</code>, 1px <code>--border-subtle</code> rule beneath</td>
+			</tr>
+			<tr>
+					<td>4</td>
+					<td>Body and lists</td>
+					<td><code>--text-md</code> prose, <code>--text-base</code> chrome, <code>--text-muted</code> metadata</td>
+			</tr>
+			<tr>
+					<td>5</td>
+					<td>Utility and metadata</td>
+					<td><code>--text-sm</code>, <code>--text-subtle</code></td>
+			</tr>
+			<tr>
+					<td>6</td>
+					<td>Decoration</td>
+					<td><code>--border-subtle</code>, elevation. Never the only boundary of anything interactive.</td>
+			</tr>
+	</tbody>
+</table>
+<p>Prominence follows the input method, not the tier:</p>
+<ul>
+<li><strong>TV</strong>: ranks 1–2 grow by <code>--type-scale</code>; ranks 4–5 do not shrink below <code>--text-md</code>. Absolute
+floor.</li>
+<li><strong>Touch</strong>: prominence shifts <em>down</em> to rank 2, because the primary action moves to the bottom
+of the reach envelope.</li>
+<li><strong>Ultrawide</strong>: rank 4 does not grow. Extra width becomes gutter.</li>
+</ul>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add a <code>data-modality</code> hook (<code>fine</code> / <code>coarse</code> / <code>tv</code>) set by the same inline script; drive <code>§8.2</code> from it.</li>
+<li><input disabled="" type="checkbox"> Build the TV non-typing equivalents: campaign picker as a tile grid, search as a chip-driven result list, Rules tab module toggles as tiles.</li>
+<li><input disabled="" type="checkbox"> Assert the compact bottom bar contains the primary action for every route.</li>
+</ul>
+<hr>
+<h2 id="9-failure-modes-and-degradation">9. Failure modes and degradation</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Condition</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Old TV browser without WebGL2</td>
+					<td>map falls back to the static image layer; a notice replaces the canvas; <strong>all chrome and the token list keep working</strong></td>
+			</tr>
+			<tr>
+					<td>TV browser without <code>:focus-visible</code></td>
+					<td><code>§7.4</code> — TV mode styles <code>:focus</code> identically</td>
+			</tr>
+			<tr>
+					<td>TV browser without <code>dvh</code></td>
+					<td><code>vh</code> fallback precedes <code>dvh</code></td>
+			</tr>
+			<tr>
+					<td>TV browser without container queries / <code>:has()</code> / <code>subgrid</code></td>
+					<td>progressive enhancement only; the shell uses explicit <code>grid-template-areas</code></td>
+			</tr>
+			<tr>
+					<td>200% zoom on the 14&quot; laptop</td>
+					<td>drops to a narrower tier, nothing lost</td>
+			</tr>
+			<tr>
+					<td>Ultrawide 3440px</td>
+					<td>centre capped by the measure; extra space is gutter</td>
+			</tr>
+			<tr>
+					<td><code>forced-colors: active</code></td>
+					<td><code>§6.7</code>; every shadow separation has a border fallback</td>
+			</tr>
+			<tr>
+					<td>Sheet open on touch, then rotate to short-landscape</td>
+					<td>sheet closes and returns focus to its trigger</td>
+			</tr>
+			<tr>
+					<td>WebSocket reconnect during a dialog</td>
+					<td>no focus change, no toast over the dialog; the header indicator is the only signal</td>
+			</tr>
+			<tr>
+					<td>TV auto-dim while a dice result lands</td>
+					<td>suppressed for 4s</td>
+			</tr>
+			<tr>
+					<td><code>prefers-reduced-motion</code> on <code>/play</code></td>
+					<td>instant pan/zoom, no animated dice; state announced, not animated</td>
+			</tr>
+			<tr>
+					<td>SSE reconnect on the editor</td>
+					<td>notice re-arms; the unsaved buffer is never discarded automatically</td>
+			</tr>
+			<tr>
+					<td><strong>Campaign brand pair fails contrast</strong></td>
+					<td>last known-good theme retained, <code>theme.brand_invalid</code> logged at error level, GM notice (<code>§4.12.3</code>)</td>
+			</tr>
+			<tr>
+					<td><strong>Campaign theme manifest unparseable</strong></td>
+					<td>same as above; the core theme stands. The manifest is attacker-reachable, so it is parsed with the same limits as front matter (plan <code>§12</code>)</td>
+			</tr>
+			<tr>
+					<td><strong>Gameplay plugin missing</strong> (<code>system_id</code> unknown)</td>
+					<td>wiki serves 200; the Table link is <strong>absent</strong>; the campaign overview carries a persistent notice (<code>§4.7</code>)</td>
+			</tr>
+			<tr>
+					<td><strong><code>ruleset_version</code> mismatch</strong></td>
+					<td><code>/play</code> refuses to resume with an <code>role=&quot;alert&quot;</code> block; default is refuse (plan <code>§16.5</code>); wiki unaffected</td>
+			</tr>
+			<tr>
+					<td><strong>Secret reconcile budget exhausted</strong></td>
+					<td>the secret stays hidden; <code>secret.reconcile_capped</code> at error level; GM alert on <code>/play</code> and a row on <code>/c/{slug}/status</code></td>
+			</tr>
+	</tbody>
+</table>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> Add the WebGL2 capability check with the static-image fallback.</li>
+<li><input disabled="" type="checkbox"> Add the auto-dim suppression triggers.</li>
+<li><input disabled="" type="checkbox"> Add the two plugin-degraded states from <code>§4.7</code> to the route surface test.</li>
+</ul>
+<hr>
+<h2 id="10-validation">10. Validation</h2>
+<p>There is no Node in this repo, so <strong>CI-grade automation is Go <code>httptest</code> over rendered shell
+HTML.</strong> The full audit pass is agent-assisted via the Playwright MCP, which per
+<code>.kilo/skills/browser-e2e</code> must not become a CI dependency. <code>make check</code> must be green.</p>
+<h3 id="101-contrast--automated-gate-blocking">10.1 Contrast — automated, gate-blocking</h3>
+<p>Parse the token file in a Go test; assert every pair in <code>§6.2</code>/<code>§6.3</code> against its floor; assert
+no token is missing from either theme; then re-run the whole set <strong>with the fixture campaign
+theme applied</strong>, since a brand override is the one user-supplied value that reaches a colour
+pair. This replaces the hand-computed ratios above.</p>
+<h3 id="102-structural-a11y--automated-gate-blocking">10.2 Structural a11y — automated, gate-blocking</h3>
+<p>For every route, including every registered plugin page type: exactly one <code>&lt;h1&gt;</code>; landmarks
+present with distinguishing labels; no <code>tabindex</code> &gt; 0; no <code>outline: none</code> without a
+replacement; no <code>aria-hidden</code> on a focusable element; skip links first in tab order; every
+<code>data-testid</code> present; <strong>and no rendered string contains &ldquo;world&rdquo; or &ldquo;session&rdquo;</strong> (<code>§1.2</code>).</p>
+<h3 id="103-viewport-and-orientation-sweep--agent-assisted">10.3 Viewport and orientation sweep — agent-assisted</h3>
+<p>All twelve rows of <code>§2</code>, plus 200% zoom at 1366, plus 360 × 640 both orientations. No
+horizontal scrollbar at 320px, nothing clipped, the bottom bar never covering content, no sheet
+leaving under 40px of context.</p>
+<h3 id="104-keyboard-only-walkthrough--agent-assisted">10.4 Keyboard-only walkthrough — agent-assisted</h3>
+<p>Every route, mouse untouched: tab order matches DOM order; every action reachable; no trap
+outside dialogs; focus visible at every stop; focus returns to the trigger on close.</p>
+<h3 id="105-d-pad-walkthrough-tv--agent-assisted">10.5 D-pad walkthrough (TV) — agent-assisted</h3>
+<p>Every route with a simulated remote: documented focus order; no focus loss on reconnect; no
+hover-only affordance; every typed-input control has a non-typing equivalent; target sizes met
+with 16px gutters.</p>
+<h3 id="106-target-size-audit--automated">10.6 Target size audit — automated</h3>
+<p>Assert <code>.target</code> minimums hold at 320px; grep rendered markup for interactive elements missing
+the class, <strong>including plugin output</strong>.</p>
+<h3 id="107-media-query-matrix--agent-assisted">10.7 Media-query matrix — agent-assisted</h3>
+<p><code>prefers-reduced-motion</code>, <code>prefers-contrast: more</code>, <code>forced-colors: active</code>,
+<code>prefers-color-scheme</code> both values, both themes, two viewports. Sixteen combinations.</p>
+<h3 id="108-route-specific-checks">10.8 Route-specific checks</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Surface</th>
+					<th>Automated</th>
+					<th>Agent-assisted</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Editor (<code>§4.8</code>)</td>
+					<td>textarea has a <code>&lt;label&gt;</code>; toolbar is <code>role=&quot;toolbar&quot;</code>; preview is <code>aria-live=&quot;off&quot;</code>; save state is <code>role=&quot;status&quot;</code>; buffer survives a <code>412</code></td>
+					<td>keyboard-only edit and save; undo survives a toolbar action; split at 1024, tabs at 375</td>
+			</tr>
+			<tr>
+					<td>Phone play (<code>§4.9</code>)</td>
+					<td>compact canvas is <code>aria-hidden</code> with no pointer handler; action bar replaces nav on <code>/play</code> only; the rail sheet never covers the action bar at 320 × 568</td>
+					<td>thumb reach for all four controls; no gesture conflict; a read-only map is not mistaken for a broken one</td>
+			</tr>
+			<tr>
+					<td>Search (<code>§7.5</code>)</td>
+					<td>count in the <code>&lt;h1&gt;</code>; no live region on the route; response carries an <code>ETag</code></td>
+					<td>no type-ahead, no client fetch on keystroke</td>
+			</tr>
+			<tr>
+					<td><strong>Secrets (<code>§4.10</code>)</strong></td>
+					<td><strong>the secret text appears in no non-GM response</strong> — not the DOM, not the accessibility tree, not a <code>data-</code> attribute, not a JSON payload (plan <code>§14</code>&rsquo;s highest-value test, UI half). No reveal control in any non-GM response. GM and player <code>ETag</code>s differ.</td>
+					<td>a sighted player is not shown a stub unless the campaign opted in; the gap warning fires only mid-paragraph</td>
+			</tr>
+			<tr>
+					<td><strong>Theme layer (<code>§4.12</code>)</strong></td>
+					<td>generated <code>/c/{slug}/theme.css</code> contains no protected variable; a raw <code>.css</code> in a content root is never linked; an invalid brand pair keeps the last good theme and logs <code>theme.brand_invalid</code></td>
+					<td>a campaign theme is visibly applied and the UI stays readable</td>
+			</tr>
+			<tr>
+					<td><strong>Plugin UI (<code>§4.11</code>)</strong></td>
+					<td>the structural a11y test passes for every registered plugin page type; no hard-coded kind label in the shell; a client-side roll result is never rendered</td>
+					<td>a plugin component inherits <code>.target</code>, tokens and the focus ring</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="109-what-a-browser-pass-must-become">10.9 What a browser pass must become</h3>
+<p>Every finding from 10.3–10.8 becomes a committed Go test. MCP-driven steps never become CI
+steps.</p>
+<p><strong>Tasks</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> <code>internal/web/tokens_contrast_test.go</code> — <code>§10.1</code>, with the fixture campaign theme.</li>
+<li><input disabled="" type="checkbox"> <code>internal/httpapi/shell_render_test.go</code> — <code>§10.2</code>, <code>§10.6</code>, every route in <code>§4.4</code>.</li>
+<li><input disabled="" type="checkbox"> <code>internal/httpapi/route_surface_test.go</code> — <code>§10.8</code>, one file per surface so a blocked slice fails only its own tests.</li>
+<li><input disabled="" type="checkbox"> <code>internal/httpapi/secret_render_test.go</code> — the plan&rsquo;s highest-value test, UI half.</li>
+<li><input disabled="" type="checkbox"> Add <code>make a11y</code> running all of them, and include it in <code>check</code>.</li>
+</ul>
+<hr>
+<h2 id="11-risks">11. Risks</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Risk</th>
+					<th>Impact</th>
+					<th>Mitigation</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Old TV browsers are an open-ended target</td>
+					<td><code>dvh</code>, <code>:focus-visible</code>, container queries, WebGL2 all vary</td>
+					<td>explicit fallbacks (<code>§9</code>); no load-bearing <code>:has()</code>/<code>subgrid</code>/container queries</td>
+			</tr>
+			<tr>
+					<td>Contrast values are hand-computed</td>
+					<td>a typo ships an AA failure</td>
+					<td><code>§10.1</code> gate fails the build</td>
+			</tr>
+			<tr>
+					<td>Five tiers plus a TV mode plus two theme layers is a lot of surface</td>
+					<td>tiers drift apart over time</td>
+					<td>one root attribute pair, one canonical DOM, tiers are CSS only, and the theme layer cannot reach a protected variable because the server never emits one</td>
+			</tr>
+			<tr>
+					<td>The <code>ETag</code> salt is easy to get wrong</td>
+					<td>a GM&rsquo;s unredacted body cached and served to a player</td>
+					<td><code>§6.6</code> makes it an explicit test in <code>§10.2</code> and <code>§10.8</code>, not a code-review note</td>
+			</tr>
+			<tr>
+					<td>A campaign supplies a font that fails to load</td>
+					<td>falls back to the system stack</td>
+					<td>system stack is never removed (<code>§5.2</code>); <code>font-display: swap</code> forced</td>
+			</tr>
+			<tr>
+					<td>The 580px centre height is unforgiving</td>
+					<td>vertical overflow on a dialog</td>
+					<td>every dialog is height-capped and internally scrollable; test at 768px tall specifically</td>
+			</tr>
+			<tr>
+					<td>D-pad focus order is undocumented in practice</td>
+					<td>unusable TVs discovered late</td>
+					<td><code>§10.5</code> produces a written focus order per route as a deliverable</td>
+			</tr>
+			<tr>
+					<td>Left rail assumed to hold &lt;10 campaigns</td>
+					<td>unusable nav at scale</td>
+					<td>acknowledged; group-and-filter deferred (<code>§14.4</code>). A TV filter is also blocked by &ldquo;no text entry&rdquo;</td>
+			</tr>
+			<tr>
+					<td>The editor preview costs a round trip per pause</td>
+					<td>lag on a slow LAN</td>
+					<td>800ms debounce plus on-demand; a client renderer would be wrong, not merely different</td>
+			</tr>
+			<tr>
+					<td>No positional play from a phone (<code>§4.9</code>)</td>
+					<td>a table player may expect to move their own token</td>
+					<td>stated, not hidden. Worth a play-test before it is locked</td>
+			</tr>
+			<tr>
+					<td>The editor buffer is the user&rsquo;s unsaved work</td>
+					<td>a bug that clears it loses data</td>
+					<td>survives orientation, resize, tab switch and <code>412</code>; never discarded without a confirmation naming the loss</td>
+			</tr>
+	</tbody>
+</table>
+<hr>
+<h2 id="12-data-flow">12. Data flow</h2>
+<p>Read-only for this spec; it consumes the plan&rsquo;s flows.</p>
+<pre tabindex="0"><code>request → middleware chain → route handler
+  → resolve access tier (plan §8)
+  → content pipeline (plan §5) for the centre slot, with include_secrets
+  → build domain.PageLayout{Centre, Rail} + domain.ShellPrefs
+  → templ renders ONE canonical shell:
+      no data-theme, no data-ui
+      ETag = sha256(content_hash + include_secrets)          (§6.6)
+      Cache-Control: private, no-store   when include_secrets
+      &lt;link href=&#34;/c/{slug}/theme.css&#34;&gt; when the campaign has a manifest (§4.12)
+  → inline head script sets data-theme + data-ui from sp_ui / ?ui= / UA hint / media queries
+  → CSS selects tier, density, theme, campaign brand; zero further round trips
+
+live: WS in (intents, presence) → hub applies → state
+        ├→ WS out: ordered deltas → PixiJS (structured)
+        └→ SSE out: rendered sidebar fragments → Datastar → DOM (§7.5)
+</code></pre><p>Three invariants:</p>
+<ul>
+<li><strong>The document never varies by <code>sp_ui</code>.</strong> No <code>Vary: Cookie</code>, and plan <code>§5.5</code>&rsquo;s
+content-hash invalidation signal survives intact.</li>
+<li><strong>The document varies by access tier and by <code>include_secrets</code></strong>, and the second is a security
+boundary (<code>§6.6</code>).</li>
+<li><strong>The shell opens no SSE or WebSocket.</strong> The play page opens exactly one of each (§7.5); the
+editor opens one SSE. Plan <code>§7</code>&rsquo;s connection ceiling is never approached by chrome alone.</li>
+</ul>
+<hr>
+<h2 id="13-rollout">13. Rollout</h2>
+<p>Nothing to migrate, no stored preference to backfill, no schema change. <code>sp_ui</code> is a new cookie
+with a safe default for absent readers. Two ordering constraints:</p>
+<ol>
+<li>The shell must land before any route fills a slot, so no route ships a hard-coded three-column
+layout that bypasses the contract. <code>§15.2</code> enforces this.</li>
+<li><code>/c/{slug}/theme.css</code> must exist before any campaign manifest is accepted, or a campaign
+registration would reference a 404 stylesheet.</li>
+</ol>
+<hr>
+<h2 id="14-open-questions">14. Open questions</h2>
+<ol>
+<li><strong>Should the &ldquo;Revealed&rdquo; marker be on by default on the published page?</strong> <code>§4.10.4</code> splits it:
+on in the editor, off in play. A GM debugging a reveal wants it; a table mid-scene does not.
+Worth confirming with a real table.</li>
+<li><strong>Should the brand layer be per-campaign or per-user?</strong> <code>§4.12.4</code> chose per-campaign, which
+keeps it out of <code>sp_ui</code> and preserves the no-<code>Vary: Cookie</code> result. Per-user would be nicer
+for a shared instance but reintroduces the cookie-varying-document problem.</li>
+<li><strong>Default <code>/play</code> rail tab per form factor.</strong> <code>Initiative</code> on laptop, <code>Tokens</code> on TV and on
+a phone, where the map is a readout. Needs a play-test.</li>
+<li><strong>Left-rail scale.</strong> Assumes fewer than ten campaigns. Past that it needs grouping and a
+filter — and the filter is unusable on TV.</li>
+<li><strong>Whether any native client is ever wanted.</strong> This spec assumes not. If that changes, the
+token layer in <code>§6</code> is the only part that ports, which is why it is CSS custom properties
+rather than baked Tailwind theme values.</li>
+<li><strong>Print.</strong> Deferred deliberately (<code>§1.4</code>). A GM printing a statblock is real and deserves its
+own spec.</li>
+<li><strong>The plan&rsquo;s own open questions that reach the UI:</strong> cross-campaign wikilinks
+(<code>§16.1</code>), ruleset-drift policy (<code>§16.5</code> — default refuse, and <code>§4.7</code> designs for that
+default), and whether <code>page_revisions</code> needs a UI beyond the rail&rsquo;s revision list.</li>
+</ol>
+<hr>
+<h2 id="15-build-order">15. Build order</h2>
+<h3 id="151-where-this-spec-attaches-to-the-plan">15.1 Where this spec attaches to the plan</h3>
+<table>
+	<thead>
+			<tr>
+					<th>This spec</th>
+					<th>Plan phase</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>§4.1</code>–<code>§4.7</code> shell, <code>§3</code>, <code>§5</code>, <code>§6</code>, <code>§7</code></td>
+					<td>plan phase 5 (wiki surface) — but see <code>§15.2</code></td>
+			</tr>
+			<tr>
+					<td><code>§4.8</code> editor</td>
+					<td>plan phase 5</td>
+			</tr>
+			<tr>
+					<td><code>§4.10</code> secrets</td>
+					<td>plan phase 11</td>
+			</tr>
+			<tr>
+					<td><code>§4.11</code> plugin UI contract</td>
+					<td>plan phases 7–8</td>
+			</tr>
+			<tr>
+					<td><code>§4.12</code> theme layer</td>
+					<td>plan phase 10</td>
+			</tr>
+			<tr>
+					<td><code>§4.9</code> phone play</td>
+					<td>plan phases 6 and 10</td>
+			</tr>
+	</tbody>
+</table>
+<h3 id="152-a-defect-in-the-plans-ordering">15.2 A defect in the plan&rsquo;s ordering</h3>
+<p>Plan <code>§15</code> builds the templ shell at phase 5 but places &ldquo;Tailwind standalone build&rdquo; at phase
+10. <strong>A shell cannot be styled before the CSS toolchain exists.</strong> The toolchain steps must move
+before phase 5. The smallest fix: split plan phase 5, or move the Tailwind/templ setup into plan
+phase 1&rsquo;s &ldquo;Foundations&rdquo;. This spec&rsquo;s Slice A below is that work, and it should be sequenced
+ahead of plan phase 5.</p>
+<h3 id="153-slice-a--the-shell-unblocked">15.3 Slice A — the shell. Unblocked</h3>
+<p>Depends only on the repo as it stands. This is the deliverable of this plan.</p>
+<ol>
+<li>Toolchain: vendored Tailwind v4 CLI, pinned templ, <code>make css</code> / <code>make templ</code>, both wired
+into <code>make check</code>.</li>
+<li>Token layer — primitives, both themes, scale multipliers, callout and brand tokens
+(<code>§5</code>, <code>§6.1</code>–<code>§6.4</code>), plus the contrast test (<code>§10.1</code>).</li>
+<li>Shell grid and the two-column pre-campaign variant (<code>§4</code>, <code>§3.2</code>).</li>
+<li>Inline head resolver and <code>sp_ui</code> (<code>§3.7</code>, <code>§6.6</code>).</li>
+<li>Header, footer, left nav (<code>§4.1</code>–<code>§4.3</code>).</li>
+<li>Right rail: persistent, drawer, and the below-640px bottom sheet (<code>§4.5</code>, <code>§3.1</code>).</li>
+<li>Primitive library: dialog, menu-button, tabs, disclosure, skip link, target utility (<code>§7.7</code>).</li>
+<li>The eleven empty/error/degraded states (<code>§4.7</code>).</li>
+<li>Table component with the stacked form (<code>§7.8</code>).</li>
+<li>Structural a11y test and <code>make a11y</code> (<code>§10.2</code>, <code>§10.6</code>).</li>
+<li>TV mode: layout, scale, focus rules, home tile grid, non-typing equivalents (<code>§3.3</code>,
+<code>§3.4</code>, <code>§8.2</code>).</li>
+<li>Agent-assisted sweeps <code>§10.3</code>–<code>§10.7</code>; convert every finding into a Go test.</li>
+</ol>
+<p>Each step leaves the shell usable. A stub route filling each slot in <code>§4.4</code> is enough to make
+every step demonstrable; no route may hard-code its own three-column layout.</p>
+<h3 id="154-slice-b--route-surfaces-blocked-on-the-content-pipeline">15.4 Slice B — route surfaces. Blocked on the content pipeline</h3>
+<p>The editor (<code>§4.8</code>), the <code>412</code> diff, the render endpoint, and the theme generator (<code>§4.12</code>) all
+require goldmark, front-matter parsing and sanitisation to exist. Their <em>markup</em> can be built in
+Slice A against fixture HTML, so the accessibility contract is proven before the pipeline lands;
+the wiring cannot.</p>
+<h3 id="155-slice-c--live-play-blocked-on-the-realtime-plan">15.5 Slice C — live play. Blocked on the realtime plan</h3>
+<p>The <code>/play</code> rail tabs, the token list, the map canvas, the WebSocket live regions, the
+sidebar-fragment SSE and the phone action bar (<code>§4.9</code>) require the hub and the <code>intent</code> op set.
+The <em>layout</em> — two-column grid, tabbed rail, action bar geometry, read-only canvas — can be
+built in Slice A against a fixture snapshot, which is the only way to validate the 320 × 580
+budget before a hub exists.</p>
+<h3 id="156-slice-d--secrets-blocked-on-plan-phase-11">15.6 Slice D — secrets. Blocked on plan phase 11</h3>
+<p><code>§4.10</code> needs the two-variant render, the <code>include_secrets</code> cache key, the reveal endpoint and
+the ledger. Its <em>markup</em> — the reveal controls, the stub, the gap warning, the callout tokens —
+can be built in Slice A against fixture content, and the contrast test already covers the
+callout tokens. The reveal round trip cannot.</p>
+<p><strong>This ordering is why <code>§4.10</code>–<code>§4.12</code> are specified now.</strong> Every blocked surface is designed
+against its block, so the moment the pipeline, hub and ledger land there is nothing left to
+decide — only markup to write.</p>
+
+
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

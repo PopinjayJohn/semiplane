@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+	<meta name="generator" content="Hugo 0.167.0"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>semiplane</title>
+<meta name="description" content="A self-hosted, system-agnostic TTRPG wiki and virtual tabletop.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="semiplane">
+<meta property="og:description" content="A self-hosted, system-agnostic TTRPG wiki and virtual tabletop.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><h1>semiplane</h1>
+<p>semiplane is a self-hosted, system-agnostic TTRPG wiki and virtual tabletop. One
+Go binary, one SQLite file, and campaign content in an Obsidian vault you
+already keep in sync.</p>
+<p>It exists because the two halves of running a game — the wiki your group writes
+and the tabletop you play on — are usually two programs with two models of the
+same content, and keeping them in agreement is manual. Here, a page <em>is</em> the
+content: a markdown file in your vault is simultaneously prose, a stat block, a
+map, and a handout.</p>
+<blockquote>
+<p><strong>Status: pre-release.</strong> The repository is a scaffold. Nothing described on
+this site ships yet, and the [roadmap]({{ &ldquo;roadmap/&rdquo; | relURL }}) is the
+authoritative statement of what exists. Read it before you plan around
+anything here.</p>
+</blockquote>
+<h2 id="what-it-is-going-to-be">What it is going to be</h2>
+<ul>
+<li><strong>A wiki that reads your vault.</strong> Filesystem markdown is the source of truth.
+Edit in Obsidian, in the browser, or both; the watcher converges and the search
+index follows. Nothing is trapped in a database you cannot read.</li>
+<li><strong>A tabletop with no rules baked in.</strong> Gameplay systems — D&amp;D 5e, Pathfinder,
+anything else — plug in as compiled-in modules behind one interface. The map
+and the token layer know nothing about any rules system, so a new one costs no
+client work.</li>
+<li><strong>A server you can actually run.</strong> One process, one SQLite file, no external
+services, no account to create anywhere.</li>
+</ul>
+<h2 id="what-it-is-not">What it is not</h2>
+<p>Stated up front because the limits are load-bearing:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Not</th>
+					<th>Why</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Horizontally scalable</td>
+					<td>Authoritative game state lives in memory in one process. Two instances diverge silently.</td>
+			</tr>
+			<tr>
+					<td>A replacement for Obsidian</td>
+					<td>Obsidian is where you <em>write</em>. semiplane is where you <em>read and play</em>.</td>
+			</tr>
+			<tr>
+					<td>A hosted service</td>
+					<td>There is no SaaS. If you want it, you run it.</td>
+			</tr>
+			<tr>
+					<td>Dynamically extensible at runtime</td>
+					<td>Plugins are compiled-in Go modules, not <code>.so</code> files dropped into a directory.</td>
+			</tr>
+			<tr>
+					<td>Encrypted at rest</td>
+					<td>See [secrets]({{ &ldquo;concepts/secrets/&rdquo;</td>
+			</tr>
+	</tbody>
+</table>
+<h2 id="start-here">Start here</h2>
+<div class="btn-row" data-testid="btn-row">
+  <a class="btn" href="/semiplane/install/">Installation guide</a>
+
+  <a class="btn btn--ghost" href="/semiplane/concepts/">Concepts and terminology</a>
+
+  <a class="btn btn--ghost" href="/semiplane/design/">Design records</a>
+
+</div>
+
+<p>New to the project? Read the [concepts page]({{ &ldquo;concepts/&rdquo; | relURL }}) before
+anything else. semiplane is deliberate about vocabulary, and half of the design
+records will make more sense once &ldquo;campaign&rdquo; and &ldquo;session&rdquo; stop meaning the same
+thing in your head.</p>
+<h2 id="the-honest-caveat">The honest caveat</h2>
+<p>The [architecture]({{ &ldquo;design/architecture/&rdquo; | relURL }}) and
+[UI specification]({{ &ldquo;design/ui-ux/&rdquo; | relURL }}) are published verbatim,
+including their open questions and the decisions that were deliberately deferred.
+They are the best available description of intent, and they are not documentation
+of a working system. Where the two disagree, the code is right.</p>
+
+
+<div class="grid" data-testid="entry-grid">
+    <div class="card">
+      <h2><a href="/semiplane/install/">Install</a></h2>
+        <p>One binary, one SQLite file, and a directory your campaigns can point at. There is no external service to sign up for.</p>
+    </div>
+    <div class="card">
+      <h2><a href="/semiplane/concepts/">Concepts</a></h2>
+        <p>A wiki and a tabletop share most of their nouns, and the overlaps are where confusion starts. These are the definitions the code is written against.</p>
+        <ul>
+            <li><a href="/semiplane/concepts/content-model/">Content model</a></li>
+            <li><a href="/semiplane/concepts/secrets/">Secrets</a></li>
+            <li><a href="/semiplane/concepts/plugins/">Plugins</a></li>
+        </ul>
+    </div>
+    <div class="card">
+      <h2><a href="/semiplane/operating/">Operating semiplane</a></h2>
+        <p>One process, one SQLite file, one directory. There is no cluster to operate, and that is the design constraint most of this page is explaining.</p>
+        <ul>
+            <li><a href="/semiplane/operating/security/">Security</a></li>
+        </ul>
+    </div>
+    <div class="card">
+      <h2><a href="/semiplane/roadmap/">Roadmap</a></h2>
+        <p>Sequenced by dependency, not by effort. Each phase leaves a running server, and phases 7 to 9 can be reordered or deferred without breaking what came before.</p>
+    </div>
+    <div class="card">
+      <h2><a href="/semiplane/contributing/">Contributing</a></h2>
+        <p>One command decides whether a change is finished. Run it before you open a pull request, not after a review asks.</p>
+        <ul>
+            <li><a href="/semiplane/contributing/spec/">Specification</a></li>
+        </ul>
+    </div>
+    <div class="card">
+      <h2><a href="/semiplane/decisions/">Decisions</a></h2>
+        <p>An ADR records a decision and its cost. The alternatives section is not padding — it is the part that saves the next person from re-running the argument.</p>
+        <ul>
+            <li><a href="/semiplane/decisions/0047-a-ui-plugin-renders-what-the-server-stamped-and-fetches-only-what-it-is-public/">0047 — A UI plugin renders what the server stamped, and fetches only what is public</a></li>
+            <li><a href="/semiplane/decisions/0048-a-house-rule-is-a-keyed-setting-and-5es-pack-merge-is-not-reused/">0048 — A house rule is a keyed setting, and 5e&#39;s pack merge is not reused</a></li>
+            <li><a href="/semiplane/decisions/0051-opencode-is-the-only-agent-and-its-directory-is-the-committed-one/">0051 — OpenCode is the only agent, and its directory is the committed one</a></li>
+            <li><a href="/semiplane/decisions/0052-third-party-browser-assets-are-committed-and-digest-pinned/">0052 — Third-party browser assets are committed, digest-pinned, and served from our own origin</a></li>
+            <li><a href="/semiplane/decisions/0054-a-campaign-sets-its-brand-and-the-server-renders-the-stylesheet/">0054 — A campaign sets its brand, and the server renders the stylesheet</a></li>
+            <li><a href="/semiplane/decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/">0041 — The rules contract returns mutations and carries its own randomness</a></li>
+            <li><a href="/semiplane/decisions/0042-the-plugin-registry-is-explicit-and-a-ui-plugin-can-only-emit-known-ops/">0042 — The plugin registry is explicit, and a UI plugin can only emit known ops</a></li>
+            <li><a href="/semiplane/decisions/0043-the-conformance-suite-is-the-only-shared-code-a-foreign-system-needs/">0043 — The conformance suite is the only shared code a foreign system needs</a></li>
+            <li><a href="/semiplane/decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/">0044 — Determinism is enforced by lint because plugins are compiled in</a></li>
+            <li><a href="/semiplane/decisions/0045-the-5e-engine-is-shared-mechanics-and-a-data-pack/">0045 — The 5e engine is shared mechanics and a data pack</a></li>
+            <li><a href="/semiplane/decisions/0046-edition-differences-are-overlay-data-not-go/">0046 — Edition differences are overlay data, not Go</a></li>
+            <li><a href="/semiplane/decisions/0050-a-dispatch-names-its-own-actor/">0050 — A dispatch names its own actor, and an actor cannot be decoded from bytes</a></li>
+            <li><a href="/semiplane/decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/">0055 — Two egresses, one hub: the sidebar is HTML and the canvas is structured data</a></li>
+            <li><a href="/semiplane/decisions/0053-play-serves-the-table-and-ws-upgrades/">0053 — `/play` serves the table and `/ws` upgrades, and a control the protocol cannot honour is rendered disabled with its reason</a></li>
+            <li><a href="/semiplane/decisions/0001-go-as-implementation-language/">0001 — Go 1.27 as the implementation language</a></li>
+            <li><a href="/semiplane/decisions/0002-standard-library-router/">0002 — The standard library router, not Chi</a></li>
+            <li><a href="/semiplane/decisions/0023-work-item-branch-names-drop-the-phase-prefix/">0023 — Work-item branch names drop the `phase/` prefix</a></li>
+            <li><a href="/semiplane/decisions/0003-slog-observability/">0003 — slog, with no metrics server and no tracing</a></li>
+            <li><a href="/semiplane/decisions/0004-single-process-constraint/">0004 — One process, and what that forecloses</a></li>
+            <li><a href="/semiplane/decisions/0005-sqlite-driver/">0005 — modernc.org/sqlite, not mattn/go-sqlite3</a></li>
+            <li><a href="/semiplane/decisions/0006-content-root-is-source-of-truth/">0006 — The content root is the source of truth</a></li>
+            <li><a href="/semiplane/decisions/0007-fts5-tokenizer/">0007 — FTS5, unicode61, and deliberately not porter</a></li>
+            <li><a href="/semiplane/decisions/0008-forward-only-migrations/">0008 — Forward-only migrations</a></li>
+            <li><a href="/semiplane/decisions/0009-server-authoritative-intents/">0009 — Server-authoritative intents</a></li>
+            <li><a href="/semiplane/decisions/0010-websocket-library/">0010 — coder/websocket, not gorilla</a></li>
+            <li><a href="/semiplane/decisions/0011-compiled-in-plugins/">0011 — Plugins are compiled-in, registered explicitly</a></li>
+            <li><a href="/semiplane/decisions/0012-plugin-authority/">0012 — Plugin authority is enforced structurally</a></li>
+            <li><a href="/semiplane/decisions/0013-templ/">0013 — templ, pinned exactly</a></li>
+            <li><a href="/semiplane/decisions/0014-datastar-scope/">0014 — Datastar for live chrome only</a></li>
+            <li><a href="/semiplane/decisions/0015-pixijs-and-client-surface/">0015 — PixiJS v8, and a deliberately small client</a></li>
+            <li><a href="/semiplane/decisions/0016-salted-etag/">0016 — Salt the ETag with include_secrets</a></li>
+            <li><a href="/semiplane/decisions/0017-cross-campaign-links-never-inline/">0017 — Cross-campaign links never inline</a></li>
+            <li><a href="/semiplane/decisions/0018-ruleset-version-fingerprint/">0018 — ruleset_version fingerprints semantics, not configuration</a></li>
+            <li><a href="/semiplane/decisions/0019-tailwind-standalone-pinned/">0019 — Tailwind as a pinned standalone binary, with the manifest hash committed</a></li>
+            <li><a href="/semiplane/decisions/0021-password-hashing-with-pbkdf2/">0021 — A password is stored as PBKDF2 at OWASP&#39;s work factor, and carries its own iteration count</a></li>
+            <li><a href="/semiplane/decisions/0022-sessions-key-on-a-token-hash/">0022 — `auth_sessions` keys on a hash of the token, because the database is the thing that gets stolen</a></li>
+            <li><a href="/semiplane/decisions/0020-trusted-proxies-and-client-ip/">0020 — A forwarding header is evidence of nothing until an operator names the proxy</a></li>
+            <li><a href="/semiplane/decisions/0024-authorisation-gates-mount-not-per-handler/">0024 — Authorisation is a gate on the route, not a check inside the handler</a></li>
+            <li><a href="/semiplane/decisions/0025-no-first-account-bootstrap-environment-variable/">0025 — The first account is a command, not an environment variable</a></li>
+            <li><a href="/semiplane/decisions/0027-no-front-matter-column-and-the-index-is-a-cache/">0027 — There is no `front_matter` column, and the database index is a cache of the filesystem</a></li>
+            <li><a href="/semiplane/decisions/0028-render-output-is-permission-neutral/">0028 — Rendered output is permission-neutral: raw HTML is never interpreted, and a block-level element loses its text</a></li>
+            <li><a href="/semiplane/decisions/0031-body-plain-is-derived-from-the-source/">0031 — `body_plain` is derived from the source, never from rendered HTML</a></li>
+            <li><a href="/semiplane/decisions/0026-cross-campaign-wikilinks-are-vault-absolute/">0026 — A cross-campaign wikilink is spelled `[[/campaign/Page]]`, with the leading slash</a></li>
+            <li><a href="/semiplane/decisions/0029-redaction-operates-on-the-source/">0029 — A redactor sees the whole source, and runs before the render</a></li>
+            <li><a href="/semiplane/decisions/0033-two-conflicts-in-the-ui-record/">0033 — Two conflicts in the UI record, resolved and recorded</a></li>
+            <li><a href="/semiplane/decisions/0032-index-signals-beyond-the-architecture-list/">0032 — Six signals beyond the architecture record&#39;s list</a></li>
+            <li><a href="/semiplane/decisions/0034-tv-mode-not-a-width-band/">0034 — TV mode is a mode, not a width band</a></li>
+            <li><a href="/semiplane/decisions/0035-no-vary-cookie-and-one-blocking-script/">0035 — No `Vary: Cookie`, and exactly one blocking inline script</a></li>
+            <li><a href="/semiplane/decisions/0036-page-titles-are-not-redacted/">0036 — `pages.title` is not redacted, and a title may carry secret text</a></li>
+            <li><a href="/semiplane/decisions/0037-zero-bytes-is-not-a-stable-size/">0037 — Zero bytes is not a stable size, and the settle budget is the only clock that can tell a blank note from an unwritten one</a></li>
+            <li><a href="/semiplane/decisions/0038-target-class-is-applied-by-the-render-pipeline/">0038 — The `.target` class is applied by the render pipeline, after the sanitiser</a></li>
+            <li><a href="/semiplane/decisions/0039-inert-core-system/">0039 — The inert `core` system, so phase 7 runs against something real</a></li>
+            <li><a href="/semiplane/decisions/0040-a-settle-is-judged-by-entitlement/">0040 — A settle is judged by entitlement, not by a clock the test does not own</a></li>
+        </ul>
+    </div>
+    <div class="card">
+      <h2><a href="/semiplane/design/">Design records</a></h2>
+        <p>Two specifications, published exactly as they were written, because a design document that has been retyped into a website eventually stops matching the design it describes.</p>
+        <ul>
+            <li><a href="/semiplane/design/architecture/">Technical architecture</a></li>
+            <li><a href="/semiplane/design/ui-ux/">Responsive UI/UX specification</a></li>
+        </ul>
+    </div>
+</div></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

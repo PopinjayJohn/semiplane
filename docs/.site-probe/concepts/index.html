@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Concepts — semiplane</title>
+<meta name="description" content="The words semiplane uses, and why the obvious words are the wrong ones.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/concepts/">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Concepts — semiplane">
+<meta property="og:description" content="The words semiplane uses, and why the obvious words are the wrong ones.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/concepts/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/" aria-current="page">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Concepts</h1>
+    <p class="lede">The words semiplane uses, and why the obvious words are the wrong ones.</p>
+    <h2 id="read-this-before-anything-else">Read this before anything else</h2>
+<p>The word <strong>session</strong> is the problem this page exists to solve. In tabletop
+software it usually means one sitting of a game. In semiplane it must not, because
+two different things want the name and neither of them is a sitting of a game.</p>
+<table>
+	<thead>
+			<tr>
+					<th>Term</th>
+					<th>Means</th>
+					<th>Never means</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Campaign</strong></td>
+					<td>The tenancy boundary, and the slug in every URL. One content root, one membership list, one live tabletop, one gameplay system.</td>
+					<td>Not a workspace, a server, or a tenant</td>
+			</tr>
+			<tr>
+					<td><strong>User</strong></td>
+					<td>A global account. A member of many campaigns.</td>
+					<td>Not a campaign, not a seat</td>
+			</tr>
+			<tr>
+					<td><strong>Page</strong></td>
+					<td>One markdown file at <code>(campaign, path)</code>. Prose and game objects are the same thing.</td>
+					<td>Not a revision</td>
+			</tr>
+			<tr>
+					<td><strong>Game object</strong></td>
+					<td>A page with a registered <code>kind</code>: a token, a scene, a handout, a journal, an index. A <em>definition</em> — durable, editable in Obsidian.</td>
+					<td>Not an instance of anything</td>
+			</tr>
+			<tr>
+					<td><strong>Ruleset</strong></td>
+					<td>The resolved rule configuration for a campaign: gameplay system, data-pack overlays, enabled house-rule modules. Has a <code>ruleset_version</code>.</td>
+					<td>Not a settings screen</td>
+			</tr>
+			<tr>
+					<td><strong>Placement</strong></td>
+					<td>A game object <em>instance</em> on a live map. Position, current hit points, conditions. <strong>Runtime only.</strong></td>
+					<td>Not a file, not a definition</td>
+			</tr>
+			<tr>
+					<td><strong>Campaign state</strong></td>
+					<td>The single in-memory and persisted row holding all live placements and turn state.</td>
+					<td>Not a save file per user</td>
+			</tr>
+			<tr>
+					<td><strong>Auth session</strong></td>
+					<td>A browser login.</td>
+					<td>Never rendered in the interface at all</td>
+			</tr>
+	</tbody>
+</table>
+<p>There is no <code>world</code> entity and no <code>session</code> game entity. A campaign has at most
+one live tabletop, which is why <code>/c/{slug}/play</code> needs no session identifier.</p>
+<p><strong>In the interface, &ldquo;session&rdquo; is never used.</strong> The game route is labelled <em>Game</em>
+in the navigation, the header, and the footer. The URL parameter keeps its
+generic name so the route table stays unchanged; only the label differs.</p>
+<h2 id="the-one-rule-that-explains-the-data-model">The one rule that explains the data model</h2>
+<p><strong>Definitions are files. Placements are runtime.</strong></p>
+<p>A token&rsquo;s maximum hit points, armour class, portrait, and size live in the page&rsquo;s
+front matter, written by the GM in Obsidian or the browser. A token&rsquo;s <em>current</em>
+hit points and <em>current</em> position live in campaign state, written by the game.</p>
+<p>The reason is collision, not tidiness. If current hit points lived in the file,
+every damage event would rewrite it — and Obsidian Sync would overwrite the
+change on its next sync, producing a permanent conflict storm between two writers
+with no shared lock. Placements are never written to files. That is a hard rule.</p>
+<h2 id="pages-and-the-kind-field">Pages, and the <code>kind</code> field</h2>
+<p>Everything is a markdown file with YAML front matter. A page with no <code>kind</code> is
+prose. A page with a <code>kind</code> the loader recognises is a game object:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-markdown" data-lang="markdown"><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l">Captain Aldric</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">token</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">size</span><span class="p">:</span><span class="w"> </span><span class="l">medium</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">ac</span><span class="p">:</span><span class="w"> </span><span class="m">16</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">hp_max</span><span class="p">:</span><span class="w"> </span><span class="m">45</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nt">portrait</span><span class="p">:</span><span class="w"> </span><span class="l">assets/aldric.png</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="nn">---</span><span class="w">
+</span></span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">A retired harbour officer with too many secrets and a very good sword arm.
+</span></span></code></pre></div><p>Only pages whose <code>kind</code> is registered are validated by the loader, so malformed
+front matter in a lore page is inert — it cannot break the tabletop. The set of
+recognised kinds is registry-backed rather than a fixed enum: built-ins register
+<code>token</code>, <code>scene</code>, <code>handout</code>, <code>journal</code> and <code>index</code>, and a plugin may add more. An
+unknown <code>kind</code> degrades to prose, which is why removing a plugin never destroys
+content.</p>
+<h2 id="ownership-of-kinds">Ownership of kinds</h2>
+<p>semiplane owns the kinds that are not about rules, because that is what lets a
+system sharing nothing with D&amp;D 5e register its own vocabulary without collision:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Owner</th>
+					<th>Kinds</th>
+					<th>Why</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>semiplane — wiki</td>
+					<td><code>journal</code>, <code>handout</code>, <code>index</code></td>
+					<td>Content, not rules. No plugin should redeclare these.</td>
+			</tr>
+			<tr>
+					<td>semiplane — tabletop</td>
+					<td><code>token</code>, <code>scene</code></td>
+					<td>Present on every map in every system. Parameterised by the system, not defined by it.</td>
+			</tr>
+			<tr>
+					<td><strong>gameplay plugin</strong></td>
+					<td><code>spell</code>, <code>class</code>, <code>feat</code>, <code>creature</code>, <code>ancestry</code>, …</td>
+					<td>Genuinely system-specific, declared by the plugin.</td>
+			</tr>
+	</tbody>
+</table>
+<p><code>token</code> and <code>scene</code> being semiplane-owned is the load-bearing part: the map
+renders placements, fog, and initiative order without knowing any rules, so a
+new system needs no client work at all.</p>
+<h2 id="caching-and-the-one-exception">Caching, and the one exception</h2>
+<p>Rendered content is <strong>permission-neutral by construction</strong> — the same bytes for
+every viewer who is allowed to see the page at all. The cache key is
+<code>(campaign, path, content hash, include_secrets)</code>, and <code>include_secrets</code> is true
+only for the campaign&rsquo;s GM. That is why there are exactly two cached variants per
+page rather than one per user.</p>
+<p>Validity is keyed on the <strong>content hash, not the modification time</strong>: sync paths
+preserve or coarsen mtime, and one-second filesystem granularity lets two
+distinct writes collide.</p>
+<p>The single exception is the <code>[!secret]</code> callout, covered next.</p>
+<h2 id="read-next">Read next</h2>
+<ul>
+<li>[Content model]({{ &ldquo;concepts/content-model/&rdquo; | relURL }}) — markdown, front matter, links, embeds</li>
+<li>[Secrets]({{ &ldquo;concepts/secrets/&rdquo; | relURL }}) — GM-only content, and what it does and does not protect</li>
+<li>[Plugins]({{ &ldquo;concepts/plugins/&rdquo; | relURL }}) — how a gameplay system is defined</li>
+</ul>
+
+    <ul class="section-list" data-testid="section-list">
+        <li>
+          <a href="/semiplane/concepts/content-model/">Content model</a>
+            <br><span class="section-list__desc">Markdown, front matter, wikilinks, and embeds — what semiplane reads from your vault.</span>
+        </li>
+        <li>
+          <a href="/semiplane/concepts/secrets/">Secrets</a>
+            <br><span class="section-list__desc">GM-only content in markdown, what hiding it actually protects, and what it does not.</span>
+        </li>
+        <li>
+          <a href="/semiplane/concepts/plugins/">Plugins</a>
+            <br><span class="section-list__desc">How a gameplay system plugs in, and what a plugin is allowed to do.</span>
+        </li>
+    </ul>
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

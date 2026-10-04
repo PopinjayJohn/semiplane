@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Plugins — semiplane</title>
+<meta name="description" content="How a gameplay system plugs in, and what a plugin is allowed to do.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/concepts/plugins/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Plugins — semiplane">
+<meta property="og:description" content="How a gameplay system plugs in, and what a plugin is allowed to do.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/concepts/plugins/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Plugins</h1>
+    <p class="lede">How a gameplay system plugs in, and what a plugin is allowed to do.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#three-tiers-not-two">Three tiers, not two</a></li>
+    <li><a href="#the-structural-difference">The structural difference</a></li>
+    <li><a href="#the-interface">The interface</a></li>
+    <li><a href="#determinism-is-a-discipline-requirement">Determinism is a discipline requirement</a></li>
+    <li><a href="#data-packs-and-why-there-is-an-overlay-strategy">Data packs, and why there is an overlay strategy</a></li>
+    <li><a href="#house-rules">House rules</a></li>
+    <li><a href="#failure-behaviour">Failure behaviour</a></li>
+    <li><a href="#conformance">Conformance</a></li>
+    <li><a href="#api-stability">API stability</a></li>
+  </ul>
+</nav>
+    </details><h2 id="three-tiers-not-two">Three tiers, not two</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Authority</th>
+					<th>What it is</th>
+					<th>Examples</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>Gameplay plugin</strong></td>
+					<td>Resolves intents into state mutations</td>
+					<td>Go package plus embedded data packs</td>
+					<td>D&amp;D 5e 2024, 5e 2014, a house-rule module</td>
+			</tr>
+			<tr>
+					<td><strong>UI plugin</strong></td>
+					<td>Reads state, renders. <strong>Never writes state.</strong></td>
+					<td>Go package, templ components, JS</td>
+					<td>Link previews, a graphical dice roller</td>
+			</tr>
+			<tr>
+					<td><strong>Theme layer</strong></td>
+					<td>None</td>
+					<td>Plain files in the campaign content root</td>
+					<td>CSS, fonts, a header image</td>
+			</tr>
+	</tbody>
+</table>
+<p>Two corrections to the obvious taxonomy, both of which matter:</p>
+<ol>
+<li><strong>House rules are a gameplay plugin</strong>, not a UI modifier. They change
+mechanics, so they belong with the thing that resolves mechanics.</li>
+<li><strong>A modifier that only adds CSS is not a plugin.</strong> It is the theme layer:
+served from content, no code, no authority.</li>
+</ol>
+<h2 id="the-structural-difference">The structural difference</h2>
+<blockquote>
+<p>A gameplay plugin <strong>defines the operation vocabulary and resolves it into
+mutations</strong>. A UI plugin may only <strong>emit operations that some gameplay system
+already resolves</strong>.</p>
+</blockquote>
+<p>Everything else follows:</p>
+<table>
+	<thead>
+			<tr>
+					<th></th>
+					<th>Gameplay</th>
+					<th>UI</th>
+					<th>Theme</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Runs</td>
+					<td>server</td>
+					<td>browser, plus server rendering</td>
+					<td>browser</td>
+			</tr>
+			<tr>
+					<td>Input</td>
+					<td>intent, state, seeded RNG</td>
+					<td>DOM events, render query</td>
+					<td>CSS cascade</td>
+			</tr>
+			<tr>
+					<td>Output</td>
+					<td><code>[]Mutation</code></td>
+					<td>DOM patches</td>
+					<td>nothing</td>
+			</tr>
+			<tr>
+					<td>Writes campaign state</td>
+					<td><strong>yes</strong></td>
+					<td><strong>never</strong></td>
+					<td>never</td>
+			</tr>
+			<tr>
+					<td>Determinism required</td>
+					<td><strong>yes</strong></td>
+					<td>no</td>
+					<td>no</td>
+			</tr>
+			<tr>
+					<td>Can define a new operation</td>
+					<td>yes</td>
+					<td>no</td>
+					<td>no</td>
+			</tr>
+	</tbody>
+</table>
+<p>A UI plugin cannot write state, and this is enforced structurally rather than by
+convention: a gameplay plugin&rsquo;s <code>Apply</code> <em>returns</em> mutations instead of applying
+them in place, so no plugin — UI or gameplay — can mutate state or forge a
+broadcast in place of the hub&rsquo;s version counter. A UI plugin dispatches exactly
+the same intents a human player would, and so passes identical authorization and
+validation.</p>
+<h2 id="the-interface">The interface</h2>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="kd">type</span><span class="w"> </span><span class="nx">System</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">ID</span><span class="p">()</span><span class="w"> </span><span class="nx">ID</span><span class="w">          </span><span class="c1">// stable; stored in campaign state, never renamed</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Title</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">RulesetVersion</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// This system&#39;s expression grammar, so the client can preview and validate</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// a roll before sending it.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Grammar</span><span class="p">()</span><span class="w"> </span><span class="nx">Grammar</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Parse</span><span class="p">(</span><span class="nx">expr</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">Expr</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// Resolve a validated intent into mutations for the hub to version and</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// broadcast.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Apply</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">state</span><span class="w"> </span><span class="o">*</span><span class="nx">State</span><span class="p">,</span><span class="w"> </span><span class="nx">in</span><span class="w"> </span><span class="nx">Intent</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">Mutation</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// Data for the UI: modifiers, DCs, sheet summaries. Opaque to semiplane.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Derive</span><span class="p">(</span><span class="nx">state</span><span class="w"> </span><span class="o">*</span><span class="nx">State</span><span class="p">,</span><span class="w"> </span><span class="nx">q</span><span class="w"> </span><span class="nx">Query</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// The views this system wants that data rendered through.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">Views</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="nx">View</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// Rules-content kinds this system defines: spell, class, feat, creature,</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="c1">// ancestry. NOT token, scene, journal, handout, or index.</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nf">ContentKinds</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="nx">Kind</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="p">}</span><span class="w">
+</span></span></span></code></pre></div><p><code>Context</code> carries the seeded RNG, the campaign, the actor, and the actor&rsquo;s role —
+never a wall clock, and never an ambient random source.</p>
+<h2 id="determinism-is-a-discipline-requirement">Determinism is a discipline requirement</h2>
+<p>Because plugins are compiled in, there is no sandbox to catch a nondeterministic
+rule. So rule code is forbidden from calling <code>time.Now</code>, ranging over a map, or
+calling <code>crypto/rand</code> directly — enforced by a lint rule plus tests.</p>
+<p>That is not ceremony. Campaign state supports optimistic client application,
+resume-by-version, and replay. All three break if resolution is not a pure
+function of <em>(state, intent, seed)</em>. A die roll that quietly consults the clock
+is a roll nobody can audit after a rules dispute.</p>
+<h2 id="data-packs-and-why-there-is-an-overlay-strategy">Data packs, and why there is an overlay strategy</h2>
+<p>A pack is versioned embedded YAML: stat blocks, conditions, reference tables, and
+the set of <code>kind</code>s the system recognises.</p>
+<p>For 5e, which is roughly 90% identical across editions, a shared engine plus data
+packs plus a narrow Go escape hatch is the split:</p>
+<pre tabindex="0"><code>base pack (shared 5e data)
+  ├── overlay: 2014  — race naming, crit on 20 only, no mastery properties
+  └── overlay: 2024  — species, mastery properties, crit on any natural 20
+resolver hooks (the escape hatch, only where data genuinely cannot express it)
+</code></pre><p>The edition differences become reviewable data diffs, and only genuinely
+procedural rules become code.</p>
+<p><strong>Overlay is one strategy among several, not a requirement.</strong> A plugin sharing
+nothing with 5e — Pathfinder, say — ships one complete standalone pack and its
+own resolver hooks, implements <code>System</code>, and touches neither the engine nor
+semiplane. The only shared code is the interface, the intent and mutation types,
+and the conformance suite.</p>
+<p>The engine is therefore <em>shared 5e mechanics</em>, not &ldquo;the rules engine&rdquo;. A system
+with nothing in common with 5e does not use it.</p>
+<h2 id="house-rules">House rules</h2>
+<p>Applied at campaign load, producing an effective ruleset:</p>
+<pre tabindex="0"><code>system ID → base pack → overlay → enabled house-rule modules (declared order)
+         → effective ruleset (+ ruleset_version)
+</code></pre><p>Two hard constraints:</p>
+<ul>
+<li><strong>House rules are data-level, not code-level.</strong> A house rule may toggle
+<code>flanking_optional</code>, change a constant in a DC formula, or disable a condition.
+It may not reorder resolution or introduce nondeterminism — otherwise replay and
+audit die. This is what keeps house rules auditable and shareable.</li>
+<li><strong>Order is explicit and deterministic.</strong> Modules carry a position; conflicts
+resolve first-match-wins and are logged with both module IDs. Never
+last-write-wins.</li>
+</ul>
+<h2 id="failure-behaviour">Failure behaviour</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Condition</th>
+					<th>Behaviour</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>system_id</code> unknown (plugin removed or renamed)</td>
+					<td>The game refuses to start and says which ID it wants. <strong>The wiki still serves.</strong></td>
+			</tr>
+			<tr>
+					<td><code>ruleset_version</code> differs from persisted state</td>
+					<td>Refuse to resume rather than silently misresolve past game state. The GM starts a new game.</td>
+			</tr>
+			<tr>
+					<td>House-rule conflict</td>
+					<td>First-match-wins by position, logged with both module IDs</td>
+			</tr>
+			<tr>
+					<td>A plugin panics inside <code>Apply</code></td>
+					<td>Recovered at the <code>Apply</code> boundary; an error is returned and <strong>state is unmodified</strong>, because mutations are returned, never applied in place</td>
+			</tr>
+			<tr>
+					<td>A UI plugin throws in the browser</td>
+					<td>Contained to that one tab. The server is unaffected.</td>
+			</tr>
+			<tr>
+					<td>A stale <code>kind</code> after removing a plugin</td>
+					<td>The page degrades to prose. The content is still a file on disk, so nothing is lost.</td>
+			</tr>
+	</tbody>
+</table>
+<p>That last row is what makes extending <code>kind</code> safe: an unknown kind is inert, not
+fatal, and the markdown is always recoverable.</p>
+<h2 id="conformance">Conformance</h2>
+<p>A published suite every <code>System</code> must pass: determinism across repeated runs,
+tolerance of unknown <code>kind</code>s, refusal on a ruleset-version mismatch, enforcement
+of GM-only operations, and containment of a panic inside <code>Apply</code>.</p>
+<p><strong>A system that shares nothing with 5e must pass it without touching the engine.</strong>
+That is the test that proves the plugin system generalises rather than merely
+existing.</p>
+<h2 id="api-stability">API stability</h2>
+<p>Plugins are compiled in, so there is no semver contract across releases.
+<code>Intent</code>, <code>Mutation</code> and <code>Kind</code> are therefore semi-public. If plugins ever move
+out of tree, these need versioning before that happens — and the reason to do it
+then, rather than now, is that versioning an interface before it has ever been
+frozen is guesswork.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

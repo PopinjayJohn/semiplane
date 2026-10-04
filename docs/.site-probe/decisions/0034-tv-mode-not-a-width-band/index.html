@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0034 — TV mode is a mode, not a width band — semiplane</title>
+<meta name="description" content="A television and a tablet in landscape are indistinguishable to CSS, so the distinction is a resolved root attribute rather than a breakpoint, and it lives in its own stylesheet.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0034-tv-mode-not-a-width-band/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0034 — TV mode is a mode, not a width band — semiplane">
+<meta property="og:description" content="A television and a tablet in landscape are indistinguishable to CSS, so the distinction is a resolved root attribute rather than a breakpoint, and it lives in its own stylesheet.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0034-tv-mode-not-a-width-band/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0034 — TV mode is a mode, not a width band</h1>
+    <p class="lede">A television and a tablet in landscape are indistinguishable to CSS, so the distinction is a resolved root attribute rather than a breakpoint, and it lives in its own stylesheet.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#what-the-sweeps-measured-and-the-two-defects-they-found">What the sweeps measured, and the two defects they found</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>UI §3.3&rsquo;s opening is the reason this is a decision rather than an implementation detail:</p>
+<blockquote>
+<p>A 55&quot; television and a 12.9&quot; tablet in landscape are <strong>indistinguishable to CSS</strong>: coarse pointer,
+never hover, wider than 1280px.</p>
+</blockquote>
+<p>Both are a wide viewport, both report a coarse pointer, and neither ever fires <code>:hover</code>. Set a 12.9&quot;
+tablet down next to a television at 1440 CSS px and every media feature reports the same device class.
+They need <em>opposite</em> layouts — 10-foot type read from three metres, against 2-foot type read from
+thirty centimetres — so a rule keyed on viewport geometry would classify one of them wrongly no matter
+which geometry feature it used.</p>
+<p>The instinct is to reach for <code>(min-width: 137.5rem)</code> or <code>(pointer: coarse)</code>, because both are the
+tools available and both &ldquo;work&rdquo; on the obvious test case. The obvious test case is the reason they do
+not work: the tablet and the television are the same width and the same pointer, so a rule that
+distinguishes them is not measuring anything that differs between them.</p>
+<p>Three sources of signal remain, and only one of them is reliable:</p>
+<ol>
+<li>An explicit user choice — a URL parameter, then a cookie.</li>
+<li>A user-agent hint, used only before a cookie exists.</li>
+<li>Nothing, which means a laptop layout.</li>
+</ol>
+<p>Signals 1 and 2 do not survive into CSS. They are resolved <em>before the first paint</em> by an inline
+script in <code>&lt;head&gt;</code>, which writes two attributes onto the document element. Everything downstream —
+every tier, both themes, the entire responsive system — reads those two attributes. That is UI §3.7,
+already accepted, and this decision is about what follows from it: TV is one of the values of
+<code>data-ui</code>, and therefore a mode in exactly the sense the resolver makes it one.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>TV is a <code>[data-ui=&quot;tv&quot;]</code> mode. It is never a width band, and no rule that selects TV mode is inside
+a <code>@media</code> condition that describes geometry or input capability.</strong></p>
+<p>The decision has four parts.</p>
+<p><strong>The mode lives in its own stylesheet</strong>, <code>internal/web/static/css/tv.css</code>, rather than as a section
+of <code>shell.css</code>. <code>shell.css</code> mixes mode rules and width rules — a <code>:root[data-ui=&quot;tv&quot;]</code> block sits
+beside a <code>@media (min-width: 80rem)</code> block — and a file that is one or the other can be read as one.
+The file exists so that &ldquo;is any part of this selected by geometry?&rdquo; has the answer <em>no, and you can
+check in one glance</em>, and so that a rule added to the mode cannot accidentally inherit a width
+condition.</p>
+<p><strong>The grid areas stay in <code>shell.css</code>.</strong> §3.4&rsquo;s block —</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-css" data-lang="css"><span class="line"><span class="cl"><span class="p">.</span><span class="nc">shell</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-areas</span><span class="p">:</span> <span class="s2">&#34;header header&#34;</span> <span class="s2">&#34;main rail&#34;</span> <span class="s2">&#34;footer footer&#34;</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-rows</span><span class="p">:</span> <span class="mi">5</span><span class="kt">rem</span> <span class="nf">minmax</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="n">fr</span><span class="p">)</span> <span class="mi">3</span><span class="kt">rem</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl">  <span class="k">grid-template-columns</span><span class="p">:</span> <span class="nf">minmax</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="n">fr</span><span class="p">)</span> <span class="mi">26</span><span class="kt">rem</span><span class="p">;</span>
+</span></span><span class="line"><span class="cl"><span class="p">}</span>
+</span></span></code></pre></div><p>— is stated there, with the lengths coming from the declared constants
+(<code>--header-h-tv</code>, <code>--footer-h-tv</code>, <code>--rail-right-tv</code>) rather than restated. Duplicating the areas in a
+second file would be two copies of one map with nothing holding them together, which is the same class
+of bug as a breakpoint written as a literal in three media queries with one declaration —
+<code>TestEveryMediaQueryMatchesADeclaredConstant</code> exists for that, and §3.7&rsquo;s &ldquo;one canonical DOM, tiers as
+CSS variants, so tiers cannot drift&rdquo; is the rule a second copy would break. What <code>tv.css</code> holds is
+everything the grid has no other reason to know about: the horizontal navigation strip that replaces
+the left rail, the D-pad focus rule, and the 10-foot typographic treatment.</p>
+<p><strong>The accepted failure mode is not fixed.</strong> An unrecognised television browser shows the laptop layout
+until someone presses the mode switcher once, and the choice then persists. §3.3 calls this the
+correct trade against a stale user-agent list and — more to the point — against a tablet
+misclassified as a television. The user-agent allowlist stays at its seven tokens. Widening it to
+avoid the failure mode converts a one-remote-press inconvenience into a class of misclassification
+that no amount of widening removes.</p>
+<p><strong><code>prefers-reduced-motion</code>, <code>prefers-contrast</code> and <code>forced-colors</code> are honoured in every mode and
+never used to infer a form factor.</strong> The three are absent from the banned feature set precisely
+because §3.3 requires them to work everywhere; what is banned is a rule in which one of them <em>chooses
+the layout</em>. A <code>prefers-contrast: more</code> rule that widened a rail would be using an accessibility
+preference to guess at the display, and a reader who has asked for more contrast because of their eyes
+would receive a different layout for it — the opposite of what they asked for.</p>
+<h2 id="consequences">Consequences</h2>
+<p>The distinction between a mode and a width band is now a property of the stylesheet that a test can
+fail, not a comment. <code>TestTheTvModeIsAModeAndNotAWidthBand</code> in <code>internal/web/a11y_test.go</code> resolves
+the <code>@media</code> nesting around every <code>[data-ui=&quot;tv&quot;]</code> rule by brace stack and objects to any enclosing
+condition naming a geometry or capability feature. Three mutations were used to confirm it can fail:</p>
+<ul>
+<li>the navigation strip wrapped in <code>@media (min-width: 137.5rem)</code> — caught;</li>
+<li>a rule conditioned on <code>(pointer: coarse)</code> — caught;</li>
+<li>a rule inside <code>@media (forced-colors: active) and (min-width: 137.5rem)</code> — caught.</li>
+</ul>
+<p>The first version of that test scanned <em>forward</em> from the selector and passed all three. It was looking
+for a width condition inside a rule&rsquo;s declarations, and the mutation it had to catch puts the condition
+<em>outside</em>. The scan now resolves nesting rather than searching, which is worth recording because the
+failure mode was a gate that looked like it was working.</p>
+<p>Television is a mode in every other sense too, and two of those are decisions the record left open:</p>
+<ul>
+<li><strong>No left navigation.</strong> D-pad traversal of a forty-entry wiki tree is punishing, so the navigation
+becomes a horizontal strip of five destinations in the header band and the tree is not in it. Until
+the campaign overview carries the tile grid §3.4 names as the other half, the nested tree is hidden
+at TV; a horizontally scrollable strip is a horizontal scroll trap on a remote.</li>
+<li><strong><code>:focus</code> is styled identically to <code>:focus-visible</code>.</strong> §7.4 requires this, and the reason is not a
+preference: some television browsers do not merely fail to <em>match</em> <code>:focus-visible</code>, they fail to
+<em>parse</em> the selector, so a rule written on it is dropped at parse time and never appears. A rule
+written on <code>:focus</code> is universally supported. The cost is a ring on a mouse click on a device whose
+primary input is a remote, which §10.5&rsquo;s D-pad pass records as the trade rather than hides.</li>
+</ul>
+<p>The account zone and the header&rsquo;s search field are removed in the mode, and both removals are settled by
+the record rather than by taste: §1.3 states that a television &ldquo;may not sign in, sign out, manage the
+instance&rdquo;, and §3.4&rsquo;s strip already contains Search as one of its five destinations. Capability, not
+permission — a GM signed in on a television still sees unredacted pages.</p>
+<h2 id="what-the-sweeps-measured-and-the-two-defects-they-found">What the sweeps measured, and the two defects they found</h2>
+<p>The agent-assisted passes (§10.3–§10.7) drove a real browser against a running server. The MCP is
+diagnostic only and is not wired into CI; §10.9 requires every <em>finding</em> to become a committed Go test,
+and the two that mattered did.</p>
+<p><strong>§3.4&rsquo;s last bullet was false in the stylesheet.</strong> The record says &ldquo;at 3840 CSS px, <code>--type-scale</code>
+rises to 1.75 and <code>--rail-right</code> to 30rem&rdquo;. At 1920 × 1080 the mode measured exactly what the record
+wants — a 1504px centre and a 416px rail, which is §3.4&rsquo;s own &ldquo;centre ≈1504, right rail 26rem&rdquo; to the
+pixel. At 3840 × 2160 the rail measured <strong>416px</strong>, still 26rem, where the record says 30rem.</p>
+<p>The cause was that the TV grid read <code>--rail-right-tv</code> as a literal in <code>grid-template-columns</code>, so
+<code>:root[data-ui=&quot;tv-wide&quot;] { --rail-right: … }</code> was a declaration the grid never saw. Nothing failed:
+<code>--rail-right</code> was both declared and read <em>somewhere</em> — <code>tv.css</code>&rsquo;s navigation strip reads it for its
+inline edge — so the coupling test passed over a property that was dead in the one place the record&rsquo;s
+sentence is about. A property that is used is not necessarily used <em>where it matters</em>. The grid now
+reads the indirection property, which is what <code>:root[data-ui=&quot;wide&quot;]</code> already did, and
+<code>TestTheTvRailWidensAtTvWide</code> asserts the chain link by link.</p>
+<p><strong>The inherited type size was the browser&rsquo;s default, not the design&rsquo;s.</strong> An element with no explicit
+<code>font-size</code> inherited 16px from the user agent rather than §5.1&rsquo;s <code>--text-base</code> — measured at 390px as
+16px on a skip link while every sized control was 17px. Small, and structurally worse: an element added
+later without a type token would render at the browser&rsquo;s default and nothing would say so.
+<code>body { font-size: var(--text-base) }</code> fixes it, and the root stays at <code>100%</code> so the reader&rsquo;s browser
+zoom remains the only multiplier, which is what 1.4.4 is about. Now measured at 17px at <code>large</code> and
+18.06px at <code>compact</code> — §5.1&rsquo;s two rows.</p>
+<p>Three findings could not be automated, and are recorded here rather than dropped:</p>
+<ul>
+<li><strong>The compact bottom bar is never exercised by a sweep.</strong> No campaign route exists in this phase, so
+every route fixture is pre-campaign and the bar renders nothing. Its CSS is covered by the chrome
+package&rsquo;s own composition tests and by the <code>:root:not([data-ui])</code> no-script rule, but no browser pass
+can see it until P6 registers a campaign. This is the honest gap.</li>
+<li><strong>The navigation strip in TV mode is unverified.</strong> <code>chrome.CampaignNav</code> reaches no route in this
+phase, so the strip&rsquo;s horizontal layout, its five destinations and its collapsed state were never
+rendered. The CSS is in place and the component&rsquo;s own tests cover the markup; the <em>layout</em> awaits a
+campaign route.</li>
+<li><strong><code>/favicon.ico</code> answers 404</strong>, which is the only console error on any route. Cosmetic, and not an
+accessibility finding — recorded so the next person does not read it as a regression.</li>
+</ul>
+<p>The cost is that the mode&rsquo;s rules are duplicated in one file and the grid&rsquo;s in another, so a reader
+looking for &ldquo;what does TV mode do&rdquo; has to open <code>tv.css</code> and then <code>shell.css</code>. The header of
+<code>tv.css</code> says so explicitly and states why the areas are not repeated.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>A <code>@media (min-width: 137.5rem)</code> band, gated on <code>pointer: coarse</code>.</strong> The obvious implementation, and
+the one a reader of the CSS would expect. Rejected on §3.3&rsquo;s own argument: it classifies a 12.9&quot; tablet
+in landscape as a television, which is the specific outcome the record refuses to accept in exchange
+for the failure mode it fixes. The two signals are not independent — every device that trips the
+first also trips the second.</p>
+<p><strong>Widening the user-agent allowlist to catch more televisions.</strong> Rejected because the list cannot be
+completed. Television browser names churn faster than a release cycle, and the cost of a false negative
+is one remote press. The cost of a false positive is a desktop interface with 56-pixel targets and no
+hover, read from thirty centimetres — which is the &ldquo;another item is still on the table&rdquo; experience
+§3.3 is buying the narrow list to avoid.</p>
+<p><strong>Detecting the television from <code>devicePixelRatio</code> or screen dimensions.</strong> Rejected: a 4K television
+reporting DPR 2 sees a 1920 × 1080 CSS viewport and is indistinguishable from a desktop, which is
+precisely why <code>--breakpoint-tv-wide</code> is 137.5rem rather than 3840. The signal does not exist.</p>
+<p><strong>Inferring the mode from <code>prefers-contrast: more</code>, <code>forced-colors</code> or reduced motion.</strong> Rejected, and
+banned by the same test. Each is a statement about a reader&rsquo;s needs or their display&rsquo;s capabilities,
+and using one to choose a layout means a reader who set an accessibility preference receives a different
+interface as a side effect. §3.3 requires all three to be honoured <em>in</em> every mode, which is the
+opposite relationship.</p>
+<p><strong>Leaving TV as a section of <code>shell.css</code>.</strong> Rejected because the file would then be neither a mode&rsquo;s
+stylesheet nor a width-tier stylesheet, and &ldquo;does any rule here select on geometry?&rdquo; — the one question
+that matters for this decision — would need a brace-stack scan across a file that also contains the
+height-tier rules, short-landscape handling and the forced-colours block. Splitting it makes the answer
+visible without running anything.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

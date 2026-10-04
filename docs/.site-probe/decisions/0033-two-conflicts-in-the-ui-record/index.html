@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0033 — Two conflicts in the UI record, resolved and recorded — semiplane</title>
+<meta name="description" content="Where §4.3 and §6.6 disagree about persisting the collapsed navigation, and where §4.1&#39;s switchers meet §3.7&#39;s canonical DOM, the later and more specific rule governs — and both outcomes are recorded rather than picked in markup.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0033-two-conflicts-in-the-ui-record/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0033 — Two conflicts in the UI record, resolved and recorded — semiplane">
+<meta property="og:description" content="Where §4.3 and §6.6 disagree about persisting the collapsed navigation, and where §4.1&#39;s switchers meet §3.7&#39;s canonical DOM, the later and more specific rule governs — and both outcomes are recorded rather than picked in markup.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0033-two-conflicts-in-the-ui-record/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0033 — Two conflicts in the UI record, resolved and recorded</h1>
+    <p class="lede">Where §4.3 and §6.6 disagree about persisting the collapsed navigation, and where §4.1&#39;s switchers meet §3.7&#39;s canonical DOM, the later and more specific rule governs — and both outcomes are recorded rather than picked in markup.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The responsive UI design record is
+[immutable]({{ &ldquo;contributing/spec/&rdquo; | relURL }}#the-design-records-are-immutable): where it is wrong,
+the correction is a decision record plus an entry in the design index&rsquo;s &ldquo;Known staleness&rdquo;. Two places in
+it are wrong in ways that a template has to resolve one way or another, and both were escalated during
+phase 5 rather than decided in markup.</p>
+<p>They are recorded here together because they have the same shape and the same answer. Both are cases
+where the record states two things that cannot both hold, and in both the resolution follows from one
+rule: <strong>where two sections disagree, the later and more specific one governs</strong>, and the losing section&rsquo;s
+<em>intent</em> is preserved by other means. Applying &ldquo;last writer wins&rdquo; to a design record is not a principle
+— it is a heuristic, and it is only defensible where one section genuinely refines the other.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Conflict one: §4.3 persists the collapsed navigation in <code>sp_ui</code>; §6.6 fixes <code>sp_ui</code> to two fields and
+rules out the rest. §6.6 governs. The collapse is a <code>data-</code> attribute.</strong></p>
+<p>§4.3 says &ldquo;User may collapse to a 3.5rem icon rail, persisted in <code>sp_ui</code>&rdquo;. §6.6 says <code>sp_ui</code> carries
+<code>theme</code> and <code>ui</code> and nothing else, and gives the reason in its own words: <strong>&ldquo;No density field — density
+was not selected, and a dangling token is worse than no token.&rdquo;</strong></p>
+<p>§6.6 is later in the document, it is more specific — it is the section that defines the cookie&rsquo;s
+schema — and it states a rule about fields in general rather than about one field. It also explains its
+own reasoning in a way that applies verbatim: a field nobody reads is a field that can be set to a value
+nothing honours, and a reader who has set it has no way to find out why nothing happened.</p>
+<p>So <code>sp_ui</code> stays at two fields and the collapse is <code>[data-nav=&quot;collapsed&quot;]</code>, an attribute the client
+sets on the <code>&lt;nav&gt;</code> and the stylesheet reads. <strong>The cost is recorded rather than argued away:</strong> the
+collapse resets to expanded on a new device. That is a preference, not data, and it is the right thing
+to lose — a reader who collapses the rail on a laptop and finds it expanded on the same laptop the next
+day has a real complaint, and a reader who does not notice is not damaged by it.</p>
+<p>What survives from §4.3 is the part that is about the <em>interface</em> rather than the transport, and all of
+it is kept: the 3.5rem icon rail, and the rule that each row keeps its full name so the rail costs no
+accessible names. The record&rsquo;s own wording for that is an <code>aria-label</code>, and the implementation uses a
+text label the stylesheet hides instead — which is stronger, because the accessible name is then the
+visible text at every width, satisfying 2.5.3, and there is no second copy of the name in the markup for
+the two to disagree about.</p>
+<p><strong>Conflict two: §4.1 puts the campaign switcher in a popup and the mode switcher in a <code>&lt;select&gt;</code>; §3.7
+requires one canonical DOM across tiers and forbids the document varying by <code>sp_ui</code>. §3.7 governs. Both
+controls ship in phase 9; what is in the markup now is a link and a hook.</strong></p>
+<p>§4.1 specifies &ldquo;Campaign switcher is a <code>&lt;button aria-haspopup=&quot;menu&quot;&gt;</code> + <code>role=&quot;menu&quot;</code> popup on pointer
+tiers, a native <code>&lt;select&gt;</code> on TV&rdquo;, and a mode switcher as a <code>&lt;select&gt;</code> listing auto / laptop / phone /
+TV. Both are <em>client-layer</em> features: a popup needs a menu to open, and a <code>&lt;select&gt;</code> needs a client to
+submit from. Rendering them now would mean shipping controls that are focus stops which do nothing —
+and the chrome package&rsquo;s one rule about controls is exactly that nothing renders in a state that needs
+the client layer to become useful.</p>
+<p>The deeper constraint is [0035]({{ &ldquo;decisions/0035-no-vary-cookie-and-one-blocking-script/&rdquo; | relURL }}).
+The mode switcher&rsquo;s <em>result</em> is <code>sp_ui.ui</code>, and §3.7 requires the document not to vary by <code>sp_ui</code> — so a
+<code>&lt;select&gt;</code> that submits its value to the server, or that the server reflects back into the markup, makes
+the response depend on the cookie. That is the failure
+[S-13.5]({{ &ldquo;contributing/spec/&rdquo; | relURL }}) rules out, arrived at from the opposite direction from the
+one §6.6 anticipated. The switcher must therefore write the cookie <em>client-side</em>, exactly as the head
+resolver reads it, and the server must never learn the value.</p>
+<p>So what ships now is:</p>
+<ul>
+<li><strong>the campaign&rsquo;s own address, as a link.</strong> Which is also §8.3&rsquo;s rank 1 — the current location — and
+what a 56-pixel bar wants. The popup is phase 9&rsquo;s.</li>
+<li><strong>the mode switcher and the compact menu button, not rendered.</strong> Both are named in the chrome package
+and in the integration report; neither would be honest to render as a dead control.</li>
+<li><strong>a declared hook rather than a missing element.</strong> The theme button carries
+<code>data-chrome=&quot;theme&quot;</code>, the navigation&rsquo;s collapse carries <code>data-chrome=&quot;nav-collapse&quot;</code>, the disclosures
+carry <code>data-chrome=&quot;disclosure&quot;</code>, and the rail&rsquo;s trigger is exported as
+<code>chrome.UtilitiesTrigger(&quot;rail&quot;)</code> — because a trigger has to be reachable while the rail is closed, so
+it cannot live inside it, and §4.1 assigns it to none of the banner&rsquo;s zones. The markup for it exists;
+only its placement is deferred.</li>
+</ul>
+<p>The theme button is the one §4.1 control that <em>is</em> rendered, and it ships in the state that works
+without a client: <code>Theme: auto</code>, <code>aria-pressed=&quot;false&quot;</code>. It names the <strong>result</strong>, not the action, which is
+§4.1&rsquo;s own rule and is what makes a cycling button legible. <code>auto</code> is never pressed, because auto is the
+absence of a choice rather than a choice, and a pressed button says &ldquo;this is on&rdquo;.</p>
+<h2 id="consequences">Consequences</h2>
+<p>Two rules in the record are superseded in practice, and both are recorded in the design index&rsquo;s &ldquo;Known
+staleness&rdquo; so a later reader finds them here rather than re-deriving them from a template that disagrees
+with the document.</p>
+<p>The cost of the first is small and stated: a reader&rsquo;s collapsed navigation is per-device rather than
+per-account. The cost of the second is that §4.1&rsquo;s header row is not yet a header row — the banner
+carries the campaign, the search field and the account, and no switcher. Both are phase 9&rsquo;s work, and the
+hooks are in the markup now so that phase 9 is a rewrite of behaviour rather than a change of structure.</p>
+<p>One consequence is worth isolating because it is a security property rather than a usability one. The
+mode switcher writing the cookie client-side, and the server never reading it back into the document,
+means <code>include_secrets</code> and access tier remain the <em>only</em> things the response varies by
+([0035]({{ &ldquo;decisions/0035-no-vary-cookie-and-one-blocking-script/&rdquo; | relURL }})). A switcher that
+submitted its value would be the first thing to reintroduce <code>Vary: Cookie</code>, and it would do so in a way
+that looks entirely reasonable in review — the user chose a setting, the page reflects the choice — which
+is why the rule is recorded here rather than left to be rediscovered.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Adding a third <code>sp_ui</code> field for the collapse, and calling it settled.</strong> Rejected: §6.6 fixes the
+schema in two fields and gives a reason that covers this case exactly. A third field would also be
+readable by exactly the code that reads the other two, so it would have to be threaded through the
+parser, the writer, the resolver&rsquo;s read-tolerance and the cookie&rsquo;s round-trip test — four places to keep
+in step for a preference that is honestly per-device.</p>
+<p><strong>Editing §4.3 and §6.6 in place.</strong> Rejected by the immutable-records rule, and the rule exists because
+in-place edits are indistinguishable from reinterpretation: a reader of the record cannot tell which
+sentence was written when the record was wrong and which was written to be right. The correction lives
+here, the staleness entry points at it, and the record still reads as a coherent statement of intent.</p>
+<p><strong>Rendering the switchers now as disabled controls.</strong> Rejected: §4.3&rsquo;s own principle is that edit
+affordances are &ldquo;absent, not disabled&rdquo;, and the reason given — a disabled control is a promise the page
+cannot keep — applies identically to a switcher that cannot switch. A greyed-out popup is worse than no
+popup, because it advertises a feature and then declines to provide it.</p>
+<p><strong>Making the mode switcher a <code>&lt;select&gt;</code> that submits to the server.</strong> Rejected: it makes the response
+depend on <code>sp_ui</code>, which is the S-13.5 violation reached from the switcher side. The switcher is a
+client-side write to the same cookie the head resolver reads, and that is the only shape of it that does
+not put a theme preference into a cache key.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0041 — The rules contract returns mutations and carries its own randomness — semiplane</title>
+<meta name="description" content="`internal/domain/rules` follows §10.3&#39;s shape in every place where the record is right, and departs from it in three: `Apply` takes a `context.Context` and a state by value, and `Derive` returns a named `Payload`. `Context` carries a seed and nothing ambient, so `(state, intent, seed) → mutations` is reproducible by construction rather than by discipline.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0041 — The rules contract returns mutations and carries its own randomness — semiplane">
+<meta property="og:description" content="`internal/domain/rules` follows §10.3&#39;s shape in every place where the record is right, and departs from it in three: `Apply` takes a `context.Context` and a state by value, and `Derive` returns a named `Payload`. `Context` carries a seed and nothing ambient, so `(state, intent, seed) → mutations` is reproducible by construction rather than by discipline.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0041 — The rules contract returns mutations and carries its own randomness</h1>
+    <p class="lede">`internal/domain/rules` follows §10.3&#39;s shape in every place where the record is right, and departs from it in three: `Apply` takes a `context.Context` and a state by value, and `Derive` returns a named `Payload`. `Context` carries a seed and nothing ambient, so `(state, intent, seed) → mutations` is reproducible by construction rather than by discipline.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Phase 8&rsquo;s first work item is the contract every later phase is typed against: the registry (P1b), the conformance suite (P1c), the determinism audit (P1d), the 5e engine and overlays (P2), house rules (P2d) and the UI-plugin contract. The architecture overview&rsquo;s §10.3 sketches that contract in nine methods, and the sketch is the right shape in seven of them. It is wrong in three places, and all three are places where the sketch predates what this repository has since built.</p>
+<p><strong>The sketch&rsquo;s <code>state *State</code>.</strong> §10.3 pairs &ldquo;returns <code>[]Mutation</code>&rdquo; with <code>state *State</code>, and the pointer reads as an implementation detail. It is not: it is a live pointer into whatever holds the authoritative tabletop, handed to a compiled-in plugin that has no sandbox and runs in-process with full authority. S-10.2&rsquo;s promise — <em>&ldquo;a plugin therefore cannot write <code>campaign_state</code> or forge a broadcast. A panic inside <code>Apply</code> leaves <code>campaign_state</code> byte-identical&rdquo;</em> — would then rest on every plugin author remembering not to write through a pointer they were given, which is a review comment rather than a property. <code>realtime</code> settled the same question for versions: <code>state.go</code> stamps <code>Placement.Version</code> back <em>after</em> the caller&rsquo;s function returns, &ldquo;so authority cannot be delegated to a gameplay system&rdquo;. A pointer argument undoes that for the whole document.</p>
+<p><strong>The sketch&rsquo;s <code>Context</code> with no cancellation.</strong> §10.3 says <code>Context</code> carries the seeded RNG, campaign identity, actor identity and actor role. Nothing says how a resolution is stopped, and the hub&rsquo;s <code>Resolver.Resolve</code> already takes a <code>context.Context</code> that it does not pass anywhere. A plugin that hangs holds the hub&rsquo;s goroutine for the life of the process, and neither <code>Hub.Close</code> nor the request context can end it.</p>
+<p><strong>The sketch&rsquo;s <code>Derive(state *State, q Query) (any, error)</code>.</strong> Two problems in one line. The pointer is the same one. And a bare <code>any</code> loses the one fact semiplane needs about the answer: §10.6.1 makes semiplane&rsquo;s entire role in derived data <em>choosing the renderer</em>, so a payload that does not say which view it answers forces the choice to be made again at the call site — where a caller that got it wrong renders a character sheet with a stat block&rsquo;s renderer and produces HTML nobody can debug.</p>
+<p>Two further constraints arrived with the code that already exists. <code>realtime.Op</code> validates an op&rsquo;s <em>shape</em> and never its membership, because membership is the registry&rsquo;s answer (protocol.go, rule 5) — so <code>rules.Op</code> has to accept exactly the charset the codec accepts, or an op this package validates would be one the wire refuses. And <code>realtime</code> mints placement ids, so <code>rules.ObjectID</code>&rsquo;s validity rule has to be the same rule, restated under a comment rather than re-derived, because a stricter one here would produce a state the hub accepted and the system refused — a refusal that would look like a plugin bug. The system this contract replaces is
+[0039]({{ &ldquo;decisions/0039-inert-core-system/&rdquo; | relURL }})&rsquo;s inert <code>core</code>, which resolves nothing; the ruleset fingerprint the resolver must report is
+[0018]({{ &ldquo;decisions/0018-ruleset-version-fingerprint/&rdquo; | relURL }})&rsquo;s.</p>
+<p>The fourth constraint is the one this record is mostly about. S-10.4 makes rule code deterministic — no <code>time.Now</code>, no map iteration, no direct <code>crypto/rand</code> — and is explicit that there is no sandbox, so the enforcement is a lint rule (P1d) plus tests. Those two mechanisms both work by noticing something. A lint rule notices a <em>call</em>. A test notices a <em>result</em>. Neither notices a <em>field</em>: a <code>Context</code> carrying a <code>Now func() time.Time</code> would not call anything, and every one of those gates would stay green while resolution had a clock in it.</p>
+<h2 id="decision">Decision</h2>
+<p><code>Apply</code> returns mutations, takes the state by value, and takes a <code>context.Context</code> beside the rule context:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-go" data-lang="go"><span class="line"><span class="cl"><span class="nf">Apply</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">call</span><span class="w"> </span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">state</span><span class="w"> </span><span class="nx">State</span><span class="p">,</span><span class="w"> </span><span class="nx">in</span><span class="w"> </span><span class="nx">Intent</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">Mutation</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w">
+</span></span></span></code></pre></div><p><strong><code>State</code> keeps its fields unexported.</strong> A value with an exported <code>[]Object</code> would still share its backing array, so a plugin writing one byte into <code>Objects[0].Data[0]</code> would corrupt the hub&rsquo;s own copy with no compiler complaint and no lock involved. <code>NewState</code> sorts and copies, and <code>Lookup</code>, <code>Objects</code> and <code>OfKind</code> each hand out fresh copies. That is the whole of &ldquo;a panic inside <code>Apply</code> leaves <code>campaign_state</code> byte-identical&rdquo;: there is no field to write to. The cost is a small allocation per read, which is the right trade at this scale, and the alternative&rsquo;s cost is a correctness property held by a comment.</p>
+<p><strong><code>rules.Mutation</code> carries no version and no revision.</strong> It is the system&rsquo;s <em>statement</em> — target, op, opaque payload, whether the object is removed — and the hub&rsquo;s <code>realtime.Mutation</code> is the <em>receipt</em> — placement, version, revision, no op, no args. The translation is the adapter&rsquo;s, one line in each direction, and the two omissions are the safety: everything the hub owns arrives from the hub and everything the system owns arrives from the system, so neither can forge the other&rsquo;s half.</p>
+<p><strong><code>context.Context</code> rides beside <code>rules.Context</code>, never inside it.</strong> <code>containedctx</code> forbids the alternative, but the reason to want the interface is the one the linter cannot state: a cancellation may <em>end</em> a resolution and may not <em>decide</em> one. A system that observes cancellation returns <code>(nil, ctx.Err())</code> and never a partial mutation list, because a list half-built on the way to being discarded is a list whose contents depend on when the hub cancelled. The two parameters are different types with opposite rules, and they are named differently — <code>ctx</code> and <code>call</code> — so neither can be passed where the other belongs.</p>
+<p><strong><code>Context</code> is four fields: campaign, actor, role, seed.</strong> Nothing else, which is the whole enforcement available to a type: there is no clock field for a resolver to be handed, no handle, and no ambient source. Randomness comes from <code>Rand(label)</code>, which derives a fresh deterministic source from the seed and the label by a pure function, mixed through SHA-256 under a versioned domain string. A label, because two draws in one resolution need two names; the same label twice yields the same numbers, which is what makes a replay reproduce them. <code>*rand.Rand</code> rather than a narrow <code>Roll</code>/<code>Sum</code> interface, because those methods would be a dice vocabulary in the contract and §10.3&rsquo;s first requirement is that <strong>the protocol never assumes d20</strong>.</p>
+<p><strong>A seed is not a secret and has no &ldquo;unseeded&rdquo; value.</strong> §16.3 says the seeded RNG is supplied through <code>Context</code> &ldquo;which makes a per-session seed + roll log auditable at no extra cost&rdquo;; an audit nobody can check is not an audit, so the seed prints in full wherever the fingerprint that gates a resume prints. The zero seed is a legal seed that produces the same numbers forever, because a sentinel that reads as a seed is a campaign whose every roll anyone can reproduce by typing one hex digit.</p>
+<p><strong>Grammar is data, and <code>Expr</code> records its owner.</strong> A grammar carries patterns and an example so a client can preview and validate an expression before sending it; <code>Parse</code> remains the server-side authority, because S-7.3 makes the client able to ask for a roll and never to say what it was. <code>Expr</code> records the system that parsed it so a hub can refuse to hand a 2d6-pool expression to a d20 system — S-10.3&rsquo;s rule applied to the notation rather than the operation. Its node is <code>any</code>, which says what is true: a system value, routed back to the same system, read by nobody else. A concrete expression tree here would be a d20 tree with d20 node kinds.</p>
+<p><strong>Views carry a renderer, not a component.</strong> <code>View</code> is a name, a title, a <code>Renderer</code> and a <code>Shape</code>, and the plugin&rsquo;s templ component lives in <code>internal/web/plugins</code> under that name. <code>internal/domain/rules</code> does not import templ, which is what keeps the domain free of a rendering library and a plugin&rsquo;s component a Go value rather than a template name resolved at render time. A shape is required for a built-in view and forbidden for a plugin-rendered one, both directions, because one of the two has to decide.</p>
+<p><strong>Ownership is enforced by <code>Validate</code>, and <code>Validate</code> is a function.</strong> The five semiplane-owned kinds are named constants, and a <code>System</code> declaring one is refused with an <code>*OwnershipError</code> naming the kind and the claimant — &ldquo;a kind is owned&rdquo; is not something a plugin author can act on. A method on the interface would have made it a tenth method and every future method a breaking change; the function is what the registry calls once per plugin at startup.</p>
+<h2 id="consequences">Consequences</h2>
+<p>The three deviations from §10.3 are recorded here rather than left as a silent divergence from a dated record, per AGENTS.md: <code>Apply</code> gains a <code>context.Context</code>; <code>state *State</code> becomes <code>State</code>; <code>Derive</code> returns <code>Payload</code> rather than <code>any</code>. Everything else in the sketch is unchanged — the same nine methods, the same names, the same responsibilities — so the conformance suite and the 5e engine are written against the record and this.</p>
+<p><code>State</code>&rsquo;s accessors allocate. A resolution over a hundred placements makes a few hundred small allocations, which is nothing next to the encoding the system does anyway, and it buys a write path that does not exist.</p>
+<p><code>Validate</code> calls <code>system.ContentKinds()</code>, <code>system.Views()</code> and <code>system.Grammar()</code>, so registration runs a system&rsquo;s methods before the campaign does. A plugin whose constructor validates its own data packs is the shape this assumes; a plugin that needs to be told its packs are fine has to say so somewhere, and its constructor is the only place that can.</p>
+<p>Two things follow for work this item does not own. The determinism audit (P1d) has three call sites to point at — <code>time.Now</code>, map iteration, and the package-level <code>math/rand</code> functions — and <code>Context.Rand</code> is the answer for the third; the <code>gosec</code> G404 finding on that one call is suppressed inline with that reason, because <code>crypto/rand</code> there would make every resolution unreproducible. And the adapter in P4 owns the translation table, including the <code>Expr.Owner()</code> comparison and the decision that a system returning mutations <em>and</em> an error has applied nothing.</p>
+<p>Reproducibility rests on <code>rand.PCG</code>&rsquo;s output, which the standard library holds fixed with a golden-output regression test rather than an API promise. If that changed, nothing already recorded would misresolve — past draws are in the state and in the log and are not re-derived — but a campaign&rsquo;s next roll would differ from what a reader with the same seed computes, which is the audit §16.3 is for. Writing a generator here would remove that dependency and add a second thing to get wrong.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Keep <code>state *State</code> and rely on the doc comment.</strong> Rejected: it makes the most expensive invariant in the phase a promise. S-10.2 exists precisely because a plugin cannot be trusted to honour a convention when handing it the authority would be trivial, and the pointer is the authority.</p>
+<p><strong>Put the cancellation inside <code>rules.Context</code>.</strong> Rejected twice over: <code>containedctx</code> refuses it, and a context stored in a struct is by construction part of the value a resolution is a function of — which is the opposite of what the seed is.</p>
+<p><strong>Give <code>Context</code> a <code>*rand.Rand</code> field.</strong> Rejected: it is the one design that passes a replay test while breaking every audit. A resolver is called twice with identical inputs and, holding a shared source, draws different numbers the second time — reproducible only in the sense the property test checks, which is the failure S-14.6 exists to catch and the one §10.3&rsquo;s own wording invites. Deriving per label costs a hash.</p>
+<p><strong>A narrow <code>Roll</code>/<code>Sum</code> interface instead of <code>*rand.Rand</code>.</strong> Rejected: it puts a dice vocabulary in the contract. A d20 system wants <code>1 + IntN(20)</code>; a pool system wants six <code>IntN(6)</code> counted against a target. Any interface expressive enough for both is <code>Rand</code> wearing a hat, and one expressive enough for only one is the protocol assuming d20.</p>
+<p><strong>A closed <code>Op</code> enum.</strong> Rejected: §10.2 says a gameplay plugin defines the operation vocabulary, and a list here is a list a plugin cannot join.</p>
+<p><strong>An <code>ErrInvalidKind</code>-style check only, with the five kinds as documentation.</strong> Rejected: <code>token</code> and <code>scene</code> being semiplane-owned is exactly what lets the client render a table without knowing any rules. A plugin that could redefine them puts client work back on the list for every new system, and the cost of refusing is one function.</p>
+<p><strong>Let <code>Context</code> carry a <code>Now func() time.Time</code> for systems that need elapsed time.</strong> Rejected: there is nothing in a tabletop resolution that needs elapsed time, and a clock field is the one thing that makes a resolution&rsquo;s result depend on when it ran. If a rule genuinely needs one — a campaign-long timer, say — the answer is state the campaign&rsquo;s own clock holds, read through <code>Derive</code>, not ambient time.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0039 — The inert `core` system, so phase 7 runs against something real — semiplane</title>
+<meta name="description" content="Intent resolution belongs to a gameplay `System` in phase 8. Rather than stub it or reorder the phases, phase 7 registers a system that parses and version-checks intents and resolves nothing — and every operation is refused by name.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0039-inert-core-system/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0039 — The inert `core` system, so phase 7 runs against something real — semiplane">
+<meta property="og:description" content="Intent resolution belongs to a gameplay `System` in phase 8. Rather than stub it or reorder the phases, phase 7 registers a system that parses and version-checks intents and resolves nothing — and every operation is refused by name.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0039-inert-core-system/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0039 — The inert `core` system, so phase 7 runs against something real</h1>
+    <p class="lede">Intent resolution belongs to a gameplay `System` in phase 8. Rather than stub it or reorder the phases, phase 7 registers a system that parses and version-checks intents and resolves nothing — and every operation is refused by name.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Phase 7 is the realtime plane: an in-memory <code>campaign_state</code>, a hub, a protocol codec, GM-only
+operations and debounced persistence. Its Definition of Done includes the §14 row — <em>two clients
+issuing concurrent intents converge with monotonic versions</em> — and UI §7.5&rsquo;s requirement that the
+play page opens and stays current.</p>
+<p>None of that is testable without a <code>Resolver</code>, and intent resolution belongs to a gameplay
+<code>System</code>, which is phase 8. The plan anticipated this and named three ways out. Two are bad:</p>
+<p><strong>Reorder the phases</strong>, so plugins land before the realtime plane. That inverts the plan&rsquo;s own
+dependency order, and the plugin contract (ADR 0011) is specified <em>in terms of</em> the realtime
+version and intent vocabulary — there is nothing for it to plug into yet.</p>
+<p><strong>Stub it</strong>, with a resolver that returns &ldquo;not implemented&rdquo; for everything. This is the attractive
+option and it does not work, for a reason worth stating plainly: <strong>a system that refuses everything
+cannot carry a client through the protocol.</strong> A browser that connects, greets, sends presence, sends
+an intent, and then receives a refusal for every intent exercises the codec, the hub, the read loop
+and the reconciliation path only along their <em>error</em> edges. The optimistic-reconcile loop — the thing
+<code>seq</code> exists for — never runs, because there is no applied change to reconcile against. The phase&rsquo;s
+central test would pass against a product that cannot play a game.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Phase 7 registers an inert <code>core</code> system. It parses and version-checks intents and resolves
+nothing, and every operation is refused by name.</strong></p>
+<p>&ldquo;Refused by name&rdquo; is the whole of it. <code>not_your_turn</code> is not a valid answer for a system that has no
+turn order, and a refusal that says nothing a client can act on is a client that retries forever. The
+system answers with <code>protocol.go</code>&rsquo;s closed reasons, so a client is told what it is being told by the
+same vocabulary a real system will use.</p>
+<p>Three properties, each of which is a decision rather than an implementation detail:</p>
+<p><strong>The operation is shape-checked and never membership-checked.</strong> The vocabulary belongs to the
+gameplay system. A list here would be a second source of truth that phase 8 contradicts, and — worse
+— a 5e client would be told by this system that its <code>roll</code> does not exist. What can be checked
+without the vocabulary is that the token is shaped like one: non-empty, bounded, lowercase.</p>
+<p><strong>A refusal broadcasts nothing.</strong> A rejection that went to the campaign would tell every browser on
+it that this client attempted something, and the reason travels on the wire. A refusal is between the
+actor and the server.</p>
+<p><strong>The role check runs before the &ldquo;nothing is resolved&rdquo; refusal.</strong> A player attempting a GM-only
+operation is refused <code>not_permitted</code> rather than <code>unknown_op</code>, because the first answers &ldquo;is this
+allowed&rdquo; about <em>them</em> and the second answers &ldquo;is anything allowed&rdquo; about the server. Ordered the other
+way, the word on the wire is a role oracle anyone on the campaign can read.</p>
+<p><strong>Phase 8 replaces this type. It does not extend it</strong> — an implementation that also does phase 8&rsquo;s
+work would make &ldquo;what does the inert system do&rdquo; a question with two answers.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>The §14 row becomes testable.</strong> Two real clients can connect to a real server, send concurrent
+intents, and converge — because the hub, the version and the codec are the parts under test, and the
+resolver being inert is a <em>named refusal</em> rather than a dropped connection.</p>
+<p><strong>The GM-only rule gets its first real exercise.</strong> <code>not_permitted</code> for a player is reachable, so
+§7.2&rsquo;s authority rule is a live path rather than a comment until phase 8 supplies the real
+vocabulary.</p>
+<p><strong>There is a second, deliberately incomplete implementation of <code>Resolver</code> in the tree until phase 8.</strong>
+That is the cost, and it is paid once, for one phase, in exchange for phase 7 being verifiable rather
+than merely compilable.</p>
+<p><strong>The inert system&rsquo;s <code>isGMOnlyShape</code> list is a shape test, not an authority.</strong> It exists so the
+<code>not_permitted</code> path is reachable and testable, and it names the four operations whose <em>names</em> are
+unambiguous. It confers nothing: this system resolves no operation for any role, so a player cannot
+be harmed by it. It is replaced wholesale in phase 8, and the comment in the code says so.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Reorder the phases so plugins precede the realtime plane.</strong> Rejected: ADR 0011&rsquo;s plugin contract is
+specified in terms of the version and intent vocabulary that phase 7 defines. There is nothing for it
+to plug into, and writing the vocabulary first would put the protocol&rsquo;s authority rules in a package
+that has no use for them.</p>
+<p><strong>A stub returning &ldquo;not implemented&rdquo;.</strong> Rejected above: it makes the phase&rsquo;s central test pass against
+a product that cannot play a game, which is the exact shape of failure this repository&rsquo;s gates exist
+to prevent. A green gate that measures the wrong thing is worse than a red one.</p>
+<p><strong>Let <code>Resolver</code> be a nil interface and have the hub reject everything.</strong> Rejected: it moves the
+refusal into the hub, so <code>Hub.Apply</code> grows a second answer path, and the hub&rsquo;s tests would then
+exercise the hub rather than the resolver — so a phase 8 resolver would arrive against a hub already
+containing a competing answer to every intent.</p>
+<p><strong>Have the inert system apply a trivial real change</strong> — move a token to coordinates the client sent.
+Rejected: it would make the hub&rsquo;s fan-out testable, but it would also mean shipping a state mutation
+whose rules belong to a gameplay system, and a token that moved to coordinates nothing validated is a
+token in the wrong place with a version stamp asserting it is authoritative.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

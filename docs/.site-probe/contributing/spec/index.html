@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Specification — semiplane</title>
+<meta name="description" content="The system&#39;s technical requirements, with stable identifiers.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/contributing/spec/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Specification — semiplane">
+<meta property="og:description" content="The system&#39;s technical requirements, with stable identifiers.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/contributing/spec/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>Specification</h1>
+    <p class="lede">The system&#39;s technical requirements, with stable identifiers.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#s-1--scope-and-the-single-instance-rule">S-1 — Scope and the single-instance rule</a></li>
+    <li><a href="#s-2--terminology-and-roles">S-2 — Terminology and roles</a></li>
+    <li><a href="#s-3--content-model">S-3 — Content model</a></li>
+    <li><a href="#s-4--content-pipeline">S-4 — Content pipeline</a></li>
+    <li><a href="#s-5--rendering-caching-and-secrets">S-5 — Rendering, caching, and secrets</a></li>
+    <li><a href="#s-6--editing-and-conflict-resolution">S-6 — Editing and conflict resolution</a></li>
+    <li><a href="#s-7--realtime-plane">S-7 — Realtime plane</a></li>
+    <li><a href="#s-8--access-control">S-8 — Access control</a></li>
+    <li><a href="#s-9--url-scheme">S-9 — URL scheme</a></li>
+    <li><a href="#s-10--plugin-system">S-10 — Plugin system</a></li>
+    <li><a href="#s-11--search">S-11 — Search</a></li>
+    <li><a href="#s-12--observability">S-12 — Observability</a></li>
+    <li><a href="#s-13--accessibility">S-13 — Accessibility</a></li>
+    <li><a href="#s-14--validation">S-14 — Validation</a></li>
+  </ul>
+</nav>
+    </details><p>This is the contract the code is written against. Requirements carry stable identifiers — a
+test, a pull request, and a
+[decision record]({{ &ldquo;decisions/&rdquo; | relURL }}) can all cite <code>S-5.6.1</code> and mean the same thing.</p>
+<p><strong>Identifiers are never reused and never renumbered.</strong> If a requirement turns out to be wrong,
+it is retired and a new one is added; the old identifier keeps pointing at the requirement it
+originally described, so a historical reference stays honest.</p>
+<p>Derived from the [architecture
+overview]({{ &ldquo;design/architecture/&rdquo; | relURL }}). Where this document and a design record
+disagree, <strong>the decision records win</strong>, and this document is wrong until someone fixes it.</p>
+<hr>
+<h2 id="s-1--scope-and-the-single-instance-rule">S-1 — Scope and the single-instance rule</h2>
+<ul>
+<li><strong>S-1.1</strong> semiplane is one binary, one process, one SQLite file, with campaign content in a
+local Obsidian vault.</li>
+<li><strong>S-1.2</strong> <strong>Authoritative game state lives in memory and the WebSocket hub is
+process-local. Two instances behind a load balancer will silently diverge.</strong> There is no
+clustering, no leader election, and no configuration that permits a second instance.
+See [0004]({{ &ldquo;decisions/0004-single-process-constraint/&rdquo; | relURL }}).</li>
+<li><strong>S-1.3</strong> Out of scope: voice and video, combat automation, native mobile clients, multi-
+instance HA, horizontal scaling, and third-party runtime plugin loading.</li>
+<li><strong>S-1.4</strong> <strong>A forwarding header is evidence of nothing until an operator names the proxy
+that sent it.</strong> With no proxy configured, the client address is the transport address and
+<code>X-Forwarded-For</code> and <code>X-Real-IP</code> are ignored entirely — the default must be safe for a
+directly exposed server, because that address is the input to every access-log line, rate
+limit and ban that reads it later. Where a proxy <em>is</em> configured, the chain is walked
+right to left and the first hop that is not a configured proxy is the client; a left-to-right
+walk returns the value a caller chose. See
+[0020]({{ &ldquo;decisions/0020-trusted-proxies-and-client-ip/&rdquo; | relURL }}).</li>
+<li><strong>S-1.5</strong> A <code>X-Request-Id</code> is honoured only when it is short printable ASCII, and is marked
+<code>fwd-</code> rather than <code>gen-</code>. The header is unauthenticated by construction, so an unvalidated
+value is a caller writing newlines into every log line carrying it.</li>
+</ul>
+<h2 id="s-2--terminology-and-roles">S-2 — Terminology and roles</h2>
+<p>These terms are fixed. <code>world</code> and <code>session</code> do not exist as game entities, and those strings
+appear nowhere in the interface.</p>
+<ul>
+<li><strong>S-2.1</strong> A <strong>campaign</strong> is a tenant: one content root, one membership list, one live
+tabletop, one gameplay system.</li>
+<li><strong>S-2.2</strong> A <strong>page</strong> is one <code>.md</code> file. All content — prose <em>and</em> game objects — is a page.</li>
+<li><strong>S-2.3</strong> A <strong>game object</strong> is a page with a registered <code>kind</code>. A <em>definition</em>: durable and
+Obsidian-editable.</li>
+<li><strong>S-2.4</strong> A <strong>placement</strong> is a game object instance on a live map. <strong>Runtime only.</strong></li>
+<li><strong>S-2.5</strong> A <strong>ruleset</strong> is the resolved rule configuration for a campaign: gameplay plugin,
+data pack overlay, and enabled house-rule modules. It has a <code>ruleset_version</code>.</li>
+<li><strong>S-2.6</strong> <code>campaign_members.role ∈ {gm, player}</code>. A campaign has at most one live tabletop.</li>
+<li><strong>S-2.7</strong> <code>users.is_admin</code> is instance-level and exists for campaign registration. It is not
+a campaign role.</li>
+</ul>
+<h2 id="s-3--content-model">S-3 — Content model</h2>
+<ul>
+<li><strong>S-3.1</strong> The <strong>filesystem is the source of truth.</strong> SQLite is a rebuildable index plus
+<code>campaign_state</code>. See [0006]({{ &ldquo;decisions/0006-content-root-is-source-of-truth/&rdquo; | relURL }}).</li>
+<li><strong>S-3.2</strong> <strong>Placements are never written to files.</strong> Current hit points, position,
+conditions, and visibility live in <code>campaign_state</code>. A damage event must not rewrite a page.</li>
+<li><strong>S-3.3</strong> <code>kind</code> is <strong>registry-backed, not a fixed enum.</strong> A page with no <code>kind</code> is prose;
+an unknown <code>kind</code> degrades to prose. Validation is opt-in, so a malformed front-matter block
+in a lore page is inert and cannot break the loader.</li>
+<li><strong>S-3.4</strong> semiplane owns <code>journal</code>, <code>handout</code>, <code>index</code>, <code>token</code>, and <code>scene</code>. A gameplay
+plugin declares only rules-content kinds. <code>token</code> and <code>scene</code> being semiplane-owned is what
+keeps the client system-agnostic.</li>
+<li><strong>S-3.5</strong> Every path in front matter resolves inside the campaign&rsquo;s <code>os.Root</code>. <strong>Never</strong>
+<code>filepath.Clean</code> plus a prefix check. Obsidian Sync is untrusted input.</li>
+</ul>
+<h2 id="s-4--content-pipeline">S-4 — Content pipeline</h2>
+<ul>
+<li><strong>S-4.1</strong> The pipeline is <strong>event-driven</strong>, not request-time. Web editor and Obsidian converge
+on one path.</li>
+<li><strong>S-4.2</strong> Watch <strong>directories, never files</strong>. One watcher serves all campaigns, routing events
+by path prefix. A file watch does not survive an atomic rename.</li>
+<li><strong>S-4.3</strong> Partial-write safety: per-path debounce with the timer reset on each event, <strong>plus</strong>
+size-stable confirmation across two <code>stat</code> samples. Time-debounce alone is documented as
+unreliable. <strong>Zero bytes is not a stable size</strong>: it is the state every in-place write <em>starts</em>
+in, so a page holding nothing is re-armed as though an event had arrived and is settled only
+once it has stayed that way for the whole settle budget — and then reported as
+<code>content.stable_read_timeout</code> as well as settled, because a blank note is legitimate and a
+stalled writer is not.
+<strong>A non-zero size that holds is stable</strong>, so a writer that stops for a whole quiet period has its
+page settled whole: a writer which stopped is a writer which finished, and the test suite must
+distinguish that from a premature settle rather than reporting both as failure.
+See [0037]({{ &ldquo;decisions/0037-zero-bytes-is-not-a-stable-size/&rdquo; | relURL }}),
+[0040]({{ &ldquo;decisions/0040-a-settle-is-judged-by-entitlement/&rdquo; | relURL }}).</li>
+<li><strong>S-4.4</strong> Symlinks in a content tree are <strong>rejected by default</strong>.</li>
+<li><strong>S-4.5</strong> Watch-limit exhaustion logs an <strong>error</strong>, never a debug line, and falls back to
+periodic full rescan. A missing content root marks the campaign <code>degraded</code> and the server
+still starts.</li>
+<li><strong>S-4.6</strong> <strong>Never <code>html.WithUnsafe()</code>.</strong> With a public tier and Obsidian sync as input, this
+is a security boundary, not a style choice.</li>
+<li><strong>S-4.7</strong> Front matter is attacker-reachable. Parse with alias-expansion limits, or cap
+document size.</li>
+</ul>
+<h2 id="s-5--rendering-caching-and-secrets">S-5 — Rendering, caching, and secrets</h2>
+<ul>
+<li><strong>S-5.1</strong> Rendered output is <strong>permission-neutral by construction</strong>, with exactly one
+deliberate exception: <code>[!secret]</code>.</li>
+<li><strong>S-5.2</strong> The render cache key is <code>(campaign_id, path, content_hash, include_secrets)</code>.
+Validity is by <strong>content hash, not mtime</strong> — sync paths preserve or coarsen mtime, and
+1-second granularity lets distinct writes collide.</li>
+<li><strong>S-5.3</strong> <code>ETag = W/&quot;&lt;sha256(content_hash + ':' + include_secrets)&gt;&quot;</code>. <strong>A GM response and a
+player response must never share a validator.</strong>
+See [0016]({{ &ldquo;decisions/0016-salted-etag/&rdquo; | relURL }}).</li>
+<li><strong>S-5.4</strong> <code>Cache-Control: private, no-store</code> on every <code>include_secrets=true</code> response.
+A redacted page is permission-neutral <em>within its tier</em>, so only the GM variant needs it.</li>
+<li><strong>S-5.5</strong> Link resolution is Obsidian-compatible: relative path, then basename index within
+the campaign, then within campaigns the viewer can see. <strong>Never probe invisible ones.</strong></li>
+<li><strong>S-5.6</strong> <strong>Secret redaction.</strong> A <code>[!secret]-</code> body is <strong>absent</strong> from every non-GM response.
+Not <code>display:none</code>, not a <code>hidden</code> attribute, not a comment, not a CSS class. The callout is
+<strong>removed entirely</strong>; the default is omission, not a stub.</li>
+<li><strong>S-5.7</strong> Redaction happens <strong>before</strong> sanitisation and before the value reaches any
+template, so no intermediate buffer holds an unredacted copy for a non-GM.</li>
+<li><strong>S-5.8</strong> Revealing rewrites the file marker <code>-</code> → <code>+</code>. The <strong>file</strong> is authoritative for
+whether a secret is revealed; <code>secrets_revealed</code> is authoritative for <strong>who revealed it and
+when</strong>, and for re-applying a reveal that sync reverted.</li>
+<li><strong>S-5.9</strong> Secret anchors prefer an Obsidian <code>^block-id</code>; otherwise
+<code>sha256(campaign_id, path, ordinal, first-line-of-body)[:12]</code>. An unresolvable anchor
+re-associates by ordinal and logs <code>secret_anchor_drift</code>. <strong>A reveal is never silently
+dropped.</strong></li>
+<li><strong>S-5.10</strong> Sync reconciliation is <strong>capped</strong> (3 passes per file per minute). On exhaustion,
+log <code>secret.reconcile_capped</code> as an <strong>error</strong> and <strong>leave the secret hidden</strong>. Every failure
+path resolves toward hiding.</li>
+<li><strong>S-5.11</strong> <strong>Secret text never enters the FTS index.</strong> <code>body_plain</code> excludes callout content
+in <em>every</em> reveal state.</li>
+<li><strong>S-5.12</strong> A cross-campaign wikilink renders as a plain hyperlink and is <strong>never inlined</strong>, so
+the linking page&rsquo;s HTML is byte-identical for every viewer.
+See [0017]({{ &ldquo;decisions/0017-cross-campaign-links-never-inline/&rdquo; | relURL }}).</li>
+</ul>
+<h2 id="s-6--editing-and-conflict-resolution">S-6 — Editing and conflict resolution</h2>
+<ul>
+<li><strong>S-6.1</strong> There is no file lock. Obsidian is a separate process unaware of semiplane.</li>
+<li><strong>S-6.2</strong> Writes carry <code>If-Match</code>. A mismatch returns <strong>412 with the current body and its
+hash, and records nothing</strong>.</li>
+<li><strong>S-6.3</strong> <strong>No silent overwrite. No last-write-wins fallback.</strong></li>
+<li><strong>S-6.4</strong> A successful write appends a <code>page_revisions</code> row, writes a temp file in the same
+directory, <code>fsync</code>s, and <code>os.Rename</code>s. The watcher&rsquo;s own event re-renders and re-indexes; the
+save path forces neither.</li>
+<li><strong>S-6.5</strong> Content editing is <strong>GM-only</strong>.</li>
+</ul>
+<h2 id="s-7--realtime-plane">S-7 — Realtime plane</h2>
+<ul>
+<li><strong>S-7.1</strong> Clients send <strong>intent, never state</strong>. The server validates, applies, increments
+<code>version</code>, and broadcasts.</li>
+<li><strong>S-7.2</strong> <code>version</code> is the server&rsquo;s monotonic version and the <strong>only</strong> ordering authority.
+Versioning is per-placement, not global.</li>
+<li><strong>S-7.3</strong> Dice are evaluated <strong>server-side</strong>. The client never supplies a result.</li>
+<li><strong>S-7.4</strong> WebSocket authentication is <strong>identical to HTTP</strong>, and <code>Origin</code> is checked explicitly
+on upgrade.</li>
+<li><strong>S-7.5</strong> <code>campaign_state</code> is written on a trailing debounce of about two seconds after the
+last mutation, and on shutdown. The crash floor is the last debounced state.</li>
+<li><strong>S-7.6</strong> Presence is ephemeral and <strong>never persisted</strong>.</li>
+<li><strong>S-7.7</strong> <code>ruleset_version</code> fingerprints <strong>resolution semantics</strong> — system ID, the system&rsquo;s
+<code>RulesetVersion()</code>, and base and overlay pack versions. <strong>House-rule enablement is excluded</strong>,
+so toggling a house rule does not strand a campaign.
+See [0018]({{ &ldquo;decisions/0018-ruleset-version-fingerprint/&rdquo; | relURL }}).</li>
+<li><strong>S-7.8</strong> On drift, <strong>refuse to resume</strong>. Recovery is an explicit, GM-only,
+confirmation-gated discard that writes to <code>audit_log</code>. Never silent.</li>
+</ul>
+<h2 id="s-8--access-control">S-8 — Access control</h2>
+<table>
+	<thead>
+			<tr>
+					<th>Tier</th>
+					<th>Scope</th>
+					<th>Capability</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Instance admin</td>
+					<td>global</td>
+					<td>Register campaigns, manage users</td>
+			</tr>
+			<tr>
+					<td>Campaign GM</td>
+					<td>one campaign</td>
+					<td>Full content edit, game control, invite</td>
+			</tr>
+			<tr>
+					<td>Campaign player</td>
+					<td>one campaign</td>
+					<td>Play only; <strong>no content write</strong></td>
+			</tr>
+			<tr>
+					<td>Anonymous</td>
+					<td><code>visibility='public'</code> only</td>
+					<td>Read-only wiki and public assets</td>
+			</tr>
+	</tbody>
+</table>
+<ul>
+<li><strong>S-8.1</strong> Games always require membership. <code>public</code> grants wiki read only.</li>
+<li><strong>S-8.2</strong> <strong>Every FTS query joins <code>campaigns</code> on visibility.</strong> A bare query returns private
+titles to an anonymous user.</li>
+<li><strong>S-8.3</strong> Assets inherit campaign visibility. A cache entry is <strong>never</strong> shared across
+campaigns.</li>
+</ul>
+<h2 id="s-9--url-scheme">S-9 — URL scheme</h2>
+<pre tabindex="0"><code>/c/{slug}/wiki/{path...}       page, ETag, cacheable, secret-redacted for non-GM
+/c/{slug}/edit/{path...}       editor (GM only)
+/c/{slug}/secrets/{path...}    reveal / unreveal, GM only, If-Match
+/c/{slug}/assets/{path...}     assets, Range, visibility-gated
+/c/{slug}/search?q=            FTS5
+/c/{slug}/play                 VTT (members only)   — no session id
+/c/{slug}/ws                   WebSocket upgrade
+/c/{slug}/events               SSE (editors + live chrome)
+/healthz  /readyz
+</code></pre><ul>
+<li><strong>S-9.1</strong> The slug in the path partitions every cache key by visibility. <strong>There is no
+<code>{session}</code> parameter anywhere.</strong></li>
+<li><strong>S-9.2</strong> <code>/c/{slug}/play</code> serves a <strong>document</strong> and <code>/c/{slug}/ws</code> is the upgrade. One
+route cannot answer both: <code>Upgrade</code> is a header, and a URL that answers HTML to a <code>GET</code>
+and a socket to a <code>GET</code> with <code>Upgrade</code> is two answers decided by a request header on one
+address. Both sit behind <code>RequirePlay</code>, because a socket is a standing capability.</li>
+<li><strong>S-9.3</strong> <code>/c/{slug}/events</code> carries <strong>rendered DOM fragments</strong> for the sidebar and never
+content. A notice saying &ldquo;here is the page now&rdquo; would be a second, unvalidatable copy of
+the file on a connection with no <code>If-Match</code>.</li>
+</ul>
+<h2 id="s-10--plugin-system">S-10 — Plugin system</h2>
+<ul>
+<li><strong>S-10.1</strong> Plugins are <strong>compiled-in Go modules</strong>, registered explicitly in the composition
+root. <strong>No <code>init()</code></strong>, and no runtime loading of third-party code.</li>
+<li><strong>S-10.2</strong> <code>Apply</code> <strong>returns</strong> <code>[]Mutation</code> and never applies in place. A plugin therefore
+cannot write <code>campaign_state</code> or forge a broadcast. A panic inside <code>Apply</code> leaves
+<code>campaign_state</code> byte-identical.</li>
+<li><strong>S-10.3</strong> A UI plugin may only emit operations that some gameplay system already resolves.
+It cannot register a new <code>op</code>.</li>
+<li><strong>S-10.4</strong> Rule code is deterministic: no <code>time.Now</code>, no map iteration, no direct
+<code>crypto/rand</code>. Enforced by a lint rule and tests — there is no sandbox.</li>
+<li><strong>S-10.5</strong> House rules are <strong>data-level only</strong>. A module that reorders resolution or
+introduces nondeterminism is rejected. Conflicts resolve first-match-wins by <code>position</code>,
+logged, never last-write-wins.</li>
+<li><strong>S-10.6</strong> A campaign whose <code>system_id</code> resolves to nothing <strong>still serves its wiki</strong>. Only
+the game refuses to start, and it names the ID it wanted.</li>
+<li><strong>S-10.7</strong> System-specific views render <strong>server-side</strong> by templ. A <code>ClientView</code> may be added
+later without changing <code>Derive</code>.</li>
+<li><strong>S-10.8</strong> The <strong>theme layer</strong> — architecture §10.1&rsquo;s third tier, &ldquo;plain files in the
+campaign content root&rdquo; — is a <strong>manifest the server validates and a stylesheet the server
+generates</strong> at <code>/c/{slug}/theme.css</code>. A campaign cannot ship arbitrary CSS: a raw <code>.css</code> in
+a content root is served as a static asset under <code>/c/{slug}/assets/</code> and is never linked
+from the shell.</li>
+<li><strong>S-10.9</strong> The generated sheet <strong>never declares a protected variable</strong>: <code>--text-*</code>,
+<code>--border*</code>, <code>--focus-ring</code>, <code>--callout-*</code>, <code>--type-scale</code>, <code>--space-scale</code>,
+<code>--target-min</code>, <code>--dur-*</code>, <code>--radius-*</code>. That set is the accessibility contract — a
+campaign stylesheet that could set <code>--focus-ring</code> or <code>--target-min</code> could silently break
+1.4.11, 1.4.3 or 2.5.5, and no gate could catch it across every campaign.</li>
+<li><strong>S-10.10</strong> A brand pair failing its floor (<code>--brand-accent</code> against <code>--brand-accent-ink</code> at
+≥4.5:1, against <code>--bg</code> at ≥3:1) <strong>degrades to the last known-good theme, or the core theme
+if there never was one</strong>, logs <code>theme.brand_invalid</code> at error level, and shows a GM notice
+naming the rejected pair. <strong>A rejected theme never ships an unreadable UI.</strong> The same
+fail-toward-safety direction as S-5.6.2&rsquo;s reconciliation cap.</li>
+<li><strong>S-10.11</strong> A campaign theme is <strong>per-campaign, not per-user</strong>. It is therefore not an
+<code>sp_ui</code> preference and does not affect S-13.5: the <code>&lt;link&gt;</code> is rendered from the slug, which
+is already in the path.</li>
+</ul>
+<h2 id="s-11--search">S-11 — Search</h2>
+<ul>
+<li><strong>S-11.1</strong> FTS5 external-content table over <code>pages</code>,
+<code>tokenize='unicode61 remove_diacritics 2'</code>, <strong>deliberately no <code>porter</code></strong> — TTRPG proper nouns
+stem badly. See [0007]({{ &ldquo;decisions/0007-fts5-tokenizer/&rdquo; | relURL }}).</li>
+<li><strong>S-11.2</strong> External-content tables cannot be <code>ALTER</code>ed. Bulk changes use
+<code>INSERT INTO pages_fts(pages_fts) VALUES('rebuild')</code>.</li>
+<li><strong>S-11.3</strong> Search is <strong>submit-to-navigate over ordinary HTTP</strong>, not type-ahead. A client-side
+renderer is prohibited: it cannot reproduce the server&rsquo;s tokenisation.</li>
+</ul>
+<h2 id="s-12--observability">S-12 — Observability</h2>
+<ul>
+<li><strong>S-12.1</strong> <code>slog</code> with a stable <code>event</code> key is the only observability mechanism. No metrics
+server, no tracing stack. Counters are exposed on <code>/readyz</code> as JSON.</li>
+<li><strong>S-12.2</strong> <code>watch.add_failed</code>, <code>content.render_error</code>, and <code>secret.reconcile_capped</code> are
+<strong>never below error level</strong>. The third is security-relevant: it means the system <em>chose</em> to
+hide something.</li>
+<li><strong>S-12.3</strong> Every event carries <code>campaign_id</code> and, where applicable, <code>path</code>. <strong>No event
+carries secret content, file contents, or dice results.</strong></li>
+</ul>
+<h2 id="s-13--accessibility">S-13 — Accessibility</h2>
+<p>The interface contract is in the
+[UI specification]({{ &ldquo;design/ui-ux/&rdquo; | relURL }}). The requirements that cross into the server:</p>
+<ul>
+<li><strong>S-13.1</strong> Target is WCAG 2.2 AA, with AAA claimed only where stated.</li>
+<li><strong>S-13.2</strong> The map canvas is <code>aria-hidden=&quot;true&quot;</code> and a <strong>decorative mirror</strong>. The accessible
+representation is the token list in the rail. <code>role=&quot;application&quot;</code> is prohibited.</li>
+<li><strong>S-13.3</strong> Live regions: <code>role=&quot;status&quot;</code> / <code>polite</code> for state changes; <code>role=&quot;alert&quot;</code> /
+<code>assertive</code> for a 412 conflict, a secret reveal, and reconcile-capped.</li>
+<li><strong>S-13.4</strong> <strong>No live region on the search route, and search responses carry an <code>ETag</code>.</strong></li>
+<li><strong>S-13.5</strong> The document never varies by the theme cookie. <strong>No <code>Vary: Cookie</code> is emitted.</strong></li>
+<li><strong>S-13.6</strong> Search is not a Datastar surface and the map is not a Datastar element.</li>
+</ul>
+<h2 id="s-14--validation">S-14 — Validation</h2>
+<p>The gate is <code>make ci</code>. Beyond that:</p>
+<ul>
+<li><strong>S-14.1</strong> <strong>Secret redaction is a release-gating test.</strong> For a page containing a secret: the
+GM response contains the body; the player response does not; the anonymous response does not;
+and neither contains the secret text <strong>anywhere</strong> — headers, comments, JSON payloads, or HTML
+source.</li>
+<li><strong>S-14.2</strong> A GM response and a player response never share an <code>ETag</code>.</li>
+<li><strong>S-14.3</strong> A private page body never appears in a public response.</li>
+<li><strong>S-14.4</strong> <code>player</code> <code>PUT</code> → 403. <code>anonymous</code> <code>PUT</code> → 401 or 404.</li>
+<li><strong>S-14.5</strong> Two clients issuing concurrent intents converge with monotonic versions.</li>
+<li><strong>S-14.6</strong> Identical <code>(state, intent, seed)</code> yields identical mutations across 100 runs.</li>
+<li><strong>S-14.7</strong> A page with a <code>kind</code> no plugin registers degrades to prose, content intact.</li>
+<li><strong>S-14.8</strong> A campaign with an unknown <code>system_id</code> refuses the game and <strong>still serves the wiki
+200</strong>.</li>
+<li><strong>S-14.9</strong> A system sharing nothing with 5e passes the conformance suite <strong>without touching
+<code>internal/domain/rules</code></strong>. This is the test that proves the plugin system generalises.</li>
+</ul>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

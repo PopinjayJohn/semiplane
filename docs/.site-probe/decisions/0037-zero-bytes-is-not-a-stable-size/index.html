@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0037 — Zero bytes is not a stable size, and the settle budget is the only clock that can tell a blank note from an unwritten one — semiplane</title>
+<meta name="description" content="S-4.3&#39;s two `stat` samples cannot distinguish a page that is empty from a page whose writer has not started yet, because both are `size == 0`. The filter believed the samples and settled an empty page, which is a wrong `pages` row rather than a merely early one.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0037-zero-bytes-is-not-a-stable-size/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0037 — Zero bytes is not a stable size, and the settle budget is the only clock that can tell a blank note from an unwritten one — semiplane">
+<meta property="og:description" content="S-4.3&#39;s two `stat` samples cannot distinguish a page that is empty from a page whose writer has not started yet, because both are `size == 0`. The filter believed the samples and settled an empty page, which is a wrong `pages` row rather than a merely early one.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0037-zero-bytes-is-not-a-stable-size/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0037 — Zero bytes is not a stable size, and the settle budget is the only clock that can tell a blank note from an unwritten one</h1>
+    <p class="lede">S-4.3&#39;s two `stat` samples cannot distinguish a page that is empty from a page whose writer has not started yet, because both are `size == 0`. The filter believed the samples and settled an empty page, which is a wrong `pages` row rather than a merely early one.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a>
+      <ul>
+        <li><a href="#how-it-presented">How it presented</a></li>
+        <li><a href="#why-it-is-a-wrong-answer-and-not-an-early-one">Why it is a wrong answer and not an early one</a></li>
+      </ul>
+    </li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#the-exception-and-why-it-is-an-exception">The exception, and why it is an exception</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>Phase 4&rsquo;s settle filter implements S-4.3 literally: a per-path quiet period, and then a
+size-stable confirmation across two <code>stat</code> samples taken a sample interval apart. Both mechanisms
+are right, and the reasoning behind the second one is sound for every state it can be given — two
+samples that agree on a size mean the writer is not currently changing it.</p>
+<p>The reasoning has one hole, and it is the fixed point.</p>
+<p><strong>A file at zero bytes has one <code>stat</code>, not two.</strong> A page that is genuinely empty and a page whose
+writer has not started yet are the same observation, so a confirmation that samples inside that
+window gets two samples that agree, and agreement is the filter&rsquo;s entire evidence for a settle. It
+settles an <code>OpUpsert</code> for a page with no content in it.</p>
+<p>The window is not a theoretical slice between two adjacent instructions. It is a pair of syscalls
+with an event gap across it:</p>
+<ol>
+<li><code>open(O_TRUNC)</code> empties the file. No bytes are produced.</li>
+<li>The <code>write</code> that refills it is a <strong>separate</strong> call. Between them the writer may be descheduled
+for as long as it likes — a GC cycle, a preemption, or an entire network round trip.</li>
+<li>The truncation need not deliver an event of its own, because the event a watcher sees is the
+one the <strong>write</strong> produces. So there is nothing to restart the quiet period inside the window,
+and the deadline armed by the <em>previous</em> event is still live over a file that is now empty.</li>
+</ol>
+<p>On semiplane&rsquo;s own save path this cannot happen: S-6.4 stages a temporary file, <code>fsync</code>s it, and
+<code>os.Rename</code>s it over the destination, so the destination only ever exists at full size. That is
+precisely why the defect survived a phase&rsquo;s worth of testing — the product&rsquo;s own writer never
+produces the input that breaks the filter. But <strong>Obsidian Sync is untrusted input</strong> (S-3.5), and
+untrusted input is also <em>slow</em> input: a sync client writing a page it has just learned about
+creates the file empty and fills it a moment later, and a sync client streaming a large page holds
+it near zero for as long as the transfer takes.</p>
+<h3 id="how-it-presented">How it presented</h3>
+<p>Two tests in <code>internal/content/debounce_test.go</code> failed intermittently on CI, in two unrelated PRs,
+and neither failure was reproducible locally — 60 consecutive runs of the two tests at 4× CPU load
+passed clean. Both failures reported the same fact from two directions:</p>
+<pre tabindex="0"><code>--- FAIL: TestTwoCampaignsDoNotInterfere (0.25s)
+    debounce_test.go:614: a change settled that should not have: noisy upsert shared.md, 0 bytes read
+--- FAIL: TestEverySettledReadIsAWholePage (0.39s)
+    debounce_test.go:519: the settled page&#39;s title &#34;&#34; is not a version title
+</code></pre><p><code>0 bytes read</code> and a title of <code>&quot;&quot;</code> are the same observation: an empty file parses to empty front
+matter. The tests&rsquo; own fixture explains why they are rare rather than absent — <code>tornWrite</code> puts a
+<code>Touch</code> <strong>between</strong> its two writes, so its zero-length window is one millisecond wide and an armed
+deadline rarely lands in it. The window the tests never produce is the one a real sync client
+produces routinely.</p>
+<h3 id="why-it-is-a-wrong-answer-and-not-an-early-one">Why it is a wrong answer and not an early one</h3>
+<p>The file header&rsquo;s stated reason for existing is that &ldquo;a watcher that indexes the third of ten events
+is not <em>slightly early</em>, it is a wrong answer that looks right.&rdquo; That applies here with more force,
+because of what the index does with the bytes it is handed. <code>Indexer.indexPath</code> computes
+<code>content_hash</code> and <code>byte_size</code> from the same read and writes a row:</p>
+<ul>
+<li><code>content_hash</code> becomes the digest of the empty string,</li>
+<li><code>byte_size</code> becomes <code>0</code>,</li>
+<li><code>title</code> becomes <code>&quot;&quot;</code>,</li>
+<li><code>body_plain</code> becomes nothing.</li>
+</ul>
+<p>S-5.2 keys the render cache on <code>(campaign_id, path, content_hash, include_secrets)</code>. An empty row
+is therefore not merely a missing page — it is a page the search index and the nav tree will list as
+untitled, backed by a cache key nothing else will ever produce.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>A sample that finds the path present, not a directory, and zero bytes long is not evidence of a
+settled page.</strong> <code>finishLocked</code> treats it as <em>not stable</em>, and — critically — not as &ldquo;not stable
+<strong>yet</strong>&rdquo; in the way an ordinary size disagreement is handled.</p>
+<p>An ordinary disagreement re-samples at the sample interval and re-baselines <code>first</code> on the new
+size. That is not enough here, because the disagreement has to be manufactured first: the writer
+must still be stalled when both samples are taken. So a zero-length sample instead re-arms the page
+<strong>the way an event re-arms it</strong>:</p>
+<ul>
+<li><code>phase</code> returns to <code>phaseQuiet</code> and <code>first</code> is discarded, so the <strong>quiet period restarts</strong> — a
+writer that resumes inside it is caught by the timer rather than by the budget;</li>
+<li><code>page.budget</code> is <strong>not</strong> re-taken, so the time a path may spend empty stays bounded by the settle
+budget rather than being renewed by every observation of its own emptiness.</li>
+</ul>
+<p>Making the second point work required one small change elsewhere: <code>armLocked</code> now clears
+<code>page.budget</code>, and <code>beginLocked</code> takes a budget only when there is none. Previously <code>armLocked</code>
+left a stale budget in place and <code>beginLocked</code> overwrote it unconditionally, which made the field
+mean two different things depending on how a page had been armed. <code>armLocked</code> clearing it is
+behaviour-preserving for the <code>Touch</code> and <code>Moved</code> paths — they both reach <code>beginLocked</code>, which takes
+a fresh budget either way — and it is what makes &ldquo;only when there is none&rdquo; mean <em>this</em> confirmation.</p>
+<p>The patience this buys, at the production defaults: <strong>40 ms becomes 2 s</strong>. The old filter believed
+an empty page after one sample interval (50 ms); the new one will not believe it until the budget
+has run out.</p>
+<h3 id="the-exception-and-why-it-is-an-exception">The exception, and why it is an exception</h3>
+<p>A path that is <em>still</em> zero when the budget expires settles — as <code>outcomeSettledEmpty</code>, which
+reports <code>content.stable_read_timeout</code> <strong>and</strong> emits the row. Refusing to settle it was the obvious
+alternative and it is worse:</p>
+<ul>
+<li>An empty <code>.md</code> file is a page a user can legitimately create. Obsidian makes a blank note the
+first thing a user does in a vault, and semiplane&rsquo;s own editor can produce one.</li>
+<li>A filter that cannot settle an empty page drops it, and the periodic rescan (S-4.5) indexes it
+minutes later — so a blank note appears on its own, with no event explaining it.</li>
+<li>Every blank note would also log <code>content.stable_read_timeout</code>. That signal exists because &ldquo;a
+writer that appears stuck is a thing an operator has to know about&rdquo;. A signal that fires on healthy
+input is an audit of nothing, and it is the same failure as a gate test that cannot fail.</li>
+</ul>
+<p>So the row is emitted, because after a whole budget the file really is empty and the row describes
+the bytes on disk — which is what <code>pages.content_hash</code> means. And the timeout is emitted, because
+that is the only trace a writer stalled between its <code>open</code> and its <code>write</code> ever leaves. Both facts
+are true and neither implies the other, which is why they are a distinct outcome rather than one
+outcome with a flag on it.</p>
+<p>The write this filter exists to prevent still cannot happen: a writer that resumes at any point
+inside the budget produces a non-zero size, the next sample disagrees with the zero it was baselined
+on, and the page settles whole.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong>S-4.3 gains a clause.</strong> The requirement said &ldquo;size-stable confirmation across two <code>stat</code>
+samples&rdquo; and did not say that zero is a stable size, because zero being a stable size is true and
+useless. <code>spec.md</code> now states the exclusion and the budget bound.</li>
+<li><strong>A blank note costs a settle budget.</strong> A page that is empty when it settles takes up to
+<code>SettleBudget</code> to reach the sink — 2 s at the defaults — where before it took one sample
+interval. Every genuine blank note in a vault now takes that long to appear, and reports a timeout
+while doing it. That is the price of telling a blank note from a stalled writer, and it is paid
+only by pages that are empty.</li>
+<li><strong>No new signal and no new event name.</strong> <code>observability.AllEventNames()</code> stays at 24, so
+[0032]({{ &ldquo;decisions/0032-index-signals-beyond-the-architecture-list/&rdquo; | relURL }}) needed no
+amendment.</li>
+<li><strong>The exposure is bounded, not eliminated.</strong> A writer that holds a path at zero for longer than
+the whole settle budget still yields an empty row. That is a deliberate, documented bound rather
+than an accident: the filter is bounded, and the only way to be unbounded is to wait forever,
+which the rejected alternative in <code>defaultSettleBudget</code> already rules out.</li>
+<li><strong>Three regression tests</strong>, each verified to fail against the pre-fix <code>debounce.go</code> with the
+byte-for-byte CI message: <code>TestAZeroLengthSampleIsNotASettledSize</code> (a writer truncated in place
+and descheduled across both samples), <code>TestACreatedButUnwrittenPageIsNotSettledEarly</code> (a create
+with late bytes, asserted silent for half the settle budget), and
+<code>TestAnEmptyPageSettlesAndIsReported</code> (a blank note still settles, and still reports).</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Reject zero-length samples outright, always.</strong> Cleanest rule, one line, and it makes the filter&rsquo;s
+contract crisp: <em>a settled page is a non-empty page.</em> Rejected for the reasons above — it makes the
+blank note invisible to the watcher, defers it to the rescan, and turns <code>stable_read_timeout</code> into
+noise. It also silently changes what the filter is for: it stops being &ldquo;when has the writer
+finished&rdquo; and becomes &ldquo;is this file worth indexing&rdquo;, which is the indexer&rsquo;s question.</p>
+<p><strong>Add a third sample, or require the size to hold for N intervals.</strong> Does not help. The
+discriminator is not the number of agreeing samples; it is elapsed time. Two samples 50 ms apart and
+five samples 250 ms apart agree on the same empty file, and the difference between &ldquo;empty because
+the writer is slow&rdquo; and &ldquo;empty because the note is blank&rdquo; is only ever a duration.</p>
+<p><strong>Require a non-zero <code>mtime</code>, or require <code>mtime</code> to be stable too.</strong> Rejected: S-5.2 records that
+sync paths preserve or coarsen mtime, so mtime is the one field in this decision that cannot be
+trusted, and adding it would make the filter <em>less</em> correct on exactly the inputs it exists for.</p>
+<p><strong>Have the indexer refuse to index a zero-byte page.</strong> Rejected for two reasons. It puts the
+judgement in the wrong component — S-4.3&rsquo;s whole job is deciding <em>when</em> to read, and the indexer&rsquo;s
+job is to index what it read. And it would have to be applied to <code>ReindexCampaign</code> as well as to
+<code>indexPath</code>, which means a blank note&rsquo;s row would appear and disappear depending on which code path
+noticed it.</p>
+<p><strong>Refuse the event instead: have the watcher ignore an <code>IN_MODIFY</code> whose <code>stat</code> shows zero bytes.</strong>
+Rejected because the watcher and the debouncer are separate components with separate jobs, and
+because it would only help when the truncation <em>does</em> emit an event — the case the decision is about
+is the one where it does not.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

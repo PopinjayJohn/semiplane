@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0055 — Two egresses, one hub: the sidebar is HTML and the canvas is structured data — semiplane</title>
+<meta name="description" content="UI §7.5&#39;s resolution table is implemented as one `events.Hub` with two egress representations. The canvas takes structured deltas over `/c/{slug}/ws`; the sidebar takes rendered DOM fragments over `/c/{slug}/events`. The delivery policy splits on one question — does the newer value make the older one untrue, or merely old? — and the region a fragment announces is a field on its type, refused server-side when it disagrees with its target. The stream&#39;s gate is the play gate rather than the edit gate, because one URL carries two payloads. Three of §7.5&#39;s four prohibitions are code rather than comment, and the fourth — search has no live region — was already held elsewhere. Separately: the vendored Datastar is 1.0.4 from the upstream release rather than the newest *published* npm package, because every pre-1.0.0 build renamed the event this route writes.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0055 — Two egresses, one hub: the sidebar is HTML and the canvas is structured data — semiplane">
+<meta property="og:description" content="UI §7.5&#39;s resolution table is implemented as one `events.Hub` with two egress representations. The canvas takes structured deltas over `/c/{slug}/ws`; the sidebar takes rendered DOM fragments over `/c/{slug}/events`. The delivery policy splits on one question — does the newer value make the older one untrue, or merely old? — and the region a fragment announces is a field on its type, refused server-side when it disagrees with its target. The stream&#39;s gate is the play gate rather than the edit gate, because one URL carries two payloads. Three of §7.5&#39;s four prohibitions are code rather than comment, and the fourth — search has no live region — was already held elsewhere. Separately: the vendored Datastar is 1.0.4 from the upstream release rather than the newest *published* npm package, because every pre-1.0.0 build renamed the event this route writes.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0055 — Two egresses, one hub: the sidebar is HTML and the canvas is structured data</h1>
+    <p class="lede">UI §7.5&#39;s resolution table is implemented as one `events.Hub` with two egress representations. The canvas takes structured deltas over `/c/{slug}/ws`; the sidebar takes rendered DOM fragments over `/c/{slug}/events`. The delivery policy splits on one question — does the newer value make the older one untrue, or merely old? — and the region a fragment announces is a field on its type, refused server-side when it disagrees with its target. The stream&#39;s gate is the play gate rather than the edit gate, because one URL carries two payloads. Three of §7.5&#39;s four prohibitions are code rather than comment, and the fourth — search has no live region — was already held elsewhere. Separately: the vendored Datastar is 1.0.4 from the upstream release rather than the newest *published* npm package, because every pre-1.0.0 build renamed the event this route writes.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#measured-the-frames-phase-7-wrote-and-the-client-that-reads-them">Measured: the frames phase 7 wrote, and the client that reads them</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-03 00:00:00 &#43;0000 UTC">2026-10-03 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The plan contradicts itself about the play page and UI §7.5 resolves it. Architecture <code>§7</code> says &ldquo;no SSE on the VTT page&rdquo;; UI <code>§3.1</code> lists initiative, chat and presence as Datastar/SSE fragments; <code>§9</code> routes <code>/c/{slug}/events</code> as &ldquo;SSE (editors + live chrome)&rdquo;; and <code>§7.1</code>&rsquo;s WebSocket protocol also carries presence. §7.5 resolves it in one table:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Channel</th>
+					<th>Carries</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><strong>WebSocket</strong> <code>/c/{slug}/ws</code></td>
+					<td>client to server: intents, presence. server to client: ordered state — placement deltas, rolls, clock, snapshot, <code>applied</code>/<code>rejected</code> — consumed by PixiJS as structured data</td>
+			</tr>
+			<tr>
+					<td><strong>SSE</strong> <code>/c/{slug}/events</code></td>
+					<td>server to client: <strong>rendered DOM fragments</strong> for the sidebar — initiative, chat, dice log, connection and degraded notices — patched by Datastar. Plus the editor&rsquo;s external-change notice on <code>/edit</code></td>
+			</tr>
+	</tbody>
+</table>
+<p>Two connections on the play page, against plan <code>§7</code>&rsquo;s ceiling of about six. Presence rides the WebSocket because <code>§7.1</code>&rsquo;s protocol already defines it there and it needs no versioning. <code>§7</code>&rsquo;s &ldquo;no SSE on the VTT page&rdquo; is read as <strong>no SSE for map state</strong>.</p>
+<p>Phase 7 built the SSE half for one payload: the editor&rsquo;s external-change notice, behind <code>campaigns.RequireEdit</code>, with the handler carrying no gameplay and no state. The sidebar adds four fragment families, a second reader tier, and three rules that have to be code rather than prose:</p>
+<ul>
+<li>patches must never touch the focused element;</li>
+<li>insertions into a live region are throttled to 1/second, and a keep-alive comment is not an insertion;</li>
+<li>the chat and dice logs must not replay history into a live region on connect.</li>
+</ul>
+<p>And one that is already held elsewhere: <strong>search has no live region, because search is not live.</strong></p>
+<p>There is also a defect the last of these makes expensive to leave alone. §7.5&rsquo;s resolution table is a statement about a wire protocol, and phase 7&rsquo;s frames do not match the client they claim to speak to. See the &ldquo;Measured&rdquo; section below, because the measurement is the reason this record exists as well as the design.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>One hub, two egress representations, and the representation is a field on the change.</strong> <code>events.Notice</code> gains a <code>Kind</code>, whose zero value is phase 7&rsquo;s filesystem change — so every existing publisher and every existing test is unchanged by the field&rsquo;s arrival, and a new publisher that forgets the field gets phase 7&rsquo;s behaviour rather than a zero value nobody handled. <code>PublishSidebar</code> is a <strong>separate method</strong> rather than a flag, and it refuses <code>KindChange</code>: a caller reaching for the sidebar&rsquo;s entry point with a filesystem change has made a mistake a counter should record, and <code>KindChange</code> is the one value for which both delivery policies are wrong.</p>
+<p><strong>The delivery policy splits on one question: does the newer value make the older one <em>untrue</em>, or merely <em>old</em>?</strong> A fact about the present — the order, whose turn it is, whether the watcher is degraded — is superseded by a newer statement of the same fact, so one buffer slot is correct and dropping the older one is free. An event that happened — a chat line, a roll — is not superseded by the next one, so coalescing two leaves a transcript with a hole in it. That gives <code>Subscription</code> two channels: <code>Notices</code> with one slot and coalescing-on-full, <code>Lines</code> with sixty-four slots and oldest-out-on-full. Phase 7&rsquo;s one-slot buffer would have dropped four of five chat lines in a burst, and no test of the filesystem notice would have noticed.</p>
+<p><strong>One ticker, one budget, and it gates every insertion.</strong> §7.5&rsquo;s rule and §7.10&rsquo;s prohibition are one statement about the <em>region</em>, not about the event that happened to fill it, so a chat line and a page edit compete for the same budget rather than each getting their own. The coalescing slot drains first, in §7.5&rsquo;s own row order: a turn change and a chat line in the same second produce the turn change now and the line a second later, because the turn is the fact the reader was waiting on and the line is a thing they will still get.</p>
+<p><strong>A keep-alive is a comment and the throttle does not apply to it.</strong> It writes no fields and inserts nothing; it exists so an intermediary&rsquo;s idle timer and a vanished socket are both noticed. The handler&rsquo;s keep-alive branch touches neither slot, which is the claim <code>TestAKeepAliveIsNotAnInsertionAndDoesNotConsumeTheBudget</code> measures with a five-millisecond keep-alive — a hundredfold more often than the shipped fifteen seconds — and asserts that announcements are still a second apart.</p>
+<p><strong>The region is a field on the fragment&rsquo;s type, and the server refuses a mismatch.</strong> <code>live.Target</code> declares the region its element <em>is</em>; <code>live.Fragment</code> declares the region the fragment <em>announces</em>; <code>live.Decide</code> refuses the two disagreeing. §7.5&rsquo;s announced-content table is the specification, so encoding it in two types rather than in markup means a component change cannot move a dice roll into an assertive region without the build failing. <code>Decide</code> also refuses a fragment that parses to <strong>any</strong> focus stop, and it parses on every patch rather than trusting a per-family verdict: a patch is at most one a second and a fragment is a few hundred bytes, and the alternative is a rule that a later edit to one templ component breaks with nothing failing.</p>
+<p><strong>The tracker is silent, and its current turn is <code>aria-current</code> rather than a sentence.</strong> §7.5&rsquo;s table has a row for &ldquo;turn change&rdquo; and none for &ldquo;the order changed&rdquo;. A tracker that announced itself would read the whole order aloud on every re-order, which is the replay prohibition wearing different clothes. <code>aria-current=&quot;true&quot;</code> on one row is state a reader can ask about, which is UI §7.6&rsquo;s argument about the canvas and the token list applied to the tracker.</p>
+<p><strong>The logs are empty at load and the histories are <code>aria-live=&quot;off&quot;</code> beside them.</strong> The split <code>components/chat</code> already makes for its own log, applied to the dice log here, and the assertive region follows it too: the <code>role=&quot;alert&quot;</code> element is the <strong>patch target</strong> and is empty, and the conditions the document already knew are in a sibling marked <code>off</code>. A reader who arrives at a page whose watcher is already degraded has not <em>transitioned</em> — and a live region that fires on load is §7.5&rsquo;s search-route mistake one level down. The visually-hidden headings are <strong>siblings</strong> of both regions rather than children, because what a live region contains at the moment it appears is the one thing the replay rule is about, and whether a given browser announces it is not a question this product should be relying on an answer to.</p>
+<p><strong>The stream&rsquo;s gate is the play gate, and the payload is filtered by tier.</strong> One URL cannot sit behind two gates, and a player needs the sidebar and must not have the editor&rsquo;s notice — so the gate is the lower one and the handler emits the notice only for a tier that can edit. This is not [0024]({{ &ldquo;decisions/0024-authorisation-gates-mount-not-per-handler/&rdquo; | relURL }}) being bent: the gate decides whether the reader may see the campaign&rsquo;s <strong>table</strong> at all, before the handler runs, and filtering which fragments an entitled reader is told about is the job <code>internal/httpapi/wiki</code> does with secrets. A page path is the campaign&rsquo;s own directory structure, so a player receives nothing at all when the watcher publishes a change — not a redacted notice, not an empty one.</p>
+<p><strong>The connection state ships as prose and the client reveals it.</strong> <code>live.SocketState</code> renders both sentences into one assertive container with <code>hidden</code> on the one that is not currently true; the client toggles an attribute and authors no English. §7.5 puts &ldquo;connection lost&rdquo; on the WebSocket because the connection is what dropped, and a patch target for it would mean the notice arrives over the channel whose loss is the condition — the one design that guarantees the reader who needed it most is the one who does not get it. So <code>SocketHook</code> exists and is deliberately <strong>not</strong> one of the five targets, and a test says so.</p>
+<p><strong>Both fragments and their mount points are server-rendered, and each fragment&rsquo;s target is data on the fragment.</strong> The five targets are <code>[data-chrome=&quot;…&quot;]</code> attribute selectors declared by <code>internal/web/components/live</code>, read from Go constants so there is one spelling. The chat log&rsquo;s is <code>chat.LogChromeHook</code> and <strong>this package does not render that container</strong> — <code>components/chat</code> does, empty at load, and its own comment says the attribute is &ldquo;a promise to phase 9&rsquo;s script&rdquo;. Rendering it here would give a document with two <code>[data-chrome=&quot;chat-log&quot;]</code> elements, which <code>querySelector</code> resolves to the first, so the reader&rsquo;s log would go nowhere while every hook audit passed.</p>
+<p><strong>Search has no live region, and the assertion is not repeated here.</strong> It is held by <code>components/chat</code>&rsquo;s own test, which renders the search surface and counts its regions — a rule only one route could violate is not a rule, and that is why the assertion lives in a package that owns one of the two surfaces. What this work item adds is that the live chrome is the <em>only</em> place a live region is born on a campaign page: <code>live.AnnouncedContent()</code> holds §7.5&rsquo;s table as data, every SSE row must name a target this package declares at the region the table says, and every WebSocket row must name none.</p>
+<h3 id="measured-the-frames-phase-7-wrote-and-the-client-that-reads-them">Measured: the frames phase 7 wrote, and the client that reads them</h3>
+<p>Phase 7 wrote <code>selector …</code>, <code>mode …</code> and <code>elements …</code> as <strong>bare</strong> event-stream field lines, and its own test parsed the frame with a reader that accepted bare lines — so the test asserted the encoder against itself and passed while the product received nothing. The grammar ends a field at the first colon and treats a colon-less line as a field name with an empty value; Datastar&rsquo;s own parser is narrower still and switches on the field name, handling <code>data</code>, <code>event</code>, <code>id</code> and <code>retry</code> and ignoring every other name <strong>without complaint</strong>.</p>
+<p>Two frames were pushed through a real Chromium against the vendored module, at <code>mode: inner</code> and again at <code>mode: append</code> with three <code>elements</code> lines, the only difference being the prefix:</p>
+<table>
+	<thead>
+			<tr>
+					<th>Frame</th>
+					<th>Target afterwards</th>
+					<th>Console</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>data: selector …</code>, <code>data: mode inner</code>, <code>data: elements …</code></td>
+					<td>became the fragment, and the three-line append landed as three siblings</td>
+					<td>empty</td>
+			</tr>
+			<tr>
+					<td><code>selector …</code>, <code>mode inner</code>, <code>elements …</code></td>
+					<td><strong>byte-identical</strong></td>
+					<td>empty</td>
+			</tr>
+	</tbody>
+</table>
+<p>The silent half is why this needed a browser rather than a parser. A handler that throws on a bad frame is a frame a reader sees missing and a GM reports; a handler that writes a frame nothing reads is a feature that never arrives, and the only symptom is a page that works.</p>
+<p><strong>Which is why the vendored version is not the newest published one.</strong> Every Datastar release from 0.20.0 to 1.0.0-beta.11 — and 1.0.0-beta.11 is the <strong>last</strong> version npm has — dispatches on <code>datastar-merge-fragments</code>. The rename to <code>datastar-patch-elements</code> happened at 1.0.0, and 1.0.4 is the newest release (2026-09-21). Pinning the npm <code>latest</code> would have shipped a sidebar that never updates, measured rather than read off a changelog, and the same measurement is what caught it. Datastar&rsquo;s own README tells every user to load the bundle from the GitHub tag, and its npm package has not been published since March 2025.</p>
+<h2 id="consequences">Consequences</h2>
+<p>The two connections are countable rather than asserted. <code>internal/web/static/js/live</code>&rsquo;s <code>TestTheClientOpensExactlyOneWebSocketAndNoSecondTransport</code> counts the <code>new WebSocket(</code> call sites in the shipped bytes and refuses <code>EventSource</code>, <code>fetch</code>, <code>XMLHttpRequest</code> and <code>sendBeacon</code>; <code>components/live</code>&rsquo;s <code>TestTheChromeDeclaresExactlyOneOfEachConnection</code> counts the two elements in the served document. Both are needed: a document with two <code>data-init</code> openers is two streams, and a client opening two sockets is two sockets, and neither is visible from the other. C1&rsquo;s map audit already holds the third side — the map tree opens no transport at all, and says the play page&rsquo;s two connections belong to this chrome.</p>
+<p>Adding a sixth target is three edits: a hook constant, a row in <code>targets()</code>, and a mount point in <code>Chrome</code>. Adding a seventh <em>kind</em> is a <code>Kind</code> constant, a <code>Queues()</code> case, and a row in <code>AnnouncedContent()</code> — and the last is a forced decision, because a WebSocket row with a target fails and a state row with no target fails. That is the point of holding the table as data.</p>
+<p>The price of the gate move is real and it is stated: a route that was once refused to a player now answers them a stream. What changed is what is <em>in</em> it, and <code>TestTheEditorNoticeIsNotSentToAPlayer</code> asserts both directions — the player gets nothing, and the GM still gets the notice, because a fix that silenced it for everybody would satisfy the first half.</p>
+<p>Three of §7.5&rsquo;s four prohibitions are now refusals or measurements, and the cost is that §10.6&rsquo;s target-size audit over this route&rsquo;s fragments passes <strong>vacuously</strong>: <code>Decide</code> refuses any fragment holding a focus stop, so nothing the route emits has one. That is correct behaviour and it is stated in the test&rsquo;s own comment, because the audit would otherwise look like coverage of a rule whose only enforcement is the refusal above it.</p>
+<p>The vendor manifest&rsquo;s <code>source.kind</code> says <code>npm</code> for the Datastar entry and the URL is a GitHub source tarball. That is a lie in a file whose whole purpose is not lying, and it is there because <code>tools/vendor/main.go</code> — the integrator&rsquo;s file — refuses any other value. The manifest says so in its own <code>description</code> and the work item asks for a third kind rather than writing a manifest no committed reader understands. A reader needs three things from an entry — an <code>https</code> URL, a Subresource Integrity digest, and a named member in an archive — and a GitHub tag archive supplies all three identically.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>One connection.</strong> Serving the sidebar over the WebSocket and dropping SSE entirely would have halved the connection count and put every patch behind a codec this repository would then have to specify. Against it: SSE is what §7.5 assigns to the sidebar, <code>EventSource</code> reconnects with a <code>Last-Event-ID</code> for free, and a browser holds one SSE connection per stream without the client having to implement a heartbeat, a retry ladder and a resume cursor. The cost taken is two connections and a rule about who owns each.</p>
+<p><strong>Structured fragments with a client renderer.</strong> Sending <code>{&quot;kind&quot;:&quot;chat&quot;,&quot;author&quot;:&quot;…&quot;,&quot;body&quot;:&quot;…&quot;}</code> and letting the client build the row would be smaller on the wire and would let the client update a row in place. Against it: §7.5 requires rendered DOM fragments so the client never renders content, the escaping would become the client&rsquo;s problem, and a chat message body is the one piece of this surface a reader cannot be trusted to have authored. The measurement that decided it is in the context: the escaping would have to be right in two places and the reader would find out about the wrong one.</p>
+<p><strong>Coalesce everything, one buffer, one policy.</strong> Simpler, and it is what phase 7 shipped. Against it: it drops chat lines. Three messages in one second are three messages, and a reader who saw one of them has a transcript with a hole in it that nothing will fill — the same property §7.5&rsquo;s replay rule is protecting on the other side of the connection.</p>
+<p><strong>Filter the editor&rsquo;s notice at the hub rather than in the handler.</strong> The hub could refuse to deliver a <code>KindChange</code> to a subscription that had declared itself a player, which would keep the tier out of the patch path. Against it: the hub&rsquo;s subscription is about <em>which campaign</em>, and making it about <em>which reader</em> means two subscription shapes and two <code>Subscribe</code> signatures. The tier travels with the request, which is where it already lives.</p>
+<p><strong>Pin Datastar&rsquo;s npm <code>latest</code>.</strong> It is the schema-perfect answer: a registry tarball with a registry integrity string, and no manifest prose to explain. Against it: measured, it does not listen for the event this route writes, and the sidebar would never update. Schema fidelity is worth less than a working live chrome, and the manifest now says which of the two it is buying.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

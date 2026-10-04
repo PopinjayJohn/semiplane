@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0027 — There is no `front_matter` column, and the database index is a cache of the filesystem — semiplane</title>
+<meta name="description" content="The file is the source of truth; a second copy of a regenerable front-matter block is a second copy that can disagree with the first.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0027-no-front-matter-column-and-the-index-is-a-cache/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0027 — There is no `front_matter` column, and the database index is a cache of the filesystem — semiplane">
+<meta property="og:description" content="The file is the source of truth; a second copy of a regenerable front-matter block is a second copy that can disagree with the first.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0027-no-front-matter-column-and-the-index-is-a-cache/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0027 — There is no `front_matter` column, and the database index is a cache of the filesystem</h1>
+    <p class="lede">The file is the source of truth; a second copy of a regenerable front-matter block is a second copy that can disagree with the first.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a>
+      <ul>
+        <li><a href="#the-index-and-why-it-is-a-walk">The index, and why it is a walk</a></li>
+      </ul>
+    </li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The [architecture overview]({{ &ldquo;design/architecture/&rdquo; | relURL }}) §11 lists <code>front_matter</code> among
+the <code>pages</code> columns. Phase 3 created the table and did not include it. That is a deviation from a
+published record, and the record is immutable, so it is corrected here rather than edited there.</p>
+<p>The argument is [ADR 0006]({{ &ldquo;decisions/0006-content-root-is-source-of-truth/&rdquo; | relURL }})
+applied one column further than the record applied it. That record says the filesystem is the
+source of truth and SQLite is &ldquo;a rebuildable index plus the state that has no home in a file&rdquo;. A
+<code>front_matter</code> column is neither: it is a third copy of data that is already in the file, and it
+is the copy with the shortest life, because it is only correct until the next sync.</p>
+<p>A second copy of derived data is a second answer to a question. <code>front_matter</code> answers &ldquo;what does
+this page declare&rdquo; — and a page with two answers to that is a page whose <code>kind</code> may disagree with
+its own body, which is exactly the class of defect the two-variant render cache and the salted
+<code>ETag</code> exist to prevent. The failure is silent and it is per-page: one bad row, no error, a page
+that renders as prose in search and as a token on disk.</p>
+<p>There is no performance argument for the column. Parsing a block out of a file the request already
+read is not a cost. The only argument for it is convenience — not having to call the parser — and
+convenience is what a second copy always claims.</p>
+<h3 id="the-index-and-why-it-is-a-walk">The index, and why it is a walk</h3>
+<p>The same principle decides how the page index is built. [ADR 0006]({{ &ldquo;decisions/0006-content-root-is-source-of-truth/&rdquo; | relURL }})
+makes the walk the <em>definition</em> of correct: a page exists if and only if its file does. And in
+this phase it is also the only thing that works, because nothing writes <code>pages</code> until the watcher
+(phase 4) indexes the tree.</p>
+<p>That second point was found by running the server, not by reading the plan. The first
+implementation read the index from <code>pages</code> on a request-time miss, and every wikilink in the
+product rendered <code>data-broken=&quot;true&quot;</code> — because the table was empty. A wiki where no link resolves
+is not an unimplemented optimisation, it is a broken product, and a phase that reports &ldquo;the content
+read path works&rdquo; while every link is dead has not reported its DoD honestly.</p>
+<p>So the route walks the content root through the confined <code>os.Root</code> and builds the index from what
+is on disk. One <code>ReadDir</code> per directory per cache miss, which is not a cost worth optimising
+before the thing that makes it irrelevant exists.</p>
+<h2 id="decision">Decision</h2>
+<ul>
+<li><strong>No <code>front_matter</code> column.</strong> Anything needing the front matter re-reads it through the content
+package, which is where confinement and the document-size cap already live.</li>
+<li><strong><code>body_plain</code> is one column, not a plain and an unredacted pair.</strong> A second column is a second
+thing that has to remember to exclude callout content, and what it would record — that a secret
+is <em>currently</em> revealed — is already in the file and in <code>secrets_revealed</code>. The schema therefore
+cannot represent &ldquo;indexed with secrets&rdquo;, which is the point: the impossible state is the one that
+has to be unrepresentable (S-5.11).</li>
+<li><strong>The page index is a walk of the content root</strong> until the watcher maintains the table, and after
+that it is the maintained table. The seam is one interface in the composition root.</li>
+<li><strong><code>pages.id</code> is <code>AUTOINCREMENT</code></strong> for a harder reason than the other two tables. A bare rowid is
+reused after deletion, and a page&rsquo;s whole lifecycle is deleted-and-reinserted by the watcher on
+every sync removal. A reused rowid would bind the orphaned <code>pages_fts</code> entries of a deleted page
+to whatever page now owns the id, so a search would name a file that never contained the words.</li>
+</ul>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>The architecture record&rsquo;s §11 column list is wrong in one row, and the correction is this record
+plus an entry in the
+[known staleness]({{ &ldquo;design/&rdquo; | relURL }}#known-staleness) note. The record itself is not
+edited.</li>
+<li>A request-time index build is <code>O(pages)</code> per cache miss. For the vault sizes this project targets
+— a campaign is tens or hundreds of pages, and a miss is a page that changed — that is not worth
+optimising. When the watcher maintains the table, <code>internal/content/index.go</code> becomes a test
+fixture rather than a code path, and the walk disappears.</li>
+<li>One function is the swap point: <code>PagesForCampaign</code> on the composition root&rsquo;s <code>pageLister</code>. When
+phase 4&rsquo;s index exists, it becomes the store query and the walk goes away. The route does not
+move.</li>
+<li>A page&rsquo;s <code>content_hash</code> is <strong>not</strong> stored by the walk. The hash in the route&rsquo;s cache key is
+computed from the bytes the route read, because a hash from a partial read would not be the hash
+the route uses, and two disagreeing hashes would mean the cache never hits.</li>
+<li>The walk reads a file&rsquo;s head to learn its title, capped at 1 MiB, because a vault is untrusted
+input (S-4.7) and an index build must not open a 4 GB file named <code>.md</code>. A page over the cap is
+still readable through the route, which enforces its own limit on the read path.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Keep the <code>front_matter</code> column for query convenience.</strong> Rejected: it is a second answer to &ldquo;what
+does this page declare&rdquo;, and the failure is a per-page disagreement between the index and the file
+with no error anywhere. The convenience is a parser call.</p>
+<p><strong>Store the raw front-matter <em>text</em> rather than a decoded struct.</strong> Rejected for the same reason,
+and it is worse: an unparsed blob has to be re-parsed to be useful, so it is a copy that is neither
+authoritative nor convenient.</p>
+<p><strong>Build the index from <code>pages</code> anyway and accept broken links until phase 4.</strong> Rejected. A phase
+that ships a wiki where every wikilink is marked broken has not met its own DoD, and the fix is
+one function.</p>
+<p><strong>Maintain the index in the route</strong> — build and persist on first read. Rejected: it makes a <em>read</em>
+request write to the database, so two concurrent first reads race, and a crawler becomes a writer.
+The watcher is the right owner and it is four phases away.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0001 — Go 1.27 as the implementation language — semiplane</title>
+<meta name="description" content="One language, one process, one binary — and what a static toolchain costs.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0001-go-as-implementation-language/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0001 — Go 1.27 as the implementation language — semiplane">
+<meta property="og:description" content="One language, one process, one binary — and what a static toolchain costs.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0001-go-as-implementation-language/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0001 — Go 1.27 as the implementation language</h1>
+    <p class="lede">One language, one process, one binary — and what a static toolchain costs.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>semiplane is a self-hosted tool. A group runs it on a machine they control, keeps campaign
+content in an Obsidian vault they already sync, and expects it to still work in three years
+without a migration project. That is a different requirement from most software, and it is the
+requirement that picks the language.</p>
+<p>The alternatives were considered against three constraints:</p>
+<ul>
+<li><strong>One artifact.</strong> A tabletop server is a long-running process holding authoritative game
+state. Anything that needs a runtime, a package manager, or a second process to start
+violates the deployment story.</li>
+<li><strong>Static linking.</strong> The binary must run on a container base image with no libc surprises and
+no cgo toolchain.</li>
+<li><strong>A single contributor who is an AI agent.</strong> The operational contract is <code>make check</code>. The
+language has to be one an agent can write correctly without asking.</li>
+</ul>
+<h2 id="decision">Decision</h2>
+<p><strong>Go 1.27.1.</strong> Standard library <code>net/http</code> for HTTP and the router, <code>log/slog</code> for structured
+logging, <code>os.Root</code> for path confinement, and <code>embed</code> for static assets.</p>
+<p>The version is pinned in <code>go.mod</code> and nowhere else. CI reads it with <code>actions/setup-go</code>&rsquo;s
+<code>go-version-file</code> rather than repeating the number, so there is exactly one place to update and
+no way for the local gate and the CI gate to disagree about which Go compiled the code.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><code>go test -race</code> requires cgo and therefore gcc. The container ships it; <code>AGENTS.md</code> records
+the apt line for a fresh one. This is the only place cgo appears, and it is a test-only cost.</li>
+<li>One binary means one thing to back up beyond the vault: the SQLite file. See
+[0006 — the content root is the source of truth]({{ &ldquo;decisions/0006-content-root-is-source-of-truth/&rdquo; | relURL }}).</li>
+<li>The standard library is the default answer to &ldquo;do I need a library for this&rdquo;. <code>AGENTS.md</code>
+requires checking <code>go.mod</code> before adding a second library for the same job, because the
+alternative is a dependency surface nobody chose deliberately.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Rust.</strong> Better guarantees and a smaller binary. Rejected: the build toolchain is heavier
+than the thing it builds, and an agent writing safe Rust for a project with a lot of string and
+I/O glue produces worse results at this scale than one writing Go.</p>
+<p><strong>TypeScript with a Node server.</strong> The frontend half would have been native, and <code>Node 24</code> is
+present in the development image. Rejected: it reintroduces a runtime and a package manager,
+and the project pins &ldquo;no Node&rdquo; precisely so the asset pipeline stays a standalone binary.</p>
+<p><strong>Python.</strong> Fast to write, and the shortest path to a first prototype. Rejected on the same
+grounds: a runtime, plus a packaging story, in a tool whose premise is that the file you copy
+to your server is the file you run.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

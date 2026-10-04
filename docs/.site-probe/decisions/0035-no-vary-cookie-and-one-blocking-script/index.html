@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0035 — No `Vary: Cookie`, and exactly one blocking inline script — semiplane</title>
+<meta name="description" content="The document never varies by the theme cookie, so no `Vary` header is emitted, and the only JavaScript on the critical path is one inline resolver in `&lt;head&gt;` under a byte budget.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0035-no-vary-cookie-and-one-blocking-script/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0035 — No `Vary: Cookie`, and exactly one blocking inline script — semiplane">
+<meta property="og:description" content="The document never varies by the theme cookie, so no `Vary` header is emitted, and the only JavaScript on the critical path is one inline resolver in `&lt;head&gt;` under a byte budget.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0035-no-vary-cookie-and-one-blocking-script/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0035 — No `Vary: Cookie`, and exactly one blocking inline script</h1>
+    <p class="lede">The document never varies by the theme cookie, so no `Vary` header is emitted, and the only JavaScript on the critical path is one inline resolver in `&lt;head&gt;` under a byte budget.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#the-exception-the-wiki-route-does-vary-by-reader">The exception: the wiki route does vary by reader</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p><code>sp_ui</code> carries two fields, <code>theme</code> and <code>ui</code>
+([§6.6]({{ &ldquo;design/ui-ux/&rdquo; | relURL }})). A reader&rsquo;s theme choice and their layout-mode choice both
+live in it, and both change what the interface looks like. The obvious reading is that the document
+varies by the cookie, and that the correct HTTP response therefore says so.</p>
+<p>That reading is wrong, and being wrong about it is expensive in a specific way: it turns every themed
+response into a per-cookie cache entry, which is a shared-cache fragmentation tax across <em>all</em> readers
+in exchange for no correctness gain. S-13.5 states the conclusion — <em>&ldquo;The document never varies by the
+theme cookie. <strong>No <code>Vary: Cookie</code> is emitted.</strong>&rdquo;</em> — but not the mechanism, and the mechanism is what
+makes it hold.</p>
+<p>There is a second rule in the same place. §3.7 requires both root attributes to be resolved <em>before the
+first paint</em>, which means JavaScript on the critical path. A shell that loads its layout from the server
+cannot do that, and a shell that loads it from a script <em>after</em> first paint flashes the wrong theme — a
+dark-theme reader gets a white flash on every navigation, which is the most visible possible way to ship
+a feature that works.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>The document does not vary by <code>sp_ui</code>, no <code>Vary</code> header is emitted, and exactly one blocking inline
+script in <code>&lt;head&gt;</code> resolves both root attributes before the first paint.</strong></p>
+<p><strong>No <code>Vary</code> header naming <code>sp_ui</code> or <code>Cookie</code>, on any route</strong> — with one exception, stated below and
+corrected after it was found to be false.</p>
+<p>The distinction that matters for caches and intermediaries: <code>Vary: Accept-Encoding</code> on a response whose
+encoding was already negotiated is a separate claim with a separate cost, and a shell response has no
+reason to make any claim. The absence is asserted as an absence — through <code>Header.Values</code>, because
+<code>Header.Get</code> cannot tell &ldquo;unset&rdquo; from &ldquo;set to the empty string&rdquo;, and an empty <code>Vary</code> is still a header a
+cache reads.</p>
+<h3 id="the-exception-the-wiki-route-does-vary-by-reader">The exception: the wiki route does vary by reader</h3>
+<p><strong>Correction.</strong> This record originally claimed &ldquo;no <code>Vary</code> header at all, on any route&rdquo;, on the reasoning
+that the document does not vary by <code>sp_ui</code> and therefore needs no cache key for it. That reasoning is
+right about <code>sp_ui</code> and wrong in general: <strong>the document does vary by access tier</strong>, because the shell
+carries the reader&rsquo;s name and a sign-out form.</p>
+<p>Measured on a running server, on a <strong>public</strong> campaign so both readers get 200 and neither body is an
+error page:</p>
+<pre tabindex="0"><code>GM      4460 bytes
+anonymous 4227 bytes
+</code></pre><p>The difference is <code>data-testid=&quot;header-account&quot;</code> with the reader&rsquo;s name, and the sign-out form. A shared
+cache keyed only on the URL would hand one reader another&rsquo;s name.</p>
+<p>So <code>Vary: Cookie</code> is <strong>required on the wiki route</strong> and is what phase 3 already shipped, with the
+correct rationale recorded then. This record&rsquo;s original claim would have deleted a correct header
+because a test could not see the variation it was describing.</p>
+<p>What survives is the load-bearing part: <strong>no response varies by <code>sp_ui</code></strong>, which is the claim that
+matters, because <code>sp_ui</code> is the cookie a reader&rsquo;s own preferences arrive in and fragmenting every
+shared cache on it would buy nothing. The five-cookie byte-identity test proves that one.</p>
+<p><strong>The bytes are identical for every reader of a given route and campaign.</strong> Not &ldquo;equivalent&rdquo; and not
+&ldquo;equivalent modulo a cache key&rdquo;: identical, which is the property that makes the absence of <code>Vary</code>
+safe rather than merely convenient. The substantive test is therefore not that no <code>Vary</code> is present —
+that is a symptom — but that five cookie values, including a malformed one and no cookie at all, produce
+byte-identical bodies. The second catches what the first cannot: a <em>later</em> phase adding a cookie
+dependency, with no header change to notice.</p>
+<p><strong>One blocking inline script, in <code>&lt;head&gt;</code>, before the stylesheet link, under a byte budget.</strong> It reads
+four sources in a fixed order — <code>?ui=</code>, the cookie, a narrow user-agent hint allowlist used only before
+a cookie exists, then media queries — and writes <code>data-theme</code> and <code>data-ui</code>. It is the only JavaScript
+on the critical path. The second script element it renders is the sheet re-parenting below 640px, which
+must wait for <code>document.body</code> to exist and therefore cannot share the first; that is a second <em>element</em>,
+not a second concern.</p>
+<p><strong>A CSP nonce hook is plumbed but no <code>Content-Security-Policy</code> header is set.</strong> The resolver honours
+<code>templ.WithNonce</code>. Adding the header without a nonce generator is what would break the shell, because
+the one script the design depends on would be the one script a policy forbids.</p>
+<h2 id="consequences">Consequences</h2>
+<p>No response carries a <code>Vary</code> header naming <code>sp_ui</code>, so no shared cache fragments on the reader&rsquo;s own
+theme and mode preferences. The wiki route carries <code>Vary: Cookie</code> for the reason above: its document
+genuinely differs by reader, and a cache that ignored that would serve one reader another&rsquo;s name. More importantly, the <em>cost</em> of that decision is paid
+in the place where it belongs: the document varies by access tier, by campaign, and — critically — by
+<code>include_secrets</code>, which is a genuine variation and is not a cache decision at all. The
+<code>include_secrets</code> variants are the reason a &ldquo;the document never varies&rdquo; claim would be false if stated
+without qualification, and they are settled by [0016]({{ &ldquo;decisions/0016-salted-etag/&rdquo; | relURL }})
+and [0028]({{ &ldquo;decisions/0028-render-output-is-permission-neutral/&rdquo; | relURL }}) rather than by
+anything here. §3.7&rsquo;s table is the authority: what the document varies by is access tier,
+<code>include_secrets</code>, and campaign — and never <code>sp_ui</code>.</p>
+<p>The budget is enforced rather than trusted. <code>TestTheResolverFitsItsBudget</code> fails the build if the
+resolver grows past its budget, at 1008 bytes against 1024. A budget that is only a comment stops being
+respected the first time a feature needs two bytes.</p>
+<p>The invariants are asserted where they can be falsified. On the real router&rsquo;s served bytes:</p>
+<ul>
+<li>neither <code>data-theme</code> nor <code>data-ui</code> appears in the served document, checked <strong>on the parsed tree</strong> —
+including comments and text nodes — because the resolver&rsquo;s own source names both attributes, so a
+substring test either fails on a correct document or has to carve out the script, and a carve-out is
+exactly where a <code>data-ui</code> in an HTML comment hides. <code>TestTheAuditFindsAResolvedAttributeWhereverItIs</code>
+feeds that audit six ways of smuggling one in and requires it to object.</li>
+<li>the document does not vary by <code>sp_ui</code>, byte for byte, across five cookie values — on the routes where
+that is true, which is the account surfaces; the wiki route&rsquo;s variation is by access tier and is what
+<code>Vary: Cookie</code> exists for;</li>
+<li>no <code>Vary</code> header names <code>sp_ui</code>;</li>
+<li>the resolver is in <code>&lt;head&gt;</code>, precedes the stylesheet link, and fits its budget;</li>
+<li>the editable file and the served constant are byte-identical, so they cannot drift;</li>
+<li>the script cannot end its own <code>&lt;script&gt;</code> element — the body is written unescaped, which is required
+because <code>&amp;lt;</code> is not an operator, and therefore guarded.</li>
+</ul>
+<p>Two things are honestly <strong>not</strong> asserted. Nothing in this repository executes JavaScript, so the order
+of the four sources rests on reading <code>head.js</code> and on a Go transcription sitting beside it; a test that
+grepped for the order of two substrings would be asserting a formatting detail and calling it
+behavioural. The structural comparison of the transcription is what makes it trustworthy — the data is
+what drifts between two copies of an algorithm, not the order — but the order itself is verified by
+hand. The second gap is the agent-assisted half: that the browser actually applies <code>data-ui</code> before the
+first paint is a browser pass, and §10.9 requires every <em>finding</em> from it to become a committed test
+rather than a CI step that needs a browser.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Keep the original &ldquo;no <code>Vary</code> at all&rdquo; claim and delete the wiki route&rsquo;s header.</strong> Rejected, and this is
+the interesting rejection of this record. The claim was derived from &ldquo;the document does not vary by
+<code>sp_ui</code>&rdquo;, which is true, and generalised to &ldquo;the document does not vary&rdquo;, which is false. A test asserting
+the absence of a header cannot see the variation the header was protecting — it only sees that the
+header is gone. The measurement in Context is what distinguishes them, and it is why the byte-identity
+test is the substantive one and the header-absence test is a symptom.</p>
+<p><strong><code>Vary: Cookie</code> on responses whose theme is reader-specific.</strong> Rejected: the response is not
+theme-specific. Sending it would be a false promise — <code>Vary</code> asserts the representation depends on the
+cookie, which is the opposite of the design — and it would fragment every shared cache in front of the
+instance for a variation that does not exist in the bytes.</p>
+<p><strong>Resolving the theme server-side, per cookie.</strong> Rejected because it makes the document vary, which is
+the thing being avoided, and because it costs a cache entry per reader to deliver a value the reader&rsquo;s
+own operating system already has. <code>prefers-color-scheme</code> is the right default and it is free; the cookie
+is an <em>override</em> of that default, and an override applied before first paint costs nothing.</p>
+<p><strong>Applying the theme after load, from a deferred script or a class on <code>&lt;html&gt;</code> written by the client.</strong>
+Rejected: it flashes. A reader who chose the dark theme sees a white page on every navigation until the
+script runs, which is worse than not offering the preference at all — and it converts a working feature
+into the most-reported kind of visual bug. §3.7&rsquo;s ordering of the resolver before the stylesheet link
+exists to make the flash impossible rather than unlikely.</p>
+<p><strong>Loading the resolver as an external, cacheable, nonce-free script file.</strong> Tempting: cacheable across
+readers, so the bytes are paid once. Rejected because an external script is not render-blocking by
+default, and forcing it to block with <code>async=false</code> in <code>&lt;head&gt;</code> reintroduces a network round trip on the
+critical path — so the document&rsquo;s <em>first paint</em> waits on a fetch that could have been a 1KB inline
+string already in the response. The budget exists to keep the inline cost bounded; an external file
+trades a bounded inline cost for an unbounded latency cost.</p>
+<p><strong>Adding <code>Content-Security-Policy</code> with <code>'unsafe-inline'</code>, or with no nonce.</strong> Rejected. The first
+forfeits the protection on every script for the sake of one. The second is worse: a policy without a
+nonce forbids the one script the design depends on, so the shell silently stops resolving its root
+attributes and every tier is wrong with no error anywhere. The nonce hook is plumbed so the header can
+arrive with a generator; the header without a generator is the failure mode, and it is why the header is
+not set.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

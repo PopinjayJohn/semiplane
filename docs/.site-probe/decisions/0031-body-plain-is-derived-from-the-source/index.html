@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0031 — `body_plain` is derived from the source, never from rendered HTML — semiplane</title>
+<meta name="description" content="The searchable text is flattened from the file&#39;s own bytes, with `[!secret]` callouts excluded in every reveal state, so a search snippet can never carry secret text to a player.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0031-body-plain-is-derived-from-the-source/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0031 — `body_plain` is derived from the source, never from rendered HTML — semiplane">
+<meta property="og:description" content="The searchable text is flattened from the file&#39;s own bytes, with `[!secret]` callouts excluded in every reveal state, so a search snippet can never carry secret text to a player.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0031-body-plain-is-derived-from-the-source/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0031 — `body_plain` is derived from the source, never from rendered HTML</h1>
+    <p class="lede">The searchable text is flattened from the file&#39;s own bytes, with `[!secret]` callouts excluded in every reveal state, so a search snippet can never carry secret text to a player.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-01 00:00:00 &#43;0000 UTC">2026-10-01 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p><code>pages.body_plain</code> is the searchable text, and it is the <em>redacted</em> text: S-5.11 says it excludes
+<code>[!secret]</code> callout content in <strong>every</strong> reveal state, and migration 0007 records the same promise in
+the column&rsquo;s own comment. It is not an optimisation. A search snippet is built from it
+(<code>snippet(pages_fts, 1, '', '', '…', 12)</code>), which means a snippet is the one place a secret text can
+reach a player without ever passing through a template&rsquo;s <code>include_secrets</code> decision.</p>
+<p>That makes the <em>derivation</em> a security decision, and there are three plausible sources for it:</p>
+<ol>
+<li><strong>The file&rsquo;s source text.</strong> Flatten the markdown ourselves: strip front matter, strip syntax, strip
+the callouts.</li>
+<li><strong>The rendered HTML.</strong> The renderer already produces clean text — the work is done, and the result
+is exactly what a reader sees.</li>
+<li><strong>The redacted source.</strong> Run the redactor, then flatten.</li>
+</ol>
+<p>The second is the one a reasonable implementer picks, and it is wrong in three separate ways that
+compound.</p>
+<p><strong>Rendered output is permission-variant by construction.</strong> ADR 0028 fixes rendered output as
+permission-neutral <em>except</em> for <code>[!secret]</code>. So &ldquo;the render&rdquo; is not one document — it is two, selected
+by a flag that travels in from the request tier. A derivation that reads &ldquo;the render&rdquo; has to pick
+one, and every way of picking is a bug: hard-coding <code>include_secrets=false</code> throws away half the page,
+hard-coding <code>true</code> indexes the secret, and reading it from the caller means the index&rsquo;s correctness
+depends on a value that arrives from a session cookie two layers away. The index is written by the
+watcher, which has no viewer at all.</p>
+<p><strong>The renderer&rsquo;s buffers are the wrong place to read text out of.</strong> ADR 0029&rsquo;s argument is that
+redaction runs <em>before</em> the render so that no buffer downstream of it holds an unredacted copy for a
+non-GM — and the buffers between the file and the HTML are three of them: goldmark&rsquo;s, bluemonday&rsquo;s,
+and the cache&rsquo;s. An index derived by rendering would be built by constructing one of those buffers
+with the unredacted text, which is the exact thing ADR 0029 says never happens for a non-GM. The
+guarantee is about <em>downstream of the redactor</em>; rendering to derive the index is upstream of it.</p>
+<p><strong>A rule checked against rendered text is checked against two documents.</strong> S-5.11 is a claim about a
+column. A test can read the column and assert a secret is absent from it. A test cannot assert the
+absence of a leak from a pipeline it did not run — and if the indexer renders, then the property that
+no secret reached the index is only as good as whatever renderer&rsquo;s behaviour happened to be on the
+day, including a plugin&rsquo;s extension and the sanitiser&rsquo;s allowlist.</p>
+<p>There is a fourth option worth rejecting explicitly: index the raw source and let the <em>search</em> filter
+secrets. That puts the exclusion at read time, which means every future query has to remember it, and
+it means the secret text is in the FTS index — which is a file on disk, dumpable by anything that can
+read the database, and the schema&rsquo;s comment says one column exists precisely so there is nowhere else
+for it to be.</p>
+<h2 id="decision">Decision</h2>
+<p><code>body_plain</code> is derived from the <strong>file&rsquo;s source text</strong>, by a flattening that runs in
+<code>internal/content/index.go</code>, and that derivation excludes <code>[!secret]</code> callout content outright.</p>
+<p>Four properties follow, and each is a consequence rather than an extra rule:</p>
+<p><strong>Only the body is indexed.</strong> Front matter is stripped. A front-matter value can be a path (S-3.5) and
+the index does not need the host&rsquo;s directory layout to be searchable; and what a front-matter field is
+worth to a search is not knowable from here, because a plugin&rsquo;s fields arrive in phase 8.</p>
+<p><strong>The exclusion is structural, not conditional.</strong> It is not &ldquo;exclude the callout when it is hidden&rdquo; —
+which would require reading the fold marker, getting the reveal state wrong, and re-indexing on every
+reveal (S-5.8 says the file records the state, so the index would follow it). It is &ldquo;a line carrying
+the marker excludes the callout&rdquo;, full stop. There is no reveal state to consult, which is why it
+holds in both, and why the schema needs no second column for the revealed variant.</p>
+<p><strong>Every branch of the exclusion fails toward hiding.</strong> A <code>[!secret]</code> marker inside a blockquote
+excludes the rest of that blockquote. A marker anywhere else — in prose, in a fenced block — excludes
+everything below it, because nothing marks where a secret stops and guessing is the direction that
+leaks. The cost is that a page <em>documenting</em> the callout syntax loses the text after it from search.
+That is the right trade: the alternative is a heuristic that has to be right about an author&rsquo;s
+intentions.</p>
+<p><strong>The marker test runs on every line, before and independently of any fence tracking.</strong> This is the
+property that makes the implementation safe rather than merely careful. Code-fence state tracking is
+approximate — three characters of marker, not the run&rsquo;s length — and a fence that is opened and never
+closed would, in any implementation where fence state gates the marker test, cause a <code>[!secret]</code> to be
+indexed. Two independent concerns, two independent loops, so that a mistake in one cannot reach the
+other.</p>
+<p>Markdown is flattened by a sequence of regular expressions in this file rather than by the renderer.
+That is a second, deliberately non-authoritative implementation of markdown structure: it is a <em>word
+extractor</em>, not a parser, it is never used for display, and it has no privileges. What survives is the
+content of the constructs — a reference contributes its alias or its target&rsquo;s name, a link its text, an
+image its alt text — because a wiki that cannot be searched by <code>[[Svartalfheim]]</code> is a wiki nobody
+uses. What does not survive is anything carrying a path, because S-3.5 makes every path
+attacker-reachable and the index has no need of one.</p>
+<p>An empty result is a legitimate outcome: a page whose whole body is one secret callout indexes to no
+body text, and is still findable by its title. That is the point of S-5.11&rsquo;s cost — <strong>secrets are not
+full-text searchable</strong>, and a secret-aware index would be an additive later change rather than a
+replacement for this one.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li><strong>Phase 10 changes nothing here.</strong> The redactor removes <code>[!secret]</code> for a non-GM at render time;
+this removes it from the index at write time. The two are independent, and P10 does not have to know
+this file exists.</li>
+<li><strong>A reveal does not re-index.</strong> S-5.8 says revealing rewrites the file&rsquo;s marker from <code>-</code> to <code>+</code>, and
+the watcher&rsquo;s own event re-indexes the page — which produces the same row, because both markers
+exclude the same content. A GM revealing a secret costs a no-op write rather than a reindex that
+would add the secret to the index.</li>
+<li><strong>A later phase that wants to search secrets must be additive.</strong> The cheapest correct shape is a
+<em>second</em> FTS table over a <em>separate</em> store of the revealed text, gated by a column that records
+which pages have secrets. That is a new table and a new query, not a change to <code>body_plain</code>, and
+this decision is what keeps it that shape rather than a variant of one column.</li>
+<li><strong>The index is not a rendering.</strong> Nothing downstream may treat <code>body_plain</code> as prose for display: a
+snippet from it has no sentence structure a template can rely on, and the search statement&rsquo;s empty
+excerpt markers are what keep it plain text rather than markup.</li>
+<li><strong><code>skipDirectory</code> also became a dot rule.</strong> Not this record&rsquo;s subject, but the same reasoning: an
+explicit list of <code>.git</code>, <code>.obsidian</code>, <code>.trash</code> was an enumeration of one fact, and it is now stated
+as that fact, which is what let the incremental path and the walk share a single predicate.</li>
+<li><strong>The test asserts a positive.</strong> <code>body_plain</code> excluding secrets is satisfiable by indexing nothing,
+so the exclusion test also asserts that ordinary prose on both sides of the callouts <em>is</em> indexed.
+A test that only asserted the absence would pass against an index that stored nothing at all.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Derive <code>body_plain</code> from the rendered HTML.</strong> Rejected for the three reasons in Context, and the
+first is sufficient on its own: there is no single rendered document to derive from. It is also the
+option that would let a plugin&rsquo;s render extension change what is searchable, which is not a property a
+search index should have.</p>
+<p><strong>Derive it from the redacted source</strong> — run the <code>Redactor</code>, then flatten. Rejected because
+<code>content.NoSecrets()</code> removes nothing until phase 10, and a derivation that called it would be correct
+today and silently index every secret the day it stopped being a pass-through. Worse, it would make
+the index&rsquo;s correctness depend on which <code>Redactor</code> the composition root happened to install, and the
+watcher is constructed without one.</p>
+<p><strong>Filter secrets at search time</strong> — index everything, exclude callout content in the MATCH expression.
+Rejected: the secret text would be in the FTS index and in <code>pages</code>, which is a file on disk that
+anything able to read the database can read. S-5.11 says secret text never <em>enters</em> the index, and a
+read-time filter does not satisfy that.</p>
+<p><strong>Two columns, plain and unredacted.</strong> Rejected by migration 0007 before this record existed, and its
+reasoning holds: a second column is a second thing that has to remember to exclude, and the state it
+would record — that a secret is currently revealed — is already in the file and in <code>secrets_revealed</code>
+(S-5.8). What it would add is a column whose contents depend on a reveal, which means the index would
+have to be rewritten on every reveal and every sync undo of one.</p>
+<p><strong>Share the flattening with the renderer.</strong> Rejected: it would make the renderer&rsquo;s output a dependency
+of the index, which is the coupling this record exists to prevent. A second word extractor in a file
+with no privileges is cheap; a shared one would have to be exactly right about markdown in both places.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

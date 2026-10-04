@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0045 — The 5e engine is shared mechanics and a data pack — semiplane</title>
+<meta name="description" content="`internal/domain/systems/dnd5e` is one Go engine plus one `go:embed`ed YAML pack. Every edition difference is a row, a formula, a toggle or the name of a Go hook; exactly two rules are hooks, and a test asserts the list is exactly two so a third is a decision rather than an entry in a map.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0045-the-5e-engine-is-shared-mechanics-and-a-data-pack/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0045 — The 5e engine is shared mechanics and a data pack — semiplane">
+<meta property="og:description" content="`internal/domain/systems/dnd5e` is one Go engine plus one `go:embed`ed YAML pack. Every edition difference is a row, a formula, a toggle or the name of a Go hook; exactly two rules are hooks, and a test asserts the list is exactly two so a third is a decision rather than an entry in a map.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0045-the-5e-engine-is-shared-mechanics-and-a-data-pack/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0045 — The 5e engine is shared mechanics and a data pack</h1>
+    <p class="lede">`internal/domain/systems/dnd5e` is one Go engine plus one `go:embed`ed YAML pack. Every edition difference is a row, a formula, a toggle or the name of a Go hook; exactly two rules are hooks, and a test asserts the list is exactly two so a third is a decision rather than an entry in a map.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#decision">Decision</a></li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+    <li><a href="#what-this-record-does-not-claim">What this record does not claim</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-10-02 00:00:00 &#43;0000 UTC">2026-10-02 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>§10.4 settles the shape of a gameplay system in four sentences, and three of them are about
+data:</p>
+<blockquote>
+<p><em>&ldquo;A pack is <code>go:embed</code>ed YAML, versioned with the code: stat blocks, conditions, reference
+tables, and the set of <code>kind</code>s the system recognises.&rdquo;</em>
+<em>&ldquo;A shared engine plus data packs plus a narrow Go escape hatch is the chosen split, because
+5e 2014 and 5e 2024 are ~90% identical.&rdquo;</em>
+<em>&ldquo;The engine is therefore shared 5e mechanics, not &rsquo;the rules engine&rsquo;. Systems with nothing
+in common do not use it.&rdquo;</em>
+<em>&ldquo;the hooks are the rules data genuinely cannot express&rdquo;</em> — naming two: <em>weapon mastery
+resolution</em> and <em>2024 crit</em>.</p>
+</blockquote>
+<p>The contract those sentences are written against is
+[0041]({{ &ldquo;decisions/0041-the-rules-contract-returns-mutations-and-carries-its-own-rng/&rdquo; | relURL }})&rsquo;s,
+and the enforcement is
+[0044]({{ &ldquo;decisions/0044-determinism-is-enforced-by-lint-because-plugins-are-compiled-in/&rdquo; | relURL }})&rsquo;s.
+What §10.4 does <strong>not</strong> supply is the test that keeps the split a split. A hook table with three
+entries is still a shared engine plus a data pack plus an escape hatch, and nothing in the
+architecture says otherwise; the boundary erodes one plausible-looking rule at a time, each step
+defensible in review, and the end state is a fork that nobody chose. So the record this page
+exists for is about <strong>where the line is and what keeps it</strong>, not about what the rules do.</p>
+<p>There is a second thing in the same place, and it is smaller. §10.4 says the pack is &ldquo;versioned
+with the code&rdquo; and is one component of the fingerprint
+[0018]({{ &ldquo;decisions/0018-ruleset-version-fingerprint/&rdquo; | relURL }}) defines. Four components name
+one campaign&rsquo;s resolution semantics: the system, the engine&rsquo;s ruleset version, the base pack&rsquo;s
+version and the overlay&rsquo;s. ADR 0018 requires the fingerprint to be <strong>independent of house-rule
+enablement</strong>, and this is the first system for which that requirement has four components to be
+independent of, so the exclusions have to be stated where the components are built rather than
+left to a deployment&rsquo;s encoder.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>One engine, one embedded pack, and exactly two hooks.</strong> <code>data/base.yaml</code> is <code>go:embed</code>ed and
+carries all four things §10.4 names: the dice the notation admits, the abilities, the conditions
+and what being in one does, the weapon masteries and their effects, the reference tables
+(constants, the level-to-bonus bands, the named difficulty classes), four formulas, the attack
+toggles, the declared content kinds, and the pack&rsquo;s <code>hooks:</code> block naming one rule per hook.
+Everything a second edition needs to differ by is a row, a formula, a toggle or a hook name, and
+the merge rule is one sentence: <strong>a collection is merged by slug; a mapping is merged by key; a
+scalar is replaced when declared and inherited when it is not.</strong></p>
+<p><strong>A rule became a hook when the thing it computes is a choice among pack rows that the rows
+cannot rank between themselves.</strong></p>
+<ul>
+<li><strong>Mastery</strong> is a hook because &ldquo;the highest of these the attacker also holds&rdquo; is a fold over a
+partial order. Every row is locally correct and none of them is the answer. The <em>pairings</em>
+stayed data — each mastery grants a list of named effects — so adding a mastery is a YAML
+edit.</li>
+<li><strong>Critical</strong> is a hook for a different reason, and the reason is the one worth reading twice:
+it is a hook because <strong>the procedure is shared and only the policy moved</strong>. 2014 crits on a
+natural 20 from the attack die; 2024 also crits when a damage die shows its own maximum. That
+is <strong>one boolean in <code>toggles</code> and not two Go rules</strong>. It would have been easy to write two
+rules, and the edition difference would then have been a <code>switch</code> in <code>resolve.go</code> rather than
+two lines of YAML — which is the failure this record exists to prevent.</li>
+</ul>
+<p><code>hookIDs</code> is the whole of &ldquo;a narrow Go escape hatch&rdquo;, and
+<code>TestEveryHookIsNamedInThePackAndThePackNamesNoOther</code> asserts it is exactly the two entries
+<code>critical</code> and <code>mastery</code> <strong>and</strong> that every shipped pack names exactly those. A third hook fails
+that test, and the failure message is the question this page answers: <em>a rule became a hook</em>.
+Adding one is a decision about the data/engine boundary, and a decision should be visible in a
+diff rather than in a second entry in a map.</p>
+<p><strong>A pack naming a rule this build does not ship is a load failure</strong>, not a skip. A pack naming
+<code>critical: crit-on-anything</code> against a build with only <code>default</code> would otherwise resolve every
+attack <strong>without a critical rule</strong> and report success — a game where a natural 20 is an ordinary
+hit, discovered by a player months later. That is the one outcome a ruleset fingerprint cannot
+cover: the pack loaded, so the fingerprint matched, so the resume was permitted. The same
+argument, with the same answer, applies to a weapon granting a mastery the pack does not declare:
+which masteries a weapon offers lives on a creature&rsquo;s runtime state, which no load-time check
+sees, so that refusal is at resolution rather than at load — and skipping it would resolve the
+attack with no mastery and report success.</p>
+<p><strong>The four fingerprint components are four, and only three of them are data.</strong>
+<code>RulesetVersion</code> is a <strong>constant</strong> and is this engine&rsquo;s resolution <em>semantics</em>. The base pack&rsquo;s
+version and the overlay&rsquo;s version are separate components so that a pack revision gates a resume
+on its own, with its own name in the refusal. House-rule enablement is none of them: a house rule
+changes outcomes and not the meaning of a stored mutation, and a fingerprint that hashed the
+enabled set would refuse to resume every campaign whose GM enabled a rule at the table — a fault
+that reads as a feature, because the error would be perfectly reasonable on its face. Folding the
+packs into <code>RulesetVersion</code> would strand a campaign <strong>twice</strong> for one change and name nothing.</p>
+<h2 id="consequences">Consequences</h2>
+<p><strong>A second edition is a YAML file.</strong> P2b&rsquo;s overlays replace <code>toggles</code> (the two critical rules and
+the incapacity exemption), set <code>attack.mastery.enabled: false</code> — which is the whole of 2014&rsquo;s
+structural difference — and add rows. The diff a reviewer reads points at the rows that changed,
+because the merge is by slug and an index-keyed merge would turn &ldquo;2024 adds a row&rdquo; into &ldquo;every
+row after it changed&rdquo;.</p>
+<p><strong>A pack cannot express a house rule that changes what a score means.</strong> ADR 0012&rsquo;s second example
+is &ldquo;change a DC formula constant&rdquo;, and every constant such a rule needs is in <code>reference.constants</code>.
+The ability modifier&rsquo;s formula is <strong>not</strong>: a house rule that changed it would change what a
+<em>stored</em> creature&rsquo;s numbers mean, which is exactly the &ldquo;meaning of a persisted mutation&rdquo; ADR 0018
+exists to keep out of the fingerprint. So it is code, versioned by <code>EngineVersion</code>, and unreachable
+from a module.</p>
+<p><strong>A fourth kind of thing is not available.</strong> There is no expression in the pack, no predicate, no
+trigger. §10.4&rsquo;s split does not have a place for one and this engine does not invent a place; a
+rule needing one is the moment this record is revisited rather than the moment a second mechanism
+is added beside the first.</p>
+<p><strong>A malformed pack fails at startup, not mid-session.</strong> <code>rules.System</code> has no <code>Check() error</code>
+(ADR 0041&rsquo;s argument), so <code>New</code> is a constructor that can fail and every refusal in it names the
+row it is about — an unknown hook, a formula naming a variable that is not in scope, an effect
+kind outside the closed vocabulary, a proficiency table with a gap, a misspelled column. §10.2&rsquo;s
+table puts the blast radius of a broken gameplay plugin at the campaign state, and a pack of zeroes
+reaching a resolver is a creature with no abilities and a proficiency bonus of nothing.</p>
+<p><strong>Unknown kinds and stale conditions are inert.</strong> The resolver reads the object an intent addressed
+and one the arguments name, and never walks its state, so a tabletop carrying a placement whose kind
+nothing registers resolves exactly as it would not have been. A condition slug a pack no longer
+declares is <strong>dropped on write</strong>, not refused on read: refusing would make every resolution against
+that creature fail, which is §10.8&rsquo;s forbidden failure reached by a different road. Applying such a
+slug is a refusal, because that is a claim about the pack&rsquo;s vocabulary.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>Two Go rules for the two editions&rsquo; critical hit.</strong> Rejected, and it is the alternative this
+record most directly refuses. It works, it is a dozen lines, and it puts the difference between
+2014 and 2024 in a <code>switch</code> in <code>resolve.go</code> where an overlay author will not find it. §10.4&rsquo;s
+&ldquo;~90% identical&rdquo; is an argument for making the difference <em>data</em>; a second rule makes it code and
+leaves the hook table at one entry while quietly splitting the engine in two.</p>
+<p><strong>A plugin-defined hook mechanism</strong> — a pack naming a method on a Go type by reflection, or an
+expression language over the state. Rejected on §12&rsquo;s grounds and on the table&rsquo;s: a pack is compiled
+in, but a <em>house-rule</em> pack may be authored from something a GM pasted, and a grammar somebody can
+extend is a grammar with room in it for something nobody reviewed. The closed vocabulary is
+validated at load precisely so that &ldquo;this effect kind is not one this engine understands&rdquo; is a
+startup failure rather than a mastery that silently grants nothing.</p>
+<p><strong>One <code>Engine</code> per edition, with a shared library.</strong> Rejected: it is the fork the split exists to
+avoid, and it would make the edition part of the system id — which would name the same input twice
+in a four-component fingerprint, because the pack versions already carry it.</p>
+<p><strong>A <code>codec.go</code> in this package.</strong> §10.8&rsquo;s codec row says only the code that wrote an encoding can
+read it back, and a 5e creature&rsquo;s action economy, attacks and condition set are 5e&rsquo;s facts — so the
+projection onto a placement belongs to <code>internal/plugin</code> and this package does not reach for it.
+The dependency runs inward and the compiler refuses the alternative, which is a fine outcome for a
+first attempt.</p>
+<h2 id="what-this-record-does-not-claim">What this record does not claim</h2>
+<p>The engine resolves seven operations: <code>roll</code>, <code>attack</code>, <code>heal</code>, <code>apply_condition</code>,
+<code>clear_condition</code>, <code>apply_status</code> (GM-only) and <code>remove_token</code> (GM-only). It does <strong>not</strong> resolve
+movement, spellcasting, class features, exhaustion levels, flanking, cover, inspiration, or
+initiative — four of the switches the shipped pack declares (<code>inspiration</code>, <code>cover_affects_ac</code>,
+<code>flanking_optional</code>, and the conditions&rsquo; <code>speed_multiplier</code>) are carried by the pack and read by
+nothing in this slice. A pack carrying a switch its engine ignores is harmless; a pack missing one
+its engine needs is a rule that never fires, and declaring the whole list is what makes reading one
+later a change to this engine rather than a change to every pack.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>

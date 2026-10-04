@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>0016 — Salt the ETag with include_secrets — semiplane</title>
+<meta name="description" content="The design record&#39;s ETag rule is a defect. Two body variants cannot share one validator without leaking secrets to players.">
+<link rel="canonical" href="https://popinjayjohn.github.io/semiplane/decisions/0016-salted-etag/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="0016 — Salt the ETag with include_secrets — semiplane">
+<meta property="og:description" content="The design record&#39;s ETag rule is a defect. Two body variants cannot share one validator without leaking secrets to players.">
+<meta property="og:url" content="https://popinjayjohn.github.io/semiplane/decisions/0016-salted-etag/">
+<meta property="og:site_name" content="semiplane">
+<meta property="og:image" content="https://popinjayjohn.github.io/semiplane/og.png">
+<meta name="twitter:card" content="summary_large_image"><link rel="icon" href="/semiplane/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/semiplane/css/tokens.min.89ccc47b4a5ef518a81c0bc5dd0a1b830c2b9015c36a1833014a1138938a7bd4.css" integrity="sha256-iczEe0pe9RioHAvF3QobgwwrkBXDahgzAUoROJOKe9Q=">
+<link rel="stylesheet" href="/semiplane/css/site.min.c35745f36ca5565871db6976b5745fec16c6e1559e4b0b4433cd62a2a9fa5a65.css" integrity="sha256-w1dF82ylVlhx22l2tXRf7BbG4VWeSwtEM81ioqn6WmU="><script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("semiplane-theme");
+      var theme = stored === "light" || stored === "dark" ? stored : "auto";
+      var resolved = theme;
+      if (theme === "auto") {
+        resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolved);
+      document.documentElement.setAttribute("data-theme-choice", theme);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.setAttribute("data-theme-choice", "auto");
+    }
+  })();
+</script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-testid="skip-to-content">Skip to content</a>
+
+  <header class="shell-header" role="banner">
+    <div class="shell">
+      <a class="brand" href="/semiplane/">
+        <span class="brand__mark" aria-hidden="true">&#9670;</span>
+        semiplane
+      </a><nav class="site-nav" aria-label="Main">
+  <ul><li>
+        <a href="/semiplane/install/">Install</a>
+      </li><li>
+        <a href="/semiplane/concepts/">Concepts</a>
+      </li><li>
+        <a href="/semiplane/operating/">Operating</a>
+      </li><li>
+        <a href="/semiplane/roadmap/">Roadmap</a>
+      </li><li>
+        <a href="/semiplane/contributing/">Contributing</a>
+      </li><li>
+        <a href="/semiplane/decisions/">Decisions</a>
+      </li><li>
+        <a href="/semiplane/design/">Design records</a>
+      </li>
+  </ul>
+</nav>
+<button class="btn btn--ghost" type="button" data-theme-toggle
+              data-testid="theme-toggle" aria-pressed="false">
+        Theme: auto
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="shell" role="main" tabindex="-1"><article class="page">
+  <h1>0016 — Salt the ETag with include_secrets</h1>
+    <p class="lede">The design record&#39;s ETag rule is a defect. Two body variants cannot share one validator without leaking secrets to players.</p>
+    <details class="toc" data-testid="toc">
+      <summary>On this page</summary>
+      <nav id="TableOfContents">
+  <ul>
+    <li><a href="#context">Context</a></li>
+    <li><a href="#the-defect">The defect</a></li>
+    <li><a href="#decision">Decision</a>
+      <ul>
+        <li><a href="#cache-directives-follow-the-same-reasoning">Cache directives follow the same reasoning</a></li>
+      </ul>
+    </li>
+    <li><a href="#consequences">Consequences</a></li>
+    <li><a href="#why-the-design-record-is-not-edited">Why the design record is not edited</a></li>
+    <li><a href="#alternatives-considered">Alternatives considered</a></li>
+  </ul>
+</nav>
+    </details><aside class="decision-meta" data-testid="decision-meta">
+    <dl>
+      <dt>Status</dt>
+      <dd data-testid="decision-status">
+        <span class="decision-status decision-status--accepted">accepted</span>
+      </dd>
+        <dt>Decided</dt>
+        <dd><time datetime="2026-09-30 00:00:00 &#43;0000 UTC">2026-09-30 00:00:00 &#43;0000 UTC</time></dd>
+    </dl>
+  </aside><h2 id="context">Context</h2>
+<p>The architecture overview (§5.5) states two rules that cannot both hold:</p>
+<blockquote>
+<p>Rendered output is <strong>permission-neutral by construction</strong>, with one deliberate exception:
+<code>[!secret]</code> callouts (§5.6), whose body differs by viewer.</p>
+<p>…
+<code>ETag</code> = the same hash, so browser and server caches share one invalidation signal</p>
+</blockquote>
+<p>The first is right. The second was written before the second body variant existed, and the same
+section defines two variants from one <code>content_hash</code>. They are stated together and they conflict.</p>
+<h2 id="the-defect">The defect</h2>
+<p>The render cache has two variants per page, keyed <code>(campaign_id, path, content_hash, include_secrets)</code>. <code>include_secrets</code> is true only for a campaign GM; everyone else gets the
+redacted variant.</p>
+<p>If both variants carry <code>ETag: &quot;&lt;content_hash&gt;&quot;</code>, then a GM&rsquo;s response and a player&rsquo;s response
+advertise <strong>the same validator</strong>. Now consider any cache holding both — a shared CDN, a
+corporate proxy, a browser shared across accounts:</p>
+<ol>
+<li>The GM requests the page. The cache stores the unredacted body under hash <code>H</code>.</li>
+<li>A player requests the same page. The validator matches, so the cache serves its hit.</li>
+<li>The player receives the GM&rsquo;s page, with every secret in it.</li>
+</ol>
+<p>The redaction is correct in the handler and defeated in transit. This is the single highest-value
+security test in the project, per §12 and §14 of the architecture overview, and it is defeated by
+a header.</p>
+<h2 id="decision">Decision</h2>
+<p><strong>Salt the <code>ETag</code> with the variant flag:</strong></p>
+<pre tabindex="0"><code>ETag = W/&#34;&lt;sha256(content_hash + &#39;:&#39; + include_secrets)&gt;&#34;
+</code></pre><p>Two variants of one page now carry two validators, and a cache cannot confuse them.</p>
+<p><strong>The salt is not a secret.</strong> It does not need to be unpredictable — it needs to be <em>different</em>,
+so that a collision between the two variants is impossible. Using the flag verbatim is correct
+and keeps the construction obvious to anyone reading the code.</p>
+<h3 id="cache-directives-follow-the-same-reasoning">Cache directives follow the same reasoning</h3>
+<table>
+	<thead>
+			<tr>
+					<th>Response</th>
+					<th><code>Cache-Control</code></th>
+					<th>Why</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Wiki page, <code>include_secrets=false</code></td>
+					<td>normal, <code>ETag</code>-revalidated</td>
+					<td>The body is identical for every reader in this tier, so a shared cache is safe.</td>
+			</tr>
+			<tr>
+					<td>Wiki page, <code>include_secrets=true</code></td>
+					<td><strong><code>private, no-store</code></strong></td>
+					<td>Must never enter a shared cache under any configuration.</td>
+			</tr>
+	</tbody>
+</table>
+<p>A redacted page is permission-neutral <em>within its tier</em>, which is why only the GM variant needs
+<code>no-store</code>. The cost is that a GM navigating between wiki pages re-fetches — negligible next to
+the alternative.</p>
+<p>Note this does <strong>not</strong> change the cache key&rsquo;s shape, and it does <strong>not</strong> create a per-user
+cache. There are still exactly two variants per page. See
+[0017 — cross-campaign links never inline]({{ &ldquo;decisions/0017-cross-campaign-links-never-inline/&rdquo; | relURL }})
+for the other rule that keeps it that way.</p>
+<h2 id="consequences">Consequences</h2>
+<ul>
+<li>A test asserts a GM response and a player response never share an <code>ETag</code>. That is the test
+this record exists to make possible.</li>
+<li><code>no-store</code> on the GM variant is asserted too, rather than assumed.</li>
+<li>The document still does <strong>not</strong> vary by the theme cookie, so <strong>no <code>Vary: Cookie</code> is emitted</strong> —
+the <code>ETag</code> is about the content hash, and a theme preference is not a function of it.</li>
+</ul>
+<h2 id="why-the-design-record-is-not-edited">Why the design record is not edited</h2>
+<p>The architecture overview is a dated design record, published verbatim on the docs site, and its
+<code>design/_index.md</code> page exists specifically to list known staleness. Editing the record would
+destroy its value as a record. This ADR carries the correction, and the staleness note names it.</p>
+<h2 id="alternatives-considered">Alternatives considered</h2>
+<p><strong>A per-user cache.</strong> Would sidestep the collision entirely by never sharing anything. Rejected
+for the same reason <code>no-store</code> is only applied to the GM variant: it destroys the shared-cache
+story for the common case, which is the reader who is not a GM.</p>
+<p><strong>Keeping one variant and post-processing.</strong> Render one redacted page and reveal secrets
+client-side. This is the obvious alternative and it is exactly what §5.6.1 forbids: the secret
+body would be in the response, where any player recovers it from view-source. Redaction happens
+in the render, before templ output, so no intermediate buffer holds an unredacted copy for a
+non-GM.</p>
+<p><strong>Strong <code>ETag</code>s.</strong> <code>ETag = &quot;&lt;hash&gt;&quot;</code> without the weak prefix. Irrelevant to this defect — the
+collision is in the value, not in the strength.</p>
+
+</article></main>
+
+  <footer class="shell-footer" role="contentinfo">
+    <div class="shell"><ul>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/blob/main/LICENSE">MIT licence</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/issues">Issues</a></li>
+  <li><a href="https://github.com/PopinjayJohn/semiplane/discussions">Discussions</a></li>
+  <li><a href="/semiplane/operating/security/">Security</a></li>
+  <li><a href="/semiplane/contributing/">Contributing</a></li>
+</ul>
+<span>
+  Documentation for <code>main</code>. The
+  <a href="/semiplane/design/">design records</a> are dated snapshots, not
+  current documentation.
+</span>
+</div>
+  </footer><script>
+  (function () {
+    var root = document.documentElement;
+    var button = document.querySelector("[data-theme-toggle]");
+    if (!button) return;
+
+    var ORDER = ["auto", "light", "dark"];
+    var NAMES = { auto: "auto", light: "light", dark: "dark" };
+    var LABELS = {
+      auto: "Theme: auto (follows your system)",
+      light: "Theme: light",
+      dark: "Theme: dark"
+    };
+
+    function systemTheme() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function render() {
+      var choice = root.getAttribute("data-theme-choice") || "auto";
+      button.textContent = LABELS[choice];
+      button.setAttribute("aria-pressed", choice === "auto" ? "false" : "true");
+      button.setAttribute("data-theme-current", NAMES[choice]);
+    }
+
+    function apply(choice) {
+      var resolved = choice === "auto" ? systemTheme() : choice;
+      root.setAttribute("data-theme", resolved);
+      root.setAttribute("data-theme-choice", choice);
+      try {
+        if (choice === "auto") localStorage.removeItem("semiplane-theme");
+        else localStorage.setItem("semiplane-theme", choice);
+      } catch (e) {
+         
+      }
+      render();
+    }
+
+    button.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme-choice") || "auto";
+      apply(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length]);
+    });
+
+    
+    
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if ((root.getAttribute("data-theme-choice") || "auto") === "auto") apply("auto");
+    });
+
+    render();
+  })();
+</script>
+</body>
+</html>
