@@ -91,7 +91,7 @@ func TestTheSecretRouteIsMountedOnTheRouterTheProductServes(t *testing.T) {
 //
 // A `player` **is** a member, so `RequireRead` lets them through and only
 // `RequireEdit` stops them. So the refusal here is the claim: if this row ever
-// answers 204 the endpoint is not GM-only, and a player who can disclose a secret
+// answers 204 the endpoint is not GM-only (S-5.13), and a player who can disclose a secret
 // to the party through it is the disclosure this phase exists to prevent.
 //
 // The assertion is deliberately **not** a specific status. ADR 0024 settles the
@@ -121,9 +121,9 @@ func TestTheSecretRouteRefusesAPlayerOnTheRouterTheProductServes(t *testing.T) {
 		secretPagePath, inst.sessionFor(player.ID), revealBody))
 
 	if recorder.Code == http.StatusNoContent {
-		t.Fatalf("PUT %s as a player = 204. The reveal endpoint is GM-only "+
-			"(S-5.12), and a player who can disclose a secret to the party through "+
-			"it is the disclosure this phase exists to prevent", secretPagePath)
+		t.Fatalf("PUT %s as a player = 204. The reveal endpoint is GM-only (S-5.13), "+
+			"and a player who can disclose a secret to the party through it is the "+
+			"disclosure this phase exists to prevent", secretPagePath)
 	}
 }
 

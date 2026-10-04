@@ -134,6 +134,18 @@ appear nowhere in the interface.
 - **S-5.12** A cross-campaign wikilink renders as a plain hyperlink and is **never inlined**, so
   the linking page's HTML is byte-identical for every viewer.
   See [0017]({{ "decisions/0017-cross-campaign-links-never-inline/" | relURL }}).
+- **S-5.13** The reveal endpoint is **GM-only**, behind the edit gate and not the read
+  gate: a `player` is a member, so `RequireRead` admits them and only `RequireEdit`
+  refuses them. A reveal carries the same `If-Match` precondition as any other write, so
+  it is **refused** on a stale buffer rather than applied to bytes the GM never read. Every
+  reveal is written to `audit_log` and to `secrets_revealed`, and a stale precondition
+  writes **neither**.
+  See [0056]({{ "decisions/0056-a-reveal-writes-the-byte-before-the-ledger-row/" | relURL }}).
+- **S-5.14** A **redacted secret is silent**: no element, no class, no `aria-hidden`, no
+  placeholder, no live region announces that a secret was withheld. §5.6.1's omission
+  settles the body and not the absence, and everything available to close the gap between
+  what a sighted player and a screen-reader user perceive is itself a disclosure.
+  See [0059]({{ "decisions/0059-a-redacted-secret-is-silent/" | relURL }}).
 
 ## S-6 — Editing and conflict resolution
 

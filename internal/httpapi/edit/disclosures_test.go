@@ -312,7 +312,7 @@ func TestTheDisclosureSurfaceIsGMOnly(t *testing.T) {
 
 		if _, found := rendered.disclosuresPanel(); found {
 			t.Error("a player was served an editor document carrying the disclosure " +
-				"surface. The reveal control is GM-only (S-5.12)")
+				"surface. The reveal control is GM-only (S-5.13)")
 		}
 	}
 
