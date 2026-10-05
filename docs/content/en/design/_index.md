@@ -129,6 +129,17 @@ record — they are listed here:
   sidebar would have shipped as a feature that never arrives, with no symptom
   except a page that looks fine. Measured in a browser both ways. See
   [0055]({{ "decisions/0055-two-egresses-one-hub-the-sidebar-is-html-and-the-canvas-is-structured-data/" | relURL }}).
+- **The architecture record's §15 phase table is not the order the product
+  was built in.** §15 sequences twelve phases with the shell at phase 5 and
+  the Tailwind toolchain at phase 10 (corrected above), three separable
+  plugin phases 7–9, and no demo vault. What shipped is thirteen phases:
+  governance contracting first, the toolchain moved to foundations, the shell
+  built early against fixture HTML, the plugin contracts and first systems
+  merged into one phase, and a demo-vault phase inserted immediately before
+  hardening because a showcase cannot demonstrate features that do not exist
+  yet. The delivery plan is itself a dated record under `.opencode/plans/`
+  and carries the dependency graph; §15's reasoning still governs, its
+  numbering does not.
 - Diagrams render as code blocks. They are readable as source, which is how they
   were written.
 

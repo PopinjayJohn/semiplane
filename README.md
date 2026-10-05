@@ -4,10 +4,12 @@ A self-hosted, system-agnostic TTRPG wiki and virtual tabletop. One Go binary,
 one SQLite file, and campaign content in an Obsidian vault you already keep in
 sync.
 
-> **Pre-release.** The repository is a scaffold. The server starts and answers
-> `/healthz` and `/readyz`; there is no interface, no campaigns, and no content
-> pipeline yet. See the [roadmap](https://popinjayjohn.github.io/semiplane/roadmap/)
-> for what exists and in what order the rest arrives.
+> **Status.** The product runs end to end: the wiki with its edit and
+> conflict paths, the live tabletop over WebSocket, server-side rules with
+> house-rule overlays, `[!secret]` callouts with a GM-only reveal path, and
+> a three-campaign demo vault. See the
+> [roadmap](https://popinjayjohn.github.io/semiplane/roadmap/) for the
+> phase-by-phase record of what landed and what the hardening pass holds.
 
 ## Why
 
