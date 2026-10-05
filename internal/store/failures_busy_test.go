@@ -46,7 +46,9 @@ func TestBusyTimeoutWaitsRatherThanFails(t *testing.T) {
 	db := openTestStore(t)
 
 	var timeout int
-	if err := db.DB().QueryRowContext(t.Context(), "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+	if err := db.DB().
+		QueryRowContext(t.Context(), "PRAGMA busy_timeout").
+		Scan(&timeout); err != nil {
 		t.Fatalf("read busy_timeout: %v", err)
 	}
 
@@ -84,7 +86,10 @@ func TestASecondOpenIsRefusedWhileOneIsHeld(t *testing.T) {
 		}
 	})
 
-	second, err := store.Open(t.Context(), "file:"+filepath.Join(t.TempDir(), "single-slot-second.db"))
+	second, err := store.Open(
+		t.Context(),
+		"file:"+filepath.Join(t.TempDir(), "single-slot-second.db"),
+	)
 	if err == nil {
 		_ = second.Close()
 		t.Error("a second store.Open() while one is held = nil error, want a refusal; " +
