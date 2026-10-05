@@ -29,6 +29,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -81,8 +82,8 @@ func TestASecondOpenIsRefusedWhileOneIsHeld(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if err := first.Close(); err != nil {
-			t.Errorf("first store.Close() error = %v, want nil", err)
+		if closeErr := first.Close(); closeErr != nil {
+			t.Errorf("first store.Close() error = %v, want nil", closeErr)
 		}
 	})
 
@@ -97,8 +98,8 @@ func TestASecondOpenIsRefusedWhileOneIsHeld(t *testing.T) {
 			"would quietly not apply")
 	}
 
-	if err := first.Close(); err != nil {
-		t.Fatalf("first store.Close() error = %v, want nil", err)
+	if closeErr := first.Close(); closeErr != nil {
+		t.Fatalf("first store.Close() error = %v, want nil", closeErr)
 	}
 
 	// The slot came back with the close: one `Open` after one `Close` is the
@@ -134,15 +135,18 @@ func TestConcurrentGameWritesSerialise(t *testing.T) {
 			"gilded-cage", "The Gilded Cage", t.TempDir(),
 			"private", "5e-2024", "core:v1", 1_700_000_000,
 		); err != nil {
-			return err
+			return fmt.Errorf("seed campaign: %w", err)
 		}
 
 		_, err := tx.ExecContext(ctx, `INSERT INTO campaign_state
 			(campaign_id, state, version, updated_at) VALUES (?, ?, ?, ?)`,
 			campaignID, []byte("spstate1:{\"revision\":0}"), 0, time.Now().Unix(),
 		)
+		if err != nil {
+			return fmt.Errorf("seed campaign_state: %w", err)
+		}
 
-		return err
+		return nil
 	}); err != nil {
 		t.Fatalf("seed campaign_state: %v", err)
 	}
@@ -163,15 +167,18 @@ func TestConcurrentGameWritesSerialise(t *testing.T) {
 					`SELECT version FROM campaign_state WHERE campaign_id = ?`,
 					campaignID,
 				).Scan(&version); err != nil {
-					return err
+					return fmt.Errorf("read version: %w", err)
 				}
 
 				_, err := tx.ExecContext(ctx, `UPDATE campaign_state
 					SET version = ?, updated_at = ? WHERE campaign_id = ?`,
 					version+1, time.Now().Unix(), campaignID,
 				)
+				if err != nil {
+					return fmt.Errorf("bump version: %w", err)
+				}
 
-				return err
+				return nil
 			})
 			if err != nil {
 				failures.Add(1)

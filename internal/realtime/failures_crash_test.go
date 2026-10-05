@@ -97,8 +97,8 @@ func TestTheCrashFloorAdvancesWithEveryDebounce(t *testing.T) {
 	})
 
 	t.Cleanup(func() {
-		if err := resumed.Close(context.WithoutCancel(t.Context())); err != nil {
-			t.Errorf("registry.Close() error = %v, want nil", err)
+		if closeErr := resumed.Close(context.WithoutCancel(t.Context())); closeErr != nil {
+			t.Errorf("registry.Close() error = %v, want nil", closeErr)
 		}
 	})
 

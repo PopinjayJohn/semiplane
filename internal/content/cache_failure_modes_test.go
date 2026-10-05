@@ -117,18 +117,16 @@ func TestFlightWaitersCountAsHitsAndTheLeaderCountsTheMiss(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
 
-	produce := func() (content.Entry, error) {
-		entered <- struct{}{}
-		<-release
-
-		return entry("<p>once</p>"), nil
-	}
-
 	var wg sync.WaitGroup
 
 	for range callers {
 		wg.Go(func() {
-			got, err := cache.Render(k, produce)
+			got, err := cache.Render(k, func() (content.Entry, error) {
+				entered <- struct{}{}
+				<-release
+
+				return entry("<p>once</p>"), nil
+			})
 			if err != nil {
 				t.Errorf("Render() error = %v, want nil", err)
 
