@@ -11,6 +11,7 @@ caching, and artifacts, nothing else.
 | Tier | Trigger | Contents | Budget |
 |---|---|---|---|
 | **Light** (every PR, any target branch) | `pull_request` | lint (go+web), unit (`-race`), vitest, build (web→embed→go) | ≤ ~5 min |
+| **Smoke** (advisory; PRs touching `e2e/`, `web/`, `testdata/`) | `pull_request` + `paths` | `make build` + Playwright `smoke` project | +~3 min |
 | **Heavy** (only when the PR targets `main`) | `pull_request` with `base.ref == main` | Light + golden, contract (OpenAPI vs live routes), **full E2E**, cross-compile matrix, fuzz smoke, doctor | ≤ ~15 min (parallel) |
 | **Release** (tag `v*`, or manual dispatch) | `push: tags` / `workflow_dispatch` | Heavy, re-verified on the tagged commit + cross-OS E2E smoke (windows + macos) + long fuzz + minisign signing + SBOM + publish | release-only cost |
 
@@ -62,7 +63,38 @@ impossible until the full heavy suite passes on that exact commit.
 
 Note the absence of `paths-ignore`: a skipped workflow never reports its required
 context and would wedge the ruleset forever. Light is fast by design, not by
-skipping.
+skipping. The one deliberate exception is `ci-e2e-smoke` below — safe precisely
+because it is *not* a required context.
+
+### `ci-e2e-smoke.yml` — cheap smoke, paths-gated
+
+Advisory early-warning so a broken web/E2E change surfaces on the feature branch
+instead of at PR-to-main. Lives in its own workflow because `paths` filters are
+trigger-level: a separate workflow can be path-filtered without touching the gates.
+
+```yaml
+name: ci-e2e-smoke
+on:
+  pull_request:
+    paths: ['e2e/**', 'web/**', 'testdata/**']
+jobs:
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - checkout, setup-go, setup-node (pnpm store cache)
+      - run: make build            # real binary, web embedded
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: make e2e project=smoke   # auth, wiki, gm-secrets, dice
+      - uses: actions/upload-artifact@v4   # trace/video on failure only
+        if: failure()
+```
+
+- Not in the ruleset's required contexts — a paths-skipped run reports nothing,
+  which is exactly why it must stay optional. On main-targeting PRs it runs
+  redundantly beside the heavy tier's full E2E; that's fine (cancel-in-progress
+  keeps it honest).
+- If a server-behavior change (`cmd/**`, `internal/**`) should also smoke early,
+  add those paths here — deliberately narrow by default per "keep commits fast."
 
 ### `release.yml` — tags + manual dispatch
 
@@ -119,6 +151,8 @@ check exists in CI without a make target, that's a bug in the plan.
 4. Allow squash-merge, delete branch on merge (linear main, conventional commits
    feed release notes)
 5. No `paths-ignore` anywhere in `ci.yml` — see aggregate-gate note above
+6. `ci-e2e-smoke` is deliberately **not** required — path-filtered, so sometimes
+   absent. Advisory early warning, not a gate
 
 ## Secrets (all tiers)
 
