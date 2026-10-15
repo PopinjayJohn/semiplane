@@ -116,7 +116,8 @@ jobs:
 
 ```
 make lint        # gofmt -l, go vet, golangci-lint, svelte-check, eslint
-make test        # go test -race ./...  +  vitest run
+make test        # go test ./... (+ web vitest); -race whenever a C toolchain
+                 # exists — always in CI; local no-cc machines run unraced (loudly)
 make golden      # markdown→HTML pipeline golden-file tests (drift must be reviewed, never blindly regenerated)
 make fuzz        # short fuzz runs for dice + expr hooks (-fuzztime=30s)
 make integration # httptest suite against testdata/vaults (seeds, migrations, ACLs)

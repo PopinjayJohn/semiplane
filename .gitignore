@@ -28,6 +28,17 @@ go.work.sum
 # env file
 .env
 
+# Semiplane build outputs (never commit built assets)
+bin/
+/dist/
+/web/dist/
+/web/node_modules/
+/e2e/node_modules/
+/e2e/test-results/
+/e2e/playwright-report/
+/internal/webui/dist/*
+!/internal/webui/dist/placeholder.html
+
 # Editor/IDE
 # .idea/
 # .vscode/

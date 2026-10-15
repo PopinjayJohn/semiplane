@@ -1,0 +1,36 @@
+openapi: 3.1.0
+info:
+  title: Semiplane API
+  version: 0.0.0-slice
+servers:
+  - url: /api/v1
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      responses:
+        '200':
+          description: liveness
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /api/v1/version:
+    get:
+      operationId: version
+      responses:
+        '200':
+          description: build version
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version:
+                    type: string

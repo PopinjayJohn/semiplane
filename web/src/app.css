@@ -1,0 +1,7 @@
+@import 'tailwindcss';
+
+/* Design tokens live here (tech-stack §9 theming seams: CSS custom properties). */
+:root {
+  --semiplane-bg: #fafaf9;
+  --semiplane-fg: #1c1917;
+}
