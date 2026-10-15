@@ -92,6 +92,11 @@ The spike (worktree `openchamber/spike-rules-ontology-*`) produces
 
 ## Conventions
 
+- **Package names:** short and lowercase (Go convention). `internal/rules` and
+  `internal/dice` deliberately keep their names rather than becoming `*engine` —
+  the "Rules Engine" is the *subsystem* (`internal/rules` + `internal/dice` +
+  `internal/events`), while the vault's `rules/` is user content. Disambiguate in
+  package doc comments, never in package names.
 - Go 1.22+ `ServeMux` only — no router frameworks (tech-stack §3.1)
 - Errors: RFC 7807 `application/problem+json`; one error-handling path (`internal/api`)
 - Logging: `log/slog`, JSON in prod/text local, request-scoped via middleware
