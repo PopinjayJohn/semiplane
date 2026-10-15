@@ -11,3 +11,4 @@ source of truth is a folder of plain Markdown files.
 - [ci.md](docs/ci.md) — Makefile contract + GitHub Actions matrix and gates
 - [e2e.md](docs/e2e.md) — Playwright architecture, determinism, spec inventory
 - [rules-ontology.md](docs/rules-ontology.md) — canonical event/state/hook spec (spike deliverable, in progress)
+- [implementation-plan.md](docs/implementation-plan.md) — phased build plan with parallel workstreams
