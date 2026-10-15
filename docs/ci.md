@@ -57,11 +57,24 @@ make doctor      # smoke: doctor bundle against a scratch vault
 | fuzz | no on PR (30s smoke with seed corpus in `testdata/fuzz`) | yes on nightly (10m), findings filed as issues |
 | codeql / dependency-review / dependabot | warn, then enforce after baseline | security.txt not required; keep cheap |
 
+### `nightly.yml` — schedule (`cron`)
+
+Full E2E suite, long fuzz runs (`-fuzztime=10m`, findings auto-filed as issues),
+`e2e doctor` bundle against a scratch vault.
+
+### `weekly.yml` — schedule
+
+Cross-OS E2E smoke (windows-latest + macos-latest runners, `smoke` project only;
+compile parity on every PR already comes from the cross matrix), dependency audit
+snapshot.
+
 ### `release.yml` — tags only
 
 - goreleaser-style cross builds → zip/tar.gz + SHA256SUMS
-- **signing**: minisign (matches self-update §3.7) with key in `secrets/MINISIGN_KEY`;
-  cosign/keyless is the documented alternative — pick before first release (ADR needed)
+- **signing: minisign** (decided 2026-10-15) — key + passphrase in
+  `secrets/MINISIGN_KEY` / `secrets/MINISIGN_PWD`; `make release verify` step checks
+  the signature before upload; cosign/keyless remains the documented alternative if
+  keyless becomes a requirement (would need an ADR)
 - SBOM (syft) attached; release notes auto-generated from conventional commits
 - self-update safety: unsigned binaries are never accepted (§3.7); CI must never publish
   an unsigned artifact even on failure paths
@@ -71,7 +84,9 @@ make doctor      # smoke: doctor bundle against a scratch vault
 - `actions/setup-go` with `cache: true`; `actions/setup-node` with pnpm store cache
 - Cross matrix: `goos: [linux, darwin, windows] × goarch: [amd64, arm64]`; darwin/arm64
   cross-builds fine from linux (CGO disabled) — VMs not needed for compile-only checks
-- Node: pin via `packageManager` field (corepack) — decide pnpm vs npm before first commit
+- Node: **pnpm via corepack**, version pinned in `web/package.json`'s
+  `packageManager` field (Node 22 ships corepack; `corepack enable` is part of the
+  documented setup)
 - Concurrency: `cancel-in-progress: true` per workflow+ref; e2e artifacts uploaded on
   failure only (traces/videos), retained 14 days
 
