@@ -1,105 +1,128 @@
 # Semiplane — CI Plan
 
-*Status: Proposed · Last updated: 2026-10-15*
+*Status: Proposed (rev. 2) · Last updated: 2026-10-15*
 
 **Principle: the Makefile is the contract; CI is a thin wrapper.** Every check that
 runs in CI is runnable locally with one `make` target — CI runners add matrices,
 caching, and artifacts, nothing else.
 
-```
-make lint        # gofmt -l, go vet, golangci-lint (config in repo), svelte-check, eslint
-make test        # go test -race ./...  +  vitest run
-make golden      # markdown→HTML pipeline golden-file tests (fails loudly on drift)
-make fuzz        # short fuzz runs for dice + expr hooks (-fuzztime=30s)
-make integration # httptest suite against testdata/vaults (seeds, migrations, ACLs)
-make build       # web → embed → CGO_ENABLED=0 go build ./cmd/semiplane
-make cross       # GOOS/GOARCH matrix build, all tagged plugin_dnd5e too
-make e2e         # Playwright suite (docs/e2e.md)
-make contract    # boots server, validates live routes against openapi.yaml
-make doctor      # smoke: doctor bundle against a scratch vault
-```
+**No scheduled workflows.** Three tiers, no crons:
+
+| Tier | Trigger | Contents | Budget |
+|---|---|---|---|
+| **Light** (every PR, any target branch) | `pull_request` | lint (go+web), unit (`-race`), vitest, build (web→embed→go) | ≤ ~5 min |
+| **Heavy** (only when the PR targets `main`) | `pull_request` with `base.ref == main` | Light + golden, contract (OpenAPI vs live routes), **full E2E**, cross-compile matrix, fuzz smoke, doctor | ≤ ~15 min (parallel) |
+| **Release** (tag `v*`, or manual dispatch) | `push: tags` / `workflow_dispatch` | Heavy, re-verified on the tagged commit + cross-OS E2E smoke (windows + macos) + long fuzz + minisign signing + SBOM + publish | release-only cost |
+
+Why this shape: feature-branch commits stay fast; the expensive suite runs exactly
+where the ruleset gates (PR → main) and once more against the artifact being
+shipped (tag). Ad-hoc heavy runs without a PR: `workflow_dispatch` on `ci.yml`.
 
 ## Workflows
 
-### `ci.yml` — push to main + PRs
+### `ci.yml` — one workflow, tiered jobs
 
-```
-┌─────────┐  ┌──────────┐  ┌──────────┐
-│ lint    │  │ unit     │  │ web      │   (parallel, fail-fast off)
-│ go+web  │  │ incl race│  │ lint+test│
-└────┬────┘  └────┬─────┘  └────┬─────┘
-     └─────────────┼────────────┘
-                   ▼
-        ┌────────────────────┐
-        │ build (web→embed)  │
-        └─────────┬──────────┘
-      ┌───────────┼───────────────────┐
-      ▼           ▼                   ▼
-┌──────────┐ ┌─────────┐      ┌─────────────┐
-│ e2e      │ │ contract│      │ cross-compile│  (matrix, see below)
-│ Playwright│ │ OpenAPI │     │ + plugin tag │
-└──────────┘ └─────────┘      └─────────────┘
-      └───────────┴───────────────────┘
-                   ▼
-      ┌────────────────────┐
-      │ fuzz (short) + doctor│  (scheduled nightly: -fuzztime=10m)
-      └────────────────────┘
+```yaml
+on:
+  pull_request:            # base doesn't matter: light jobs always run
+  workflow_dispatch:       # ad-hoc heavy runs on any ref
 ```
 
-| Gate | Blocks merge | Notes |
-|---|---|---|
-| gofmt / vet / golangci-lint / svelte-check | yes | formatting-only diffs fail fast, no review noise |
-| `go test -race ./...` + vitest | yes | race detector is non-negotiable (SSE hub + fsnotify goroutines) |
-| golden (markdown→HTML) | yes | highest-risk pipeline per tech-stack §9; drift must be reviewed, never blindly regenerated |
-| e2e (Playwright) | yes | see docs/e2e.md for smoke/full split |
-| contract (OpenAPI vs live routes) | yes | boot server on random port, walk spec, compare paths/schemas |
-| cross-compile (linux/darwin/windows × amd64/arm64, CGO_ENABLED=0, ±`plugin_dnd5e`) | yes | tech-stack §9 commitment; also proves single-binary promise |
-| fuzz | no on PR (30s smoke with seed corpus in `testdata/fuzz`) | yes on nightly (10m), findings filed as issues |
-| codeql / dependency-review / dependabot | warn, then enforce after baseline | security.txt not required; keep cheap |
+```
+always:                              only when base.ref == 'main' (or dispatch):
+┌──────────┐ ┌──────────┐            ┌────────┐ ┌─────────┐ ┌─────────┐
+│ lint     │ │ unit     │            │ golden │ │ contract│ │ doctor  │
+│ go+web   │ │ -race    │            └───┬────┘ └────┬────┘ └────┬────┘
+└────┬─────┘ └────┬─────┘                │           │           │
+     └────────────┼──────────────────────┼───────────┼───────────┘
+                  ▼                      ▼           ▼
+            ┌──────────┐           ┌─────────────────────────┐
+            │ build    │──────────►│ e2e (full, ubuntu)      │
+            └──────────┘           ├─────────────────────────┤
+                                   │ cross-compile matrix    │
+                                   │ linux/darwin/windows    │
+                                   │ × amd64/arm64, CGO=0    │
+                                   │ ± tag plugin_dnd5e      │
+                                   ├─────────────────────────┤
+                                   │ fuzz-smoke (30s)        │
+                                   └───────────┬─────────────┘
+                                               ▼
+                                      ┌─────────────────┐
+                                      │ main-gate       │  ← the ONE required
+                                      └─────────────────┘     status check
+                  (light path ends in `pr-gate` similarly)
+```
 
-### `nightly.yml` — schedule (`cron`)
+**Aggregate gates, not matrix contexts.** Matrix jobs produce per-cell check names
+(`cross-compile (linux, arm64)`) that are miserable to require in a ruleset. Each
+tier therefore ends in one aggregate job (`pr-gate` light, `main-gate` heavy) whose
+only content is `needs: [...]` — and `main-gate` transitively requires the light set.
+Require **`main-gate`** (and nothing else) in the branch ruleset → merge to main is
+impossible until the full heavy suite passes on that exact commit.
 
-Full E2E suite, long fuzz runs (`-fuzztime=10m`, findings auto-filed as issues),
-`e2e doctor` bundle against a scratch vault.
+Note the absence of `paths-ignore`: a skipped workflow never reports its required
+context and would wedge the ruleset forever. Light is fast by design, not by
+skipping.
 
-### `weekly.yml` — schedule
+### `release.yml` — tags + manual dispatch
 
-Cross-OS E2E smoke (windows-latest + macos-latest runners, `smoke` project only;
-compile parity on every PR already comes from the cross matrix), dependency audit
-snapshot.
-
-### `release.yml` — tags only
-
-- goreleaser-style cross builds → zip/tar.gz + SHA256SUMS
+- Same heavy suite re-run on the tagged commit (a tag can point anywhere — trust
+  nothing inherited), then:
+- cross-compile matrix → zip/tar.gz + SHA256SUMS
+- **cross-OS E2E smoke** (windows-latest + macos-latest, `smoke` project)
 - **signing: minisign** (decided 2026-10-15) — key + passphrase in
-  `secrets/MINISIGN_KEY` / `secrets/MINISIGN_PWD`; `make release verify` step checks
-  the signature before upload; cosign/keyless remains the documented alternative if
-  keyless becomes a requirement (would need an ADR)
-- SBOM (syft) attached; release notes auto-generated from conventional commits
-- self-update safety: unsigned binaries are never accepted (§3.7); CI must never publish
-  an unsigned artifact even on failure paths
+  `secrets/MINISIGN_KEY` / `secrets/MINISIGN_PWD`; `make release verify` checks the
+  signature before upload; unsigned artifacts are never published or accepted
+  (tech-stack §3.7 self-update). cosign/keyless remains the documented alternative,
+  but would need an ADR.
+- long fuzz (`-fuzztime=10m`) as the release gate for dice/expr
+- SBOM (syft) attached; release notes from conventional commits
+
+## Makefile parity
+
+`ci.md` runs only what `make` already runs:
+
+```
+make lint        # gofmt -l, go vet, golangci-lint, svelte-check, eslint
+make test        # go test -race ./...  +  vitest run
+make golden      # markdown→HTML pipeline golden-file tests (drift must be reviewed, never blindly regenerated)
+make fuzz        # short fuzz runs for dice + expr hooks (-fuzztime=30s)
+make integration # httptest suite against testdata/vaults (seeds, migrations, ACLs)
+make e2e         # Playwright suite — `make e2e project=smoke` for the smoke subset (docs/e2e.md)
+make build       # web → embed → CGO_ENABLED=0 go build ./cmd/semiplane
+make cross       # GOOS/GOARCH matrix build, also with -tags plugin_dnd5e
+make contract    # boots server on a random port, validates live routes against openapi.yaml
+make doctor      # smoke: doctor bundle against a scratch vault
+```
+
+Runner steps are literally `make <target>` (plus the tier conditionals above) — if a
+check exists in CI without a make target, that's a bug in the plan.
 
 ## Matrix & caching
 
-- `actions/setup-go` with `cache: true`; `actions/setup-node` with pnpm store cache
-- Cross matrix: `goos: [linux, darwin, windows] × goarch: [amd64, arm64]`; darwin/arm64
-  cross-builds fine from linux (CGO disabled) — VMs not needed for compile-only checks
-- Node: **pnpm via corepack**, version pinned in `web/package.json`'s
-  `packageManager` field (Node 22 ships corepack; `corepack enable` is part of the
-  documented setup)
-- Concurrency: `cancel-in-progress: true` per workflow+ref; e2e artifacts uploaded on
-  failure only (traces/videos), retained 14 days
+- `actions/setup-go` `cache: true`; pnpm store cache via `actions/setup-node`
+  (pnpm via corepack, pinned in `web/package.json`)
+- Cross matrix: `goos: [linux, darwin, windows] × goarch: [amd64, arm64]` — compile-only,
+  no VMs needed beyond the runner that cross-builds
+- E2E artifacts (trace/video/screenshot) uploaded on failure only, 14-day retention
+- Concurrency: `cancel-in-progress: true` per workflow + `github.ref`; for
+  `pull_request` on main use `github.event.pull_request.number` so force-pushes
+  supersede cleanly
+- Speed wins: cache `web/dist` between build→e2e/contract/cross jobs via
+  `actions/cache` keyed on the web source hash; keep E2E per-worker seeded (docs/e2e.md)
 
-## Local parity
+## Ruleset checklist (what to mark required on `main`)
 
-`act` is not installed locally (docker absent) — intentional: rely on `make` targets for
-local truth, CI for environment truth. add `make ci` as an alias chain if the gap bites.
-Any check that cannot run locally (e.g. cross-compile to windows) still has a `make`
-target so CI just iterates its matrix.
+1. Require a pull request before merging (already set)
+2. Required status check: **`main-gate`** only (strict, up-to-date branches)
+3. Dismiss stale approvals on new pushes; require conversation resolution
+4. Allow squash-merge, delete branch on merge (linear main, conventional commits
+   feed release notes)
+5. No `paths-ignore` anywhere in `ci.yml` — see aggregate-gate note above
 
-## Secrets (CI)
+## Secrets (all tiers)
 
-`GITHUB_TOKEN` (automatic) · `MINISIGN_KEY`/`MINISIGN_PWD` (release, optional yet).
-Everything else — test vaults, OAuth mock, LAN codes — must run with **zero secrets**:
-e2e and integration use seeded/local-only config. A test that needs a real credential
-is a broken test.
+`GITHUB_TOKEN` (automatic) · `MINISIGN_KEY`/`MINISIGN_PWD` (release only; optional
+until first release — CI must still refuse to publish unsigned). Everything else —
+test vaults, OAuth mock, LAN codes — runs with **zero secrets**. A test that needs a
+real credential is a broken test.

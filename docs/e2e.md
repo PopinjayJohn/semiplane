@@ -68,9 +68,10 @@ make e2e
   `@flake` tag + linked issue, not silenced.
 - **Artifacts**: trace + screenshot on failure, video retained on failure only,
   14-day retention (matches ci.md).
-- **Runtime budget**: smoke subset (`smoke` project: auth, wiki, gm-secrets, dice)
-  ≤ 5 min gating every PR; full suite on nightly + release. Windows/macOS browsers run
-  a weekly smoke only — full parity belongs to the cross-compile matrix, not here.
+- **Runtime budget**: zero E2E on feature-branch PRs (light tier skips it) — streaks
+  stay fast. Full E2E gates PRs targeting `main` (heavy tier); the cross-OS smoke
+  (windows + macos) runs at release or manual dispatch only — no scheduled runs
+  (docs/ci.md). Full runtime parity belongs to the cross-compile matrix, not here.
 
 ## Out of scope (deliberate)
 

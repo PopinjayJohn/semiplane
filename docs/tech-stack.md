@@ -238,10 +238,10 @@ future high-duplex VTT. WS was not rejected — it was scoped.
 
 - **Testing:** golden-file tests for the Markdown→HTML pipeline (its highest-risk
   code), property/fuzz tests for dice and `expr` hooks, `httptest` API integration
-  against a fixture vault, cross-compilation on every CI run. Extracted hooks must
-  pass a seeded-RNG simulation harness (scenario + property tests) cross-validated
-  against typed source JSON; a coverage report gates auto-promotion, everything
-  else queues for human review.
+  against a fixture vault, cross-compilation on every main-bound PR and release tag.
+  Extracted hooks must pass a seeded-RNG simulation harness (scenario + property tests)
+  cross-validated against typed source JSON; a coverage report gates auto-promotion,
+  everything else queues for human review.
 - **Interfaces at boundaries:** `NoteRepository`, `SearchIndex`, `AuthProvider`,
   `DiceEvaluator` — so SQLite/FTS can be swapped for Tantivy, or local auth for
   LDAP, without touching handlers.
