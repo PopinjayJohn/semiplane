@@ -55,6 +55,7 @@ make e2e
 | `dice.spec.ts` | seeded roll returns exact total; roll breakdown shows components (`+4 STR +2 weapon +2 rage`-style provenance per §3.8/ontology); `/api/v1/dice/roll` parity with UI |
 | `creator.spec.ts` | wizard steps driven by `rules/` metadata (class/ancestry/background pick lists from the corpus), point-buy validation, creates a character page the player then owns |
 | `plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft |
+| `tv.spec.ts` | TV viewport never renders `:::gm` content under any mode/viewport pairing; glanceable NOW banner present |
 
 ## Rules of the suite (anti-flake contract)
 

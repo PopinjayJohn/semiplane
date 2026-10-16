@@ -125,7 +125,12 @@ until live). Tasks in order: tokens + responsive `Shell.svelte` → api client +
 session store + layout → `WikiReader` + wiki routes → TipTap `Editor` + custom
 nodes (dice button, gm block, statblock; `md→doc→md` round-trip fixtures) → SSE
 rune store + `GmBlock` gating → dice UI with breakdown popover → creator wizard
-(`rules/`-metadata driven) → plugin loader under CSP. Acceptance: `pnpm lint`
+(`rules/`-metadata driven) → plugin loader under CSP. Decisions carried over
+from the UX prototype: ~4 semantic tokens (`--sp-secret-border`, `--sp-slot-*`)
+before design freeze; runtime plugin sandbox (iframe vs sanitized-HTML mount)
+decided at the `PluginCard` boundary with the soft-fail contract unchanged;
+"hidden slot ⇒ silent no-render" documented for plugin authors; per-role slot
+rules + persistence deferred. Acceptance: `pnpm lint`
 (svelte-check) + vitest per component; `web/dist` stays ≤300KB gzipped
 (stack promise: table devices).
 
