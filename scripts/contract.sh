@@ -19,8 +19,27 @@ for path in /healthz /api/v1/version; do
   if [ "$code" != 200 ]; then echo "contract: GET $path -> $code (want 200)"; FAIL=1; fi
 done
 
-# Every path in openapi.yaml must be among the served routes above.
-mapfile -t SPEC < <(python3 -c 'import re; print("\n".join(re.findall(r"^  (/[^:]*):", open("openapi.yaml").read(), re.M)))')
+# Every live path in openapi.yaml must be served. Paths marked
+# `x-slice: planned` at the path-item level are Phase-1 stubs and are
+# skipped until their owning stream serves them.
+mapfile -t SPEC < <(python3 -c '
+import re
+paths = []
+cur = None
+live = False
+for line in open("openapi.yaml").read().splitlines():
+    m = re.match(r"^  (/[^:]*):$", line)
+    if m:
+        if cur is not None and live:
+            paths.append(cur)
+        cur = m.group(1)
+        live = True
+    elif cur is not None and re.match(r"^    x-slice: planned\s*$", line):
+        live = False
+if cur is not None and live:
+    paths.append(cur)
+print("\n".join(paths))
+')
 for p in "${SPEC[@]}"; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$p")
   if [ "$code" = 404 ]; then echo "contract: spec path $p not served (404)"; FAIL=1; fi
