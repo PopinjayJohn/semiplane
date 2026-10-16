@@ -1,19 +1,20 @@
+---
+title: The Yonder Vault
+aliases: [yonder, misty-ruin]
+tags: [location, dungeon]
+---
+
 <!-- testdata/golden/obsidian.md — Obsidian-flavored Markdown fixture for the
      Markdown→HTML pipeline (Phase 1, stream A: internal/markdown + render).
 
      Covers: YAML frontmatter, [[wikilink]] (plain + aliased), :::gm secret
      block, ```ad-statblock fence, > [!note] callout, and a table.
 
-     NOTE: GM-vs-Player HTML divergence assertions (gm block present for GM,
-     server-side stripped for players) land in Phase 1/A as golden files
-     (*.gm.html / *.player.html) plus `make golden` TestGolden coverage.
-     This file is the shared input only; do not assert rendered output here. -->
-
----
-title: The Yonder Vault
-aliases: [yonder, misty-ruin]
-tags: [location, dungeon]
----
+     Rendered by internal/render.TestGolden into obsidian.{gm,player}.html:
+     the GM file keeps the secret section, the player file proves it is
+     stripped server-side. The frontmatter block must stay the first bytes
+     of this file (after an optional BOM): like Obsidian, the pipeline only
+     recognizes leading frontmatter. -->
 
 # The Yonder Vault
 
