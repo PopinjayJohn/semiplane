@@ -150,10 +150,10 @@ set, state model, hook record format — lives in `docs/rules-ontology.md`.
 | Hook model | Hooks are **typed data records** over a closed, semver'd **event/state ontology**. A trigger is a structural match on a canonical event, never prose parsed at roll time. Automation happens at **ingest time only** (structural extraction + reviewed translation + type-check + simulation), never at runtime. |
 | `expr` role | Conditions/formulas evaluate against **typed context** (attacker/target state, `used_ability`, resources, turn state). Sandbox and purity unchanged. |
 | Advantage | An **event-level dice spec**, not a hook: 2d20kh1/kl1; advantage and disadvantage cancel to a straight roll; they never stack. |
-| Damage slots | Every damage contribution declares a **slot** (`slot: dice\|flat` on each `add_damage` op). On a critical hit, **only dice contributions are rolled twice**. Canonical precedence: inherent → ability → item → class → feat → misc. |
-| Evaluator shape | Hooks are pure reducers `(state, event) → (state, effects)` with seeded RNG and no wall-clock: replayable, testable, safe under concurrent players. |
+| Damage slots | Every damage contribution declares a **slot** (`slot: dice\|flat` on each `add_damage` op). On a critical hit, **only dice contributions are rolled twice**. Canonical precedence: inherent → ability → item → class → feat → misc. Resistance/vulnerability applies to the post-tier total (halve/double, round down) inside damage resolution. |
+| Evaluator shape | Hooks are pure reducers `(state, event) → (state, effects)` with seeded RNG and no wall-clock: replayable, testable, safe under concurrent players. V0 semantics: `once_per_turn` latches key on `(hook, turn actor, round)`; the GM-toggle breakdown (`?breakdown=1`) lists kept/discarded d20s and per-tier dice/flat lines so not-doubled-on-crit is auditable. |
 | One engine | The same server-authoritative engine resolves `/api/v1/dice/roll` today and the reserved `/ws/vtt` later; hook-mediated events broadcast via SSE; `.semiplane/oplog/` doubles as the replayable combat log. |
-| Ontology ceiling | Homebrew outside the ontology maps to the plugin tier (§4), not to runtime NLP. Unknown vocabulary is refused at authoring time, never guessed at roll time. |
+| Ontology ceiling | Homebrew outside the ontology maps to the plugin tier (§4), not to runtime NLP. Unknown vocabulary is refused at authoring time, never guessed at roll time. The validator pins `ontology: vN` and refuses newer files with a clear error; `grant_advantage` / `grant_disadvantage` are rejected as verbs in v0 with a pointer to the event-level dice-spec field (the concept — effects granting advantage — is valid; only the verb is wrong). |
 | System packs | The core (envelope, hook shape, purity, RNG) is system-neutral and lives in the binary. All game rules — attribute sets, crit rule, condition keys, tier precedence, outcome bands — live in vault system packs (`rules/systems/<id>/`, §10); refusal of unknown vocabulary is evaluated against the active pack, so the same hook can be valid in one system and refused in another. |
 
 ---
@@ -243,7 +243,9 @@ future high-duplex VTT. WS was not rejected — it was scoped.
   against a fixture vault, cross-compilation on every main-bound PR and release tag.
   Extracted hooks must pass a seeded-RNG simulation harness (scenario + property tests)
   cross-validated against typed source JSON; a coverage report gates auto-promotion,
-  everything else queues for human review.
+  everything else queues for human review. The spike's scenario traces (barbarian
+  rage/advantage/magic-weapon incl. Sap consumption, homebrew feat) are the normative
+  examples, ported as golden tests under `internal/rules`.
 - **Interfaces at boundaries:** `NoteRepository`, `SearchIndex`, `AuthProvider`,
   `DiceEvaluator` — so SQLite/FTS can be swapped for Tantivy, or local auth for
   LDAP, without touching handlers.

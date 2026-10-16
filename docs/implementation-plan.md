@@ -106,6 +106,15 @@ into the pack schema (read from `*SystemPack` like crit threshold already is),
 and rename system-named request fields (spike's `MasterySap`) to generic
 pack-key mechanisms. Acceptance: `make fuzz` runs real fuzz targets on grammar + expr compile;
 symbolic-dice seam (`Successes` view) present but numeric-only per spike report §7.
+Decisions carried from spike review (2026-10-16): `expand_crit_range` accepted
+for thresholds (crit-suppression, e.g. adamantine, is a separate v1 verb);
+Lucky-style rerolls confirmed out of v0 dice-spec (XOR, never stacks) with a
+generic `reroll` post-hook verb as v1 candidate, not permanent plugin-tier exile;
+Grapple's forward hook home is XPHB Unarmed Strike (PHB printing carries
+`superseded_note`); oplog v0 fields are `seed, faces, contributions,
+conditions` **plus `pack` + `ontology` version** (replay across pack updates);
+v1 state order is concentration → temp HP (`pools.temp_hp` name reserved in v0
+schema) → death saves → exhaustion.
 
 ### E — API surface (`internal/api`, `internal/sse`, `internal/oplog`, `internal/app`)
 
