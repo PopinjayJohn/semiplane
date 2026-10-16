@@ -51,7 +51,7 @@ payload: {...}        # kind-specific struct (typed, §3)
 
 | # | kind | emitted when | core payload shape |
 |---|------|--------------|--------------------|
-| 1 | `attack` | an attack roll is made | `attacker, target, used_attribute, source, adv, dis, kept, discarded?, total, hit, crit` |
+| 1 | `attack` | an attack roll is made | `attacker, target, used_ability, source, adv, dis, kept, discarded?, total, hit, crit` |
 | 2 | `damage` | damage rolled/applied (follows a hit `attack`, or standalone) | `source, attacker?, target, base_dice, contributions[], total` |
 | 3 | `check` | trait/skill check | `actor, attribute, specialty?, difficulty?, adv, dis, total, success?` |
 | 4 | `save` | resist/defense roll | `actor, attribute, difficulty?, adv, dis, total, success?` |
@@ -73,7 +73,7 @@ Notes:
 - Packs use a **subset**: a system with no rests never emits `rest_*`; one
   with no positions skips 13–16. Unused kinds cost nothing.
 - Field *names* are core; field *value domains* marked † are pack-defined:
-  `used_attribute` values, `source` values, `condition` keys, `cost`/`resource`
+  `used_ability` values, `source` values, `condition` keys, `cost`/`resource`
   names, distance units, difficulty scales.
 - `attack` and `damage` are separate events with a causal link
   (`damage.caused_by = attack.id`). Whether crit exists, what determines it,

@@ -88,12 +88,12 @@ type Event struct {
 }
 
 // AttackPayload (§1 row 1). Whether crit exists and what determines hit is a
-// pack rule; the core only propagates the flags. UsedAttribute and Source
+// pack rule; the core only propagates the flags. UsedAbility and Source
 // value domains (†) are pack-defined.
 type AttackPayload struct {
 	Attacker      string
 	Target        string
-	UsedAttribute string // † pack-defined attribute key
+	UsedAbility string // † pack-defined attribute key
 	Source        string // † pack-defined source key
 	Adv           bool
 	Dis           bool
