@@ -139,7 +139,10 @@ from the UX prototype: ~4 semantic tokens (`--sp-secret-border`, `--sp-slot-*`)
 before design freeze; runtime plugin sandbox (iframe vs sanitized-HTML mount)
 decided at the `PluginCard` boundary with the soft-fail contract unchanged;
 "hidden slot ⇒ silent no-render" documented for plugin authors; per-role slot
-rules + persistence deferred. New `--sp-*` tokens ship with recorded contrast
+rules + persistence deferred. V1 backlog (accepted, not now): `![[embed]]`
+transclusion with recursion guards, edit semantics, and player-view
+`:::gm`-stripping inside embeds (literal `!` + link fallback stands).
+New `--sp-*` tokens ship with recorded contrast
 ratios (AA). Acceptance: `pnpm lint`
 (svelte-check, zero new a11y warnings) + vitest per component; keyboard +
 `aria-live` + reduced-motion requirements per tech-stack §9; `web/dist` stays ≤300KB gzipped

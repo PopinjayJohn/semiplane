@@ -142,7 +142,10 @@ Validation (authoring time, all hard errors): `on` ⊆ core kinds; `when`
 parses against the core+pack `ctx` schema; `add_damage` requires
 `slot` + pack-known `tier`; `apply_condition` requires a pack-known key;
 `priority` int default 100 (orders *execution*; tiers order the *display*);
-`when` side-effect free (no RNG/clock — expr sandbox).
+`when` side-effect free (no RNG/clock — expr sandbox). Execution rule: `do`
+ops run in priority order at their event phase; costs resolve pre-roll and
+stay spent on a later miss — effects that require a hit must gate on
+`ctx.hit` in the damage phase instead.
 
 ## 4. Dice, breakdown, versioning (core pipeline)
 
@@ -173,6 +176,8 @@ Everything in the v0 first draft that named a rule lives here, intact.
   contributions roll twice (`2n`), flats never double. `expand_crit_range`
   widens the threshold (e.g. Champion 19–20).
 - **Damage tiers:** `inherent → ability → item → class → feat → misc`.
+  Redirects: immunity short-circuits; else resistance halves (floor), then
+  vulnerability doubles; same-kind sources never stack.
 - **Conditions (closed):** `rage, reckless, dodge, grappled, incapacitated,
   sapped, slow_10, …`. `sapped` = disadvantage on the victim's next attack
   (engine ORs it into the dice spec, consumed hit-or-miss); `slow_10` =
@@ -248,6 +253,8 @@ and fails under `bitd`; `prowess` the reverse; `sapped` fails under `bitd`.
 
 **Deliberately v1, not here:** per-pack action-economy shapes (3-action,
 clocks, zones-as-units), the symbolic-dice `Face` type (spike-report §7),
+multi-keep result shapes (`adv_keep > 1` needs `Kept/Discarded` as slices —
+`Discarded *int` assumes single-keep for all known packs),
 and the pack-as-Markdown loader (the spike loads equivalent JSON to stay
 stdlib-only). The seam for all three is the pack schema — the engine needs
 no new branches, only new pack fields.
