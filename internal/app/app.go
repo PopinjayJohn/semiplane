@@ -9,13 +9,19 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/PopinjayJohn/semiplane/internal/api"
+	"github.com/PopinjayJohn/semiplane/internal/index"
+	"github.com/PopinjayJohn/semiplane/internal/middleware"
+	"github.com/PopinjayJohn/semiplane/internal/oplog"
+	"github.com/PopinjayJohn/semiplane/internal/sse"
+	"github.com/PopinjayJohn/semiplane/internal/vault"
+	"github.com/PopinjayJohn/semiplane/internal/webui"
 )
 
 // Config follows flags > env > file > defaults (tech-stack §9).
-// The thin slice only carries what serve needs; fields grow with features.
 type Config struct {
 	Addr     string
 	VaultDir string
@@ -23,26 +29,60 @@ type Config struct {
 
 // Server is the runnable HTTP server.
 type Server struct {
-	cfg Config
-	mux *http.ServeMux
+	cfg     Config
+	handler http.Handler
 }
 
-// NewServer builds the ServeMux via internal/api and returns the server.
+// NewServer builds the full /api/v1 mux via internal/api with real Phase-1
+// implementations (A's render is called inside handlers; B's vault/index
+// and the SSE hub + oplog journal are wired here), wraps it in the
+// middleware chain (request ID, slog, rate limit, recovery), and falls back
+// to the embedded SPA for anything else.
 func NewServer(cfg Config) *Server {
 	if cfg.Addr == "" {
 		cfg.Addr = ":8080"
 	}
-	return &Server{cfg: cfg, mux: api.NewMux()}
+	vaultDir := cfg.VaultDir
+	if vaultDir == "" {
+		vaultDir = "."
+	}
+	deps := &api.Deps{
+		Vault: vault.New(vaultDir),
+		Hub:   sse.NewHub(),
+		Oplog: oplog.New(filepath.Join(vaultDir, ".semiplane", "oplog")),
+	}
+	if db, err := index.Open(filepath.Join(vaultDir, ".semiplane", "index.db")); err != nil {
+		slog.Warn("app: index unavailable, search/graph/backlinks degraded", "err", err)
+	} else {
+		deps.Index = index.New(db)
+	}
+	mux := api.NewMuxWithDeps(deps)
+	// SPA fallback: embedded UI for everything else (GET/HEAD).
+	mux.HandleFunc("GET /{$}", webui.Handler())
+	mux.HandleFunc("GET /{path...}", webui.Handler())
+
+	limited := middleware.RateLimit(middleware.NewLimiter(600, time.Minute))
+	handler := middleware.Chain(mux,
+		middleware.RequestIDMW,
+		middleware.Logging,
+		limited,
+		func(next http.Handler) http.Handler {
+			return middleware.Recovery(next, func(v any, stack []byte) {
+				slog.Error("panic recovered", "panic", v, "stack", string(stack))
+			})
+		},
+	)
+	return &Server{cfg: cfg, handler: handler}
 }
 
 // Handler exposes the mux for httptest integration tests without binding a port.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler { return s.handler }
 
 // Run serves until ctx is cancelled, then drains with a graceful timeout.
 func (s *Server) Run(ctx context.Context) error {
 	hs := &http.Server{
 		Addr:              s.cfg.Addr,
-		Handler:           s.mux,
+		Handler:           s.handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	ln, err := net.Listen("tcp", s.cfg.Addr)
