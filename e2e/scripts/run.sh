@@ -22,9 +22,16 @@ if [ ! -d e2e/node_modules ]; then (cd e2e && pnpm install); fi
 if sudo -n true 2>/dev/null; then
   (cd e2e && npx playwright install --with-deps chromium)
 else
-  # No sudo (local sandbox): browser binaries only. CI always has sudo and
-  # installs OS deps via --with-deps.
-  echo "e2e: no sudo — installing browser binaries without OS deps"
+  # No sudo (local sandbox): browser binaries + repo-local OS libs.
+  # CI always has sudo and installs OS deps via --with-deps.
+  echo "e2e: no sudo — installing browser binaries + repo-local OS libs"
   (cd e2e && npx playwright install chromium)
+  ./e2e/scripts/install-deps-nosudo.sh
+  # Absolute path: the test step below cds into e2e/, and a relative
+  # LD_LIBRARY_PATH would then resolve against the wrong directory.
+  LIBSUB=$(find "$(pwd)/e2e/.browser-libs/root" -name 'libnspr4.so' -printf '%h' -quit 2>/dev/null || true)
+  if [ -n "$LIBSUB" ]; then
+    export LD_LIBRARY_PATH="$LIBSUB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
 fi
 (cd e2e && BASE_URL="http://127.0.0.1:$PORT" npx playwright test --project="$PROJECT")

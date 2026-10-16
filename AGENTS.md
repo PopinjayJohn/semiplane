@@ -69,9 +69,13 @@ Tests and seeds must use `testdata/`, never `fixtures/`.
 5. **Web budget:** `web/dist` JS must stay ≤300 KB gzipped (table devices).
    Code-split TipTap per route; the slice shell is 34 KB, the full prototype with
    TipTap is ~118 KB — both fit only split.
-6. **This sandbox lacks Chromium OS libs and sudo.** E2E here needs
-   `LD_LIBRARY_PATH=/tmp/pwlibs/root/usr/lib/x86_64-linux-gnu` (see shell history
-   for the `apt-get download` recipe). CI installs `--with-deps` normally.
+6. **No sudo / no C compiler here — degradations cover it.** `make test` runs
+   unraced (loudly) without cc; `e2e/scripts/run.sh` installs browser binaries
+   plus repo-local OS libs (`e2e/scripts/install-deps-nosudo.sh`:
+   `apt-get download` + `dpkg-deb -x` into gitignored `e2e/.browser-libs/`,
+   wired onto `LD_LIBRARY_PATH` automatically) without sudo. CI always has both
+   (`--with-deps`). Don't "fix" these into hard failures. Gotcha inside the
+   gotcha: `LD_LIBRARY_PATH` must be absolute — the test step cds into `e2e/`.
 
 ## E2E rules (from `docs/e2e.md`, enforced in review)
 

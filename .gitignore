@@ -34,6 +34,7 @@ bin/
 /web/dist/
 /web/node_modules/
 /e2e/node_modules/
+/e2e/.browser-libs/
 /e2e/test-results/
 /e2e/playwright-report/
 /internal/webui/dist/*
