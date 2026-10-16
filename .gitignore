@@ -40,6 +40,9 @@ bin/
 /internal/webui/dist/*
 !/internal/webui/dist/placeholder.html
 
+# Derived SQLite index inside vaults (rebuildable via `semiplane reindex`)
+.semiplane/
+
 # Editor/IDE
 # .idea/
 # .vscode/
