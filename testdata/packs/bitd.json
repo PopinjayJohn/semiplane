@@ -1,0 +1,17 @@
+{
+  "id": "bitd",
+  "attributes": ["insight", "prowess", "resolve"],
+  "sources": ["action", "resistance", "fortune", "downtime", "other"],
+  "damage_types": ["harm"],
+  "resources": ["stress"],
+  "crit": {"enabled": false, "die": 6, "threshold": 6},
+  "conditions": ["lesser_harm", "moderate_harm", "severe_harm", "trauma"],
+  "precedence": ["inherent", "ability", "item", "playbook", "misc"],
+  "disadv_key": "",
+  "resistance_bands": [
+    {"min": 6, "label": "full"},
+    {"min": 4, "label": "partial"},
+    {"min": 1, "label": "none"}
+  ],
+  "resistance_die": 6
+}

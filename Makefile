@@ -29,8 +29,9 @@ test: ## go tests (+ web vitest); -race when a C toolchain exists (always in CI)
 golden: ## markdown→HTML golden files (thin slice: none yet, gate stays wired)
 	@if [ -d testdata/golden ]; then $(GO) test -run TestGolden ./...; else echo "golden: no testdata/golden yet — pass"; fi
 
-fuzz: ## short fuzz runs for dice + expr hooks (thin slice: none yet)
-	@echo "fuzz: no fuzz targets yet — pass (nightly/release runs -fuzztime=10m once they exist)"
+fuzz: ## short fuzz runs for dice grammar + expr hook compile (30s smoke; release runs -fuzztime=10m)
+	$(GO) test -run=NONE -fuzztime=15s -fuzz=FuzzParse ./internal/dice/
+	$(GO) test -run=NONE -fuzztime=15s -fuzz=FuzzCompileHook ./internal/rules/
 
 integration: ## httptest suite against testdata/vaults
 	$(GO) test -count=1 ./internal/...
