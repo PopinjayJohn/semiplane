@@ -257,6 +257,13 @@ future high-duplex VTT. WS was not rejected — it was scoped.
   only via env.
 - **i18n & theming seams:** UI strings out of components; CSS custom properties for
   community skins — cheap now, expensive after launch.
+- **Accessibility (WCAG 2.2 AA):** every interactive flow keyboard-operable with
+  visible focus; SSE reveals and dice results announce via `aria-live` regions;
+  `prefers-reduced-motion` disables shimmer/transitions; new `--sp-*` tokens ship
+  with recorded contrast ratios; TV viewport guarantees 64 px targets and never
+  renders `:::gm`. Automated: axe scans in E2E (zero serious/critical, helper in
+  `e2e/helpers/axe.ts`) + zero new Svelte compiler a11y warnings; manual
+  keyboard-only + screen-reader pass before every release.
 - **Expansion seams:** reserved `/ws/vtt` route, to be served later by the same
   rule engine as `/api/v1/dice/roll` (§3.8); an append-only operation log
   (`.semiplane/oplog/`) as the seed for future multi-device sync and the replayable

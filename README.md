@@ -4,6 +4,8 @@ TTRPG Wiki
 Cross-platform, single-binary web app: a TTRPG wiki and campaign manager whose
 source of truth is a folder of plain Markdown files.
 
+> Working in this repo (human or agent)? Start with [AGENTS.md](AGENTS.md).
+
 ## Docs
 
 - [tech-stack.md](docs/tech-stack.md) — canonical stack decisions and rationale

@@ -115,7 +115,8 @@ jobs:
 `ci.md` runs only what `make` already runs:
 
 ```
-make lint        # gofmt -l, go vet, golangci-lint, svelte-check, eslint
+make lint        # gofmt -l, go vet, golangci-lint, svelte-check (incl. a11y
+                 # warnings). No eslint yet — add with config when JS linting is wanted.
 make test        # go test ./... (+ web vitest); -race whenever a C toolchain
                  # exists — always in CI; local no-cc machines run unraced (loudly)
 make golden      # markdown→HTML pipeline golden-file tests (drift must be reviewed, never blindly regenerated)

@@ -139,17 +139,20 @@ from the UX prototype: ~4 semantic tokens (`--sp-secret-border`, `--sp-slot-*`)
 before design freeze; runtime plugin sandbox (iframe vs sanitized-HTML mount)
 decided at the `PluginCard` boundary with the soft-fail contract unchanged;
 "hidden slot ⇒ silent no-render" documented for plugin authors; per-role slot
-rules + persistence deferred. Acceptance: `pnpm lint`
-(svelte-check) + vitest per component; `web/dist` stays ≤300KB gzipped
+rules + persistence deferred. New `--sp-*` tokens ship with recorded contrast
+ratios (AA). Acceptance: `pnpm lint`
+(svelte-check, zero new a11y warnings) + vitest per component; keyboard +
+`aria-live` + reduced-motion requirements per tech-stack §9; `web/dist` stays ≤300KB gzipped
 (stack promise: table devices).
 
 ### G — E2E growth (`e2e/tests`, runs alongside F)
 
-Depends on E+F landing incrementally. Grow 3 smoke → 9-file inventory in
+Depends on E+F landing incrementally. Grow 3 smoke → 11-file inventory in
 spec order: auth → acl → wiki → gm-secrets → realtime → editor → dice →
-creator → plugins. Each spec lands with the feature it covers (same PR where
+creator → plugins → tv → a11y. Each spec lands with the feature it covers (same PR where
 possible). Keep `fixtures.ts` (seed + fake OIDC + SSE helpers) and the
-anti-flake contract (testids only, no sleeps, zero external calls). Full suite
+anti-flake contract (testids only, no sleeps, zero external calls). Route specs
+include their axe scan via `helpers/axe.ts` (zero serious/critical). Full suite
 gates PR-to-main via `main-gate`; smoke stays advisory on feature branches.
 
 ## Phase 2 — Integration & release readiness (2 agents, after Phase 1)

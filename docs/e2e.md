@@ -56,6 +56,7 @@ make e2e
 | `creator.spec.ts` | wizard steps driven by `rules/` metadata (class/ancestry/background pick lists from the corpus), point-buy validation, creates a character page the player then owns |
 | `plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft |
 | `tv.spec.ts` | TV viewport never renders `:::gm` content under any mode/viewport pairing; glanceable NOW banner present |
+| `a11y.spec.ts` | axe scans (WCAG 2.2 AA tags) on shell + each route: zero serious/critical; keyboard-only pass of nav, reveal, dice, wizard; `aria-live` announcements asserted for SSE reveal + roll results; reduced-motion honored |
 
 ## Rules of the suite (anti-flake contract)
 
@@ -73,6 +74,20 @@ make e2e
   stay fast. Full E2E gates PRs targeting `main` (heavy tier); the cross-OS smoke
   (windows + macos) runs at release or manual dispatch only — no scheduled runs
   (docs/ci.md). Full runtime parity belongs to the cross-compile matrix, not here.
+
+## Accessibility (WCAG 2.2 AA)
+
+Automated axe scans run inside the E2E suite (`@axe-core/playwright`,
+`e2e/helpers/axe.ts`): `wcag2a/wcag2aa/wcag21a/wcag21aa/wcag22a/wcag22aa` tags,
+**zero serious/critical violations** or the spec fails. Minor/best-practice
+findings are filed as issues, never silently ignored; rule exclusions require a
+comment linking the issue. Each route spec scans its own surface; `a11y.spec.ts`
+covers the shell plus keyboard-only flows (nav, reveal, dice, wizard),
+`aria-live` announcements for SSE reveals and roll results (pending states must
+be text, not shimmer-only), and `prefers-reduced-motion`. Svelte compiler a11y
+warnings are part of `pnpm lint`: zero new warnings. Automated scans do not
+replace humans: a manual keyboard-only + screen-reader pass is required before
+every release (append to the release checklist when `release.yml` lands).
 
 ## Out of scope (deliberate)
 

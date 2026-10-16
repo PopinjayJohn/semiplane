@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/PopinjayJohn/semiplane/internal/api"
@@ -50,17 +51,25 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-func TestSPAPlaceholder(t *testing.T) {
-	// Fresh checkout: internal/webui/dist holds no index.html, so the SPA
-	// handler serves the loud placeholder (503) instead of silent 404s.
+func TestSPARoot(t *testing.T) {
+	// Invariant: GET / never fails silently. What it serves depends on what
+	// was embedded at compile time — the real SPA if `make embed` ran, else
+	// the loud 503 placeholder. This test adapts to both so it stays green
+	// regardless of local build-artifact state (see AGENTS.md gotcha #2).
 	srv := httptest.NewServer(api.NewMux())
 	defer srv.Close()
 
 	status, body := get(t, srv.URL+"/")
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("root status = %d, want 503 placeholder", status)
-	}
-	if len(body) == 0 {
-		t.Fatal("empty placeholder body")
+	switch status {
+	case http.StatusOK:
+		if len(body) == 0 {
+			t.Fatal("SPA root returned 200 with empty body")
+		}
+	case http.StatusServiceUnavailable:
+		if !strings.Contains(string(body), "make web") {
+			t.Fatalf("placeholder body missing rebuild hint: %q", body)
+		}
+	default:
+		t.Fatalf("root status = %d, want 200 (embedded SPA) or 503 (placeholder)", status)
 	}
 }
