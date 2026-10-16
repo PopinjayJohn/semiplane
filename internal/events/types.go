@@ -91,17 +91,17 @@ type Event struct {
 // pack rule; the core only propagates the flags. UsedAbility and Source
 // value domains (†) are pack-defined.
 type AttackPayload struct {
-	Attacker      string
-	Target        string
+	Attacker    string
+	Target      string
 	UsedAbility string // † pack-defined attribute key
-	Source        string // † pack-defined source key
-	Adv           bool
-	Dis           bool
-	Kept          []int
-	Discarded     []int
-	Total         int
-	Hit           bool
-	Crit          bool
+	Source      string // † pack-defined source key
+	Adv         bool
+	Dis         bool
+	Kept        []int
+	Discarded   []int
+	Total       int
+	Hit         bool
+	Crit        bool
 }
 
 // Slot is the damage-contribution slot (ontology §0.3). Every add_damage op
