@@ -80,7 +80,7 @@ mutation is more ergonomic than fighting the borrow checker on cyclic AST graphs
 |---|---|---|
 | Markdown engine | **Goldmark** (`github.com/yuin/goldmark`) | CommonMark-compliant with a three-phase pipeline: Parsers → AST Transformers → Renderers. Hugo-proven. Custom syntax (wikilinks, statblocks, `:::gm` blocks) plugs in cleanly at each phase. |
 | Dice grammar | **Participle** (`alecthomas/participle`) | Declarative struct-tag grammar that produces typed ASTs in Go — robust for `4d6kh3 + @mod`-style expressions, and makes symbolic-dice systems representable. |
-| Rule hooks | **Markdown in `rules/` + `expr-lang/expr`** | Hooks stay user-editable plain text while conditions/formulas are evaluated by a sandboxed, pure-Go expression engine. No recompilation to change the rules. In detail: hooks are typed records over a closed event/state ontology, never prose parsed at roll time — see §3.7. |
+| Rule hooks | **Markdown in `rules/` + `expr-lang/expr`** | Hooks stay user-editable plain text while conditions/formulas are evaluated by a sandboxed, pure-Go expression engine. No recompilation to change the rules. In detail: hooks are typed records over a closed event/state ontology, never prose parsed at roll time — see §3.8. |
 | Wikilinks/frontmatter | Goldmark metadata + `gopkg.in/yaml.v3` | Obsidian-compatible `[[links]]` and YAML frontmatter; arbitrary per-system character schemas need no migrations because SQLite never stores content. |
 
 **The GM-secret pipeline (core domain feature):**
@@ -140,7 +140,7 @@ Markdown at any time; losing `index.db` loses nothing.
 | Backups | `semiplane backup` — vault zip + `VACUUM INTO` | Correct online SQLite backup; the `.md` tree is the real backup target (Git-friendly by design). |
 | Debugging | `semiplane doctor` | Log/config/path diagnostics bundle attached to bug reports. |
 
-### 3.7 Rules Engine & Dice Hooks (normative semantics)
+### 3.8 Rules Engine & Dice Hooks (normative semantics)
 
 Decisions locked during the rules-engine spike. The full schema — canonical event
 set, state model, hook record format — lives in `docs/rules-ontology.md`.
@@ -150,7 +150,7 @@ set, state model, hook record format — lives in `docs/rules-ontology.md`.
 | Hook model | Hooks are **typed data records** over a closed, semver'd **event/state ontology**. A trigger is a structural match on a canonical event, never prose parsed at roll time. Automation happens at **ingest time only** (structural extraction + reviewed translation + type-check + simulation), never at runtime. |
 | `expr` role | Conditions/formulas evaluate against **typed context** (attacker/target state, `used_ability`, resources, turn state). Sandbox and purity unchanged. |
 | Advantage | An **event-level dice spec**, not a hook: 2d20kh1/kl1; advantage and disadvantage cancel to a straight roll; they never stack. |
-| Damage slots | Every modifier declares a **slot**: dice or flat. On a critical hit, **only dice multiply**. Canonical precedence: inherent → ability → item → class → feat → misc. |
+| Damage slots | Every damage contribution declares a **slot** (`slot: dice\|flat` on each `add_damage` op). On a critical hit, **only dice contributions are rolled twice**. Canonical precedence: inherent → ability → item → class → feat → misc. |
 | Evaluator shape | Hooks are pure reducers `(state, event) → (state, effects)` with seeded RNG and no wall-clock: replayable, testable, safe under concurrent players. |
 | One engine | The same server-authoritative engine resolves `/api/v1/dice/roll` today and the reserved `/ws/vtt` later; hook-mediated events broadcast via SSE; `.semiplane/oplog/` doubles as the replayable combat log. |
 | Ontology ceiling | Homebrew outside the ontology maps to the plugin tier (§4), not to runtime NLP. Unknown vocabulary is refused at authoring time, never guessed at roll time. |
@@ -254,7 +254,7 @@ future high-duplex VTT. WS was not rejected — it was scoped.
 - **i18n & theming seams:** UI strings out of components; CSS custom properties for
   community skins — cheap now, expensive after launch.
 - **Expansion seams:** reserved `/ws/vtt` route, to be served later by the same
-  rule engine as `/api/v1/dice/roll` (§3.7); an append-only operation log
+  rule engine as `/api/v1/dice/roll` (§3.8); an append-only operation log
   (`.semiplane/oplog/`) as the seed for future multi-device sync and the replayable
   combat log; opt-in-only error reporting behind an interface (TTRPG content is
   private by default).

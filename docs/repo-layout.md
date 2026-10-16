@@ -24,7 +24,7 @@ semiplane/
 │   ├── webui/
 │   │   └── dist/             # //go:embed target (build artifact, gitignored)
 │   ├── dice/                 # Participle grammar, seeded roller, DiceEvaluator interface
-│   ├── rules/                # hook engine: ontology types, expr eval, reducer, registry (§3.7)
+│   ├── rules/                # hook engine: ontology types, expr eval, reducer, registry (§3.8)
 │   ├── events/               # canonical event types shared by rules + SSE + future VTT
 │   ├── sse/                  # /api/v1/events: flusher, Last-Event-ID replay
 │   ├── oplog/                # append-only operation log (sync seed + replayable combat log)
@@ -57,7 +57,7 @@ semiplane/
 | `internal/*` never imports `pkg/pluginapi` — it *implements* it | Plugin API stays stable; internals refactor freely |
 | `cmd/` imports `internal/` + `pkg/pluginapi` only | One binary, no frameworks |
 | `pkg/` imports nothing from `internal/` | Semver surface; plugin authors depend only on `pkg/pluginapi` |
-| `internal/rules` imports `internal/dice` + `internal/events`, never `internal/api` | Hook engine is transport-agnostic (§3.7 "one engine") |
+| `internal/rules` imports `internal/dice` + `internal/events`, never `internal/api` | Hook engine is transport-agnostic (§3.8 "one engine") |
 | `web/` imports nothing Go; talks REST/SSE | API-first: the SPA is one client, mobile is an equal citizen |
 
 ## Boundaries defined as interfaces first (tech-stack §9)
@@ -86,7 +86,7 @@ The spike (worktree `openchamber/spike-rules-ontology-*`) produces
 
 - prototype code → `internal/rules` (+ `internal/dice` glue), **not** `pkg/` (it is not
   the plugin surface; plugin authors consume `pkg/pluginapi` interfaces)
-- `docs/rules-ontology.md` stays canonical, referenced by tech-stack §3.7
+- `docs/rules-ontology.md` stays canonical, referenced by tech-stack §3.8
 - ontology event/state types in `internal/events` are the VTT protocol seed (docs/e2e.md
   determinism rules depend on them)
 

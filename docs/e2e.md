@@ -37,7 +37,7 @@ make e2e
   `:::gm` block, one wikilink pair, one character page). Never seed from `fixtures/`
   — that corpus is untracked and licensing-unresolved.
 - **Determinism**: the server runs with a test-only seeded RNG (`SEMIPLANE_TEST_SEED`)
-  per tech-stack §3.7 — dice rolls are then exact values E2E can assert. Without that
+  per tech-stack §3.8 — dice rolls are then exact values E2E can assert. Without that
   flag the suite may only assert *ranges/patterns*.
 - Port pool + per-worker scratch dir = workers are isolated and parallel-safe; no
   shared state between specs.
@@ -52,7 +52,7 @@ make e2e
 | `gm-secrets.spec.ts` | `:::gm` block stripped for player context, visible for GM; GM clicks reveal → player sees the block appear via SSE without reload |
 | `realtime.spec.ts` | two contexts on one note: edit in GM context → player context updates via SSE; external file edit on disk → UI offers overwrite/reload/save-copy (never silent last-write-wins) |
 | `editor.spec.ts` | TipTap edit → clean Markdown persisted to disk (round-trip), live preview on cursor line |
-| `dice.spec.ts` | seeded roll returns exact total; roll breakdown shows components (`+4 STR +2 weapon +2 rage`-style provenance per §3.7/ontology); `/api/v1/dice/roll` parity with UI |
+| `dice.spec.ts` | seeded roll returns exact total; roll breakdown shows components (`+4 STR +2 weapon +2 rage`-style provenance per §3.8/ontology); `/api/v1/dice/roll` parity with UI |
 | `creator.spec.ts` | wizard steps driven by `rules/` metadata (class/ancestry/background pick lists from the corpus), point-buy validation, creates a character page the player then owns |
 | `plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft |
 

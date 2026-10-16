@@ -23,7 +23,7 @@ Ground rules (non-negotiable, from the planning docs):
 
 | Dep | Pin | Note |
 |---|---|---|
-| goldmark | `github.com/yuin/goldmark/v2` — **VERIFY**: contradicts v1.7 training data; if v2 doesn't exist, use v1.7.x and translate `goldmark.New` accordingly | parser/AST-transformer/renderer extension points |
+| goldmark | `github.com/yuin/goldmark/v2 v2.1.6` (confirmed via module proxy 2026-10-16; v1 line is legacy) | parser/AST-transformer/renderer extension points |
 | yaml | `gopkg.in/yaml.v3` | frontmatter (no goldmark-meta: no v2 port) |
 | callouts | `github.com/yuin/goldmark-alert` (adapt) or hand-rolled `ParagraphTransformer` | `> [!note]` |
 | sqlite | `modernc.org/sqlite v1.54.0` (+ matching `modernc.org/libc`) | driver `sqlite`; FTS5 compiled in — assert at startup via `sqlite_compile_options()` |
