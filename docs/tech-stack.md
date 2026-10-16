@@ -154,6 +154,7 @@ set, state model, hook record format — lives in `docs/rules-ontology.md`.
 | Evaluator shape | Hooks are pure reducers `(state, event) → (state, effects)` with seeded RNG and no wall-clock: replayable, testable, safe under concurrent players. |
 | One engine | The same server-authoritative engine resolves `/api/v1/dice/roll` today and the reserved `/ws/vtt` later; hook-mediated events broadcast via SSE; `.semiplane/oplog/` doubles as the replayable combat log. |
 | Ontology ceiling | Homebrew outside the ontology maps to the plugin tier (§4), not to runtime NLP. Unknown vocabulary is refused at authoring time, never guessed at roll time. |
+| System packs | The core (envelope, hook shape, purity, RNG) is system-neutral and lives in the binary. All game rules — attribute sets, crit rule, condition keys, tier precedence, outcome bands — live in vault system packs (`rules/systems/<id>/`, §10); refusal of unknown vocabulary is evaluated against the active pack, so the same hook can be valid in one system and refused in another. |
 
 ---
 
@@ -163,6 +164,7 @@ set, state model, hook record format — lives in `docs/rules-ontology.md`.
 |---|---|---|
 | **Compiled-in** | Go packages registered via blank imports (`_ "semiplane/plugins/dnd5e"`) + `init()` registry; optional build tags (`-tags plugin_dnd5e`) | Preserves the single-binary promise. Community members fork one folder to build a bespoke binary. Interface surface lives in a semver'd `pkg/pluginapi` package with capability negotiation. |
 | **Runtime (user)** | `.semiplane/plugins/` — JS/CSS dynamically imported by the SPA; hot-reloaded; installed via web UI | Marketplace UX (Obsidian/Foundry-familiar) without recompiling the binary for a theme or statblock renderer. |
+| **Slot vocabulary** | Plugins declare **slots, never positions** — a closed, versioned list (`toolbar`, `left-sidebar`, `right-panel`, `page-footer`, `dice-tray`) owned by `pkg/pluginapi`. Unknown slots are rejected with a helpful error; a plugin bound to a mode-hidden slot silently doesn't render (documented, not a bug). | Closed vocabulary prevents layout collisions (two plugins claiming `under-the-map`); versioned with the plugin API so new slots are minors. |
 | **Backend sandbox** | Optional WASM plugins via **`wazero`** | Pure-Go WebAssembly runtime — keeps zero-CGo compilation while allowing third-party logic (generators, dice variants) to run safely. |
 
 ---
@@ -268,7 +270,8 @@ my-campaign/
 ├── campaign/                 # GM-only notes, session logs, hidden lore
 ├── rules/                    # Rule hooks, classes, ancestries → drives dice + wizard
 │   ├── classes/barbarian.md
-│   └── hooks/sneak-attack.md
+│   ├── hooks/sneak-attack.md
+│   └── systems/<id>/         # system packs (§3.8): attributes, crit, conditions, tiers — data, not code
 ├── characters/
 │   ├── throg/character.md    # player-owned (ACL: characters/<user>/*)
 │   └── elora/character.md

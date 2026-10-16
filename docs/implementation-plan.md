@@ -99,7 +99,12 @@ grammar with input caps (≤64 chars, count/sides caps, paren depth ≤4) → se
 `CompileHook` (struct Env, `NoTimePatcher`, program cache) → registry + priority
 `Reduce` (dice|flat slots, crit doubles dice only) → conditions registry → port
 spike 7/7 scenario tests as `Faces`-exact goldens under `SEMIPLANE_TEST_SEED`.
-Acceptance: `make fuzz` runs real fuzz targets on grammar + expr compile;
+**Graduation fix (decided 2026-10-16):** the spike hardcodes `Roll(20)` /
+`2d20kh1` / nat-1-auto-miss in `ResolveAttack` while ontology Part I names no
+die sizes in Core — move `attack_die`, auto-miss threshold, and keep mechanics
+into the pack schema (read from `*SystemPack` like crit threshold already is),
+and rename system-named request fields (spike's `MasterySap`) to generic
+pack-key mechanisms. Acceptance: `make fuzz` runs real fuzz targets on grammar + expr compile;
 symbolic-dice seam (`Successes` view) present but numeric-only per spike report §7.
 
 ### E — API surface (`internal/api`, `internal/sse`, `internal/oplog`, `internal/app`)
