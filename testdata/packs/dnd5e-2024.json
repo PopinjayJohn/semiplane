@@ -1,0 +1,13 @@
+{
+  "id": "dnd5e-2024",
+  "attributes": ["str", "dex", "con", "int", "wis", "cha"],
+  "sources": ["weapon_melee", "weapon_ranged", "unarmed", "spell", "class_feature", "other"],
+  "damage_types": ["slashing", "piercing", "bludgeoning", "fire", "cold", "lightning", "thunder", "acid", "poison", "necrotic", "radiant", "psychic", "force"],
+  "resources": ["hp", "rages", "ki", "sorcery_points", "bardic_inspiration", "spell_slots_1", "spell_slots_2", "spell_slots_3", "spell_slots_4", "spell_slots_5"],
+  "attack": {"die": 20, "auto_miss_on": 1, "adv_count": 2, "adv_keep": 1},
+  "crit": {"enabled": true, "die": 20, "threshold": 20},
+  "conditions": ["rage", "reckless", "dodge", "grappled", "incapacitated", "sapped", "slow_10"],
+  "precedence": ["inherent", "ability", "item", "class", "feat", "misc"],
+  "disadv_key": "sapped",
+  "resistance_bands": null
+}

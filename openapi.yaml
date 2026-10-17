@@ -1,0 +1,170 @@
+openapi: 3.1.0
+info:
+  title: Semiplane API
+  version: 0.0.0-slice
+servers:
+  - url: /api/v1
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      responses:
+        '200':
+          description: liveness
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /api/v1/version:
+    get:
+      operationId: version
+      responses:
+        '200':
+          description: build version
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version:
+                    type: string
+  # Planned Phase-1 surface (tech-stack §6). Each stub carries
+  # `x-slice: planned`: scripts/contract.sh skips planned paths until the
+  # stream that owns them (plan Phase 1/E) serves them, so the contract
+  # gate stays green while the surface grows.
+  /api/v1/notes:
+    x-slice: planned
+    get:
+      operationId: listNotes
+      summary: list/filter notes by tag, folder, type
+      parameters:
+        - {name: tag, in: query, schema: {type: string}}
+        - {name: folder, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: note list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notes]
+                properties:
+                  notes:
+                    type: array
+                    items:
+                      type: object
+  /api/v1/notes/{path}:
+    x-slice: planned
+    get:
+      operationId: getNote
+      summary: note content, metadata, backlinks (ETag/If-None-Match)
+      parameters:
+        - {name: path, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: note document
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      operationId: putNote
+      summary: atomic upsert with conflict detection (ErrConflict on hash mismatch)
+      parameters:
+        - {name: path, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: stored note
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/search:
+    x-slice: planned
+    get:
+      operationId: search
+      summary: FTS5 BM25-ranked search over the corpus
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: ranked hits
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [hits]
+                properties:
+                  hits:
+                    type: array
+                    items:
+                      type: object
+  /api/v1/graph:
+    x-slice: planned
+    get:
+      operationId: graph
+      summary: nodes/edges for link visualisation
+      responses:
+        '200':
+          description: link graph
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes, edges]
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                  edges:
+                    type: array
+                    items:
+                      type: object
+  /api/v1/dice/roll:
+    x-slice: planned
+    post:
+      operationId: rollDice
+      summary: server-authoritative roll with seeded replay and tier breakdown
+      responses:
+        '200':
+          description: roll trace
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total]
+                properties:
+                  total:
+                    type: integer
+  /api/v1/reveal:
+    x-slice: planned
+    post:
+      operationId: reveal
+      summary: reveal a GM block, broadcast via SSE block_revealed
+      responses:
+        '200':
+          description: reveal broadcast accepted
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/v1/events:
+    x-slice: planned
+    get:
+      operationId: events
+      summary: SSE stream with Last-Event-ID replay
+      responses:
+        '200':
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string

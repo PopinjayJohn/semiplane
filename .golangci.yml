@@ -1,0 +1,18 @@
+# golangci-lint config (docs/ci.md: config in repo). Keep strict; the race
+# detector and errcheck are non-negotiable (SSE hub + fsnotify goroutines).
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      # _ = f() is an explicit acknowledgement, not an omission.
+      ignore-blank: true
+formatters:
+  enable:
+    - gofmt
+    - goimports

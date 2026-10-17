@@ -1,0 +1,137 @@
+name: ci
+
+# Three tiers, no crons (docs/ci.md):
+#  - every PR: light (lint, unit, build) -> pr-gate
+#  - PRs targeting main (+ manual dispatch): heavy (golden, contract, full e2e,
+#    cross matrix, fuzz smoke, doctor) -> main-gate (THE required check)
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: corepack enable
+      - run: make lint
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: corepack enable
+      - run: make test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: corepack enable
+      - run: make build
+
+  pr-gate:
+    needs: [lint, unit, build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "light tier green"
+
+  golden:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - run: make golden
+
+  contract:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: corepack enable
+      - run: make contract
+
+  e2e:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: corepack enable
+      - run: make e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: e2e-artifacts, path: e2e/test-results, retention-days: 14 }
+
+  cross:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build ./cmd/semiplane
+      - run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -tags plugin_dnd5e ./cmd/semiplane
+
+  fuzz-smoke:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - run: make fuzz
+
+  doctor:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: corepack enable
+      - run: make doctor
+
+  main-gate:
+    if: github.base_ref == 'main' || github.event_name == 'workflow_dispatch'
+    needs: [lint, unit, build, golden, contract, e2e, cross, fuzz-smoke, doctor]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "heavy tier green — merge to main allowed"
