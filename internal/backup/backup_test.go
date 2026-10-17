@@ -58,12 +58,12 @@ func TestSQLiteVACUUMIntoCopiesRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open copy: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	rows, err := db.Query(`SELECT k, v FROM kv ORDER BY k`)
 	if err != nil {
 		t.Fatalf("query copy: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var got map[string]string
 	for rows.Next() {
 		var k, v string
@@ -176,7 +176,7 @@ func TestVaultZipContents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	names := make([]string, 0, len(zr.File))
 	byName := map[string]*zip.File{}
@@ -252,7 +252,7 @@ func TestVaultZipContents(t *testing.T) {
 		}
 		if i == 0 {
 			stamp = f.Modified.UTC()
-			if stamp.Sub(dosZero) > time.Minute || stamp.Sub(time.Now()).Abs() < time.Minute {
+			if stamp.Sub(dosZero) > time.Minute || time.Since(stamp).Abs() < time.Minute {
 				t.Errorf("entry modtime %v is a real timestamp, want the DOS-zero constant %v (writer must zero Modified)", stamp, dosZero)
 			}
 		} else if !f.Modified.UTC().Equal(stamp) {
@@ -300,7 +300,7 @@ func TestVaultSkipsSymlinkSilently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	for _, f := range zr.File {
 		if f.Name == "dangling-link.md" {
 			t.Errorf("symlink archived; want silently skipped")
@@ -334,7 +334,7 @@ func TestCheckHealthyDBAllOk(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := migrate.Apply(db); err != nil {
 		t.Fatalf("apply schema: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestCheckUnmigratedDBReportsFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	vault := t.TempDir()
 
 	res := Check(db, vault)
@@ -396,7 +396,7 @@ func TestCheckInMemoryDBSkipsVacuum(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := migrate.Apply(db); err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestCheckMisconfiguredVaultRootFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := migrate.Apply(db); err != nil {
 		t.Fatal(err)
 	}

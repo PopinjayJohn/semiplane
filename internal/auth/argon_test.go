@@ -183,7 +183,11 @@ func TestWeakPHCStructuralPrecondition(t *testing.T) {
 }
 
 func TestHexHashDeterministic(t *testing.T) {
-	if HashToken("abc") != HashToken("abc") || HashToken("abc") == HashToken("abd") {
-		t.Fatal("HashToken not a stable sha256 fingerprint")
+	stable := HashToken("abc")
+	if stable != HashToken("abc") {
+		t.Fatal("HashToken not deterministic")
+	}
+	if HashToken("abc") == HashToken("abd") {
+		t.Fatal("HashToken collides different inputs")
 	}
 }
