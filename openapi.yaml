@@ -339,6 +339,251 @@ paths:
             text/event-stream:
               schema:
                 type: string
+  # Phase 1/C auth surface. All errors are RFC 7807 application/problem+json.
+  # Session cookie: `semiplane_session` (HttpOnly, SameSite=Lax, Secure per
+  # X-Forwarded-Proto or --force-secure). Login / lan / join set it; logout
+  # clears it. Bearer tokens are also accepted (acl.RequireSession). When OIDC
+  # is unset (issuer/ client id/secret/redirect URL all absent) the two oidc
+  # routes answer 503 problem+json instead of panicking.
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: password login, sets the session cookie
+      description: >-
+        Body is {username, password}. On success mints a session and sets the
+        `semiplane_session` cookie (HttpOnly, SameSite=Lax, Secure per
+        X-Forwarded-Proto / --force-secure) and returns {user_id, role}.
+        Unknown user and wrong password are deliberately identical 401s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string}
+      responses:
+        '200':
+          description: session minted, cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, role]
+                properties:
+                  user_id: {type: string}
+                  role: {type: string, enum: [gm, player]}
+        '400':
+          description: malformed or oversized body
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '401':
+          description: invalid username or password
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '429':
+          description: rate limited
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: revoke the session and clear the cookie
+      description: >-
+        Revokes the presented session (cookie or bearer token) and always
+        clears the `semiplane_session` cookie. Idempotent: 204 even when no
+        valid session exists. Never leaks whether a cookie was alive.
+      responses:
+        '204':
+          description: logged out, cookie cleared
+        '401':
+          description: no valid session (still clears cookie, still 204)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '429':
+          description: rate limited
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+  /api/v1/auth/me:
+    get:
+      operationId: me
+      summary: identity of the session cookie holder
+      description: >-
+        Returns {user_id, role} for the bearer token or session cookie bearer.
+        Requires authentication (acl.RequireSession); missing or invalid
+        session is 401 problem+json.
+      responses:
+        '200':
+          description: current identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, role]
+                properties:
+                  user_id: {type: string}
+                  role: {type: string, enum: [gm, player]}
+        '401':
+          description: authentication required
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '429':
+          description: rate limited
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+  /api/v1/auth/lan:
+    post:
+      operationId: lanCreate
+      summary: mint a 6-digit LAN join code (GM only)
+      description: >-
+        GM session required; players receive 403, anonymous 401. Mints a
+        single-use 6-digit code (10-minute TTL) and returns {code}. Requires
+        authentication.
+      responses:
+        '200':
+          description: code minted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code]
+                properties:
+                  code: {type: string, example: "123456"}
+        '401':
+          description: authentication required
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '403':
+          description: gm role required
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '429':
+          description: rate limited
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '503':
+          description: lan codes not configured
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+  /api/v1/auth/lan/join:
+    post:
+      operationId: lanJoin
+      summary: consume a 6-digit LAN code and start a session
+      description: >-
+        Unauthenticated by design (the code is the credential). Body is
+        {code}. Per-IP rate limited: wrong AND right codes both return 429
+        over the limit so brute force gains nothing. On success mints a
+        session and sets the `semiplane_session` cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, example: "123456"}
+      responses:
+        '200':
+          description: session minted, cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, role]
+                properties:
+                  user_id: {type: string}
+                  role: {type: string, enum: [gm, player]}
+        '400':
+          description: malformed body
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '401':
+          description: code invalid, expired, or already used
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '429':
+          description: rate limited (wrong or right code alike)
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '503':
+          description: lan codes not configured
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+  /api/v1/auth/oidc/start:
+    get:
+      operationId: oidcStart
+      summary: begin OIDC Authorization Code + PKCE flow
+      description: >-
+        Redirects to the OIDC provider's authorization endpoint with state,
+        S256 code_challenge, and nonce. 503 problem+json ("oidc not
+        configured") when no provider is wired (issuer/client id/secret/redirect
+        URL unset) — never a panic.
+      responses:
+        '302':
+          description: redirect to provider authorization endpoint
+        '429':
+          description: rate limited
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '503':
+          description: oidc not configured
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+  /api/v1/auth/oidc/callback:
+    get:
+      operationId: oidcCallback
+      summary: complete OIDC Authorization Code + PKCE flow
+      description: >-
+        Consumes state, exchanges the code, verifies the ID token + nonce,
+        upserts the mapped local user (role "player"), mints a session, sets
+        the cookie, and redirects to "/". Provider errors and identity
+        failures are 401. 503 problem+json when OIDC is not configured.
+      parameters:
+        - {name: state, in: query, required: true, schema: {type: string}}
+        - {name: code, in: query, required: true, schema: {type: string}}
+      responses:
+        '302':
+          description: redirect to "/" after successful login
+        '401':
+          description: oidc login failed
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '429':
+          description: rate limited
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '502':
+          description: provider exchange failed
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '503':
+          description: oidc not configured
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
 components:
   schemas:
     problem:

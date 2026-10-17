@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/PopinjayJohn/semiplane/internal/acl"
 	"github.com/PopinjayJohn/semiplane/internal/app"
@@ -19,6 +20,30 @@ import (
 	"github.com/PopinjayJohn/semiplane/internal/index"
 	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 )
+
+// envDefault returns the env var value when set, else def. Used so flags
+// honor SEMIPLANE_* environment variables (flags > env > defaults).
+func envDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// envBool reports whether the env var key is set to a truthy value.
+func envBool(key string) bool {
+	return strings.EqualFold(os.Getenv(key), "true")
+}
+
+// mustParseDuration parses a duration, panicking on a bad env value so the
+// operator learns at boot rather than at request time.
+func mustParseDuration(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		panic(fmt.Sprintf("invalid duration %q: %v", s, err))
+	}
+	return d
+}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -29,8 +54,16 @@ func main() {
 
 func run(args []string) error {
 	fs := flag.NewFlagSet("semiplane", flag.ContinueOnError)
-	addr := fs.String("addr", ":8080", "listen address")
-	vault := fs.String("vault", ".", "vault directory")
+	addr := fs.String("addr", envDefault("SEMIPLANE_ADDR", ":8080"), "listen address")
+	vault := fs.String("vault", envDefault("SEMIPLANE_VAULT", "."), "vault directory")
+	sessionTTL := fs.Duration("session-ttl", mustParseDuration(envDefault("SEMIPLANE_SESSION_TTL", "24h")), "session lifetime")
+	forceSecure := fs.Bool("force-secure", envBool("SEMIPLANE_FORCE_SECURE"), "always set Secure on session cookies")
+	// OIDC provider config from env/flags. All unset ⇒ auth.Deps.Provider/Config
+	// stay nil and the two OIDC routes answer 503 problem+json (never panic).
+	oidcIssuer := fs.String("oidc-issuer", envDefault("SEMIPLANE_OIDC_ISSUER", ""), "OIDC issuer URL")
+	oidcClientID := fs.String("oidc-client-id", envDefault("SEMIPLANE_OIDC_CLIENT_ID", ""), "OIDC client id")
+	oidcClientSecret := fs.String("oidc-client-secret", envDefault("SEMIPLANE_OIDC_CLIENT_SECRET", ""), "OIDC client secret")
+	oidcRedirectURL := fs.String("oidc-redirect-url", envDefault("SEMIPLANE_OIDC_REDIRECT_URL", ""), "OIDC redirect URL")
 	// Accept flags before or after the subcommand:
 	// `semiplane reindex --vault DIR` and `semiplane --vault DIR reindex`.
 	cmd := "serve"
@@ -61,8 +94,20 @@ func run(args []string) error {
 		return fmt.Errorf("unknown command %q (try: serve, doctor)", cmd)
 	}
 
-	cfg := app.Config{Addr: *addr, VaultDir: *vault}
-	srv := app.NewServer(cfg)
+	cfg := app.Config{
+		Addr:             *addr,
+		VaultDir:         *vault,
+		SessionTTL:       *sessionTTL,
+		ForceSecure:      *forceSecure,
+		OIDCIssuer:       *oidcIssuer,
+		OIDCClientID:     *oidcClientID,
+		OIDCClientSecret: *oidcClientSecret,
+		OIDCRedirectURL:  *oidcRedirectURL,
+	}
+	srv, err := app.NewServer(cfg)
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

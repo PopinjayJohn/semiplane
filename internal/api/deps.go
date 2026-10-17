@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -27,6 +28,10 @@ type Deps struct {
 	Oplog *oplog.Log
 	// PackID names the active system pack for oplog replay ("none" unset).
 	PackID string
+	// VaultCan gates per-item results against the vault ACL (mode "read"/"write").
+	// Wired by internal/app from the shared ACL over the same index DB. Nil
+	// ⇒ every check passes (auth deferred to the auth stream's middleware).
+	VaultCan func(ctx context.Context, path, mode string) bool
 }
 
 // NewMuxWithDeps builds the full /api/v1 mux. A nil Hub or Oplog is
