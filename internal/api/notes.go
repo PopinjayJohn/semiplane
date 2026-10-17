@@ -85,6 +85,19 @@ func (d *Deps) handleListNotes(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, err, "")
 		return
 	}
+	// Derived-content leak fix: a player must never see campaign/* paths in
+	// the list. Filter per-item through the vault ACL (ModeRead). Nil VaultCan
+	// means auth is deferred to middleware; every route here is behind
+	// RequireSession already, so an identity is present.
+	if d.VaultCan != nil {
+		kept := make([]string, 0, len(paths))
+		for _, p := range paths {
+			if d.VaultCan(r.Context(), p, "read") {
+				kept = append(kept, p)
+			}
+		}
+		paths = kept
+	}
 	type entry struct {
 		Path  string `json:"path"`
 		Title string `json:"title"`

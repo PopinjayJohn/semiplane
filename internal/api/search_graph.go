@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 )
 
 // handleSearch runs a BM25-ranked FTS5 query (B's index). ?q= is required
@@ -32,6 +34,17 @@ func (d *Deps) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeRouteError(w, err, "search failed: "+err.Error())
 		return
 	}
+	// Derived-content leak fix: a player must never see campaign/* hits.
+	// Filter per-item through the vault ACL (ModeRead, ≤50 hits, cheap).
+	if d.VaultCan != nil {
+		kept := make([]pluginapi.SearchHit, 0, len(hits))
+		for _, h := range hits {
+			if d.VaultCan(r.Context(), h.Path, "read") {
+				kept = append(kept, h)
+			}
+		}
+		hits = kept
+	}
 	type hit struct {
 		Path    string  `json:"path"`
 		Snippet string  `json:"snippet"`
@@ -56,6 +69,26 @@ func (d *Deps) handleGraph(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeRouteError(w, err, "graph failed: "+err.Error())
 		return
+	}
+	// Derived-content leak fix: a player must never see campaign/* nodes or
+	// edges referencing them. Filter per-item through the vault ACL (ModeRead).
+	if d.VaultCan != nil {
+		readable := make(map[string]bool, len(nodes))
+		kept := nodes[:0]
+		for _, n := range nodes {
+			if d.VaultCan(r.Context(), n.Path, "read") {
+				readable[n.Path] = true
+				kept = append(kept, n)
+			}
+		}
+		nodes = kept
+		edgeKept := edges[:0]
+		for _, e := range edges {
+			if readable[e.Src] && readable[e.Dst] {
+				edgeKept = append(edgeKept, e)
+			}
+		}
+		edges = edgeKept
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "edges": edges})
 }
