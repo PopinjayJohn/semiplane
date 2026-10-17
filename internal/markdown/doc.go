@@ -23,6 +23,7 @@ package markdown
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -102,6 +103,60 @@ func ParseFrontmatter(src []byte) (Doc, error) {
 		}
 	}
 	return Doc{Meta: meta, Body: body}, nil
+}
+
+// TagsFromMeta extracts the `tags` value from parsed frontmatter metadata
+// for storage as a plain JSON string list. Only the TOP-LEVEL `tags` key is
+// read: a nested `semiplane:` mapping's tags-like keys must not leak into
+// the note's tag set.
+//
+// Accepted value shapes (tags carry case; declaration order is preserved —
+// callers that need a canonical form must normalize at save time):
+//
+//	[]string            → as-is
+//	[]any               → string items kept in order; non-string items
+//	                      are dropped (yaml.v3 decodes flow and block
+//	                      lists as []any, never []string)
+//	string scalar       → one tag (matches the old index scalar
+//	                      semantics; no comma splitting)
+//	nil / absent key    → non-nil empty slice
+//
+// Each item is trimmed of surrounding whitespace and single/double quotes;
+// empty results are dropped (preserving the trimmed behavior of the
+// hand-rolled ParseTags this replaces).
+func TagsFromMeta(meta map[string]any) []string {
+	out := make([]string, 0)
+	if meta == nil {
+		return out
+	}
+	trimTags := func(items []any) {
+		for _, raw := range items {
+			s, ok := raw.(string)
+			if !ok {
+				continue // non-string item dropped
+			}
+			s = strings.TrimSpace(s)
+			s = strings.Trim(s, `"'`)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	switch v := meta["tags"].(type) {
+	case []string:
+		anyItems := make([]any, len(v))
+		for i, s := range v {
+			anyItems[i] = s
+		}
+		trimTags(anyItems)
+	case []any:
+		trimTags(v)
+	case string:
+		trimTags([]any{v})
+	default:
+		// nil, not a string/list, or absent: empty by contract.
+	}
+	return out
 }
 
 // cutLine splits the first line (without its ending) from b. It accepts
