@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# contract: boot the real binary on a random port, assert every openapi.yaml
-# path is served with its spec method and undocumented /api/v1 routes are flagged.
+# contract: boot the real binary on a random port and assert every
+# openapi.yaml operation is served with its spec method (spec→live).
+# NOTE: undocumented live routes are NOT yet enumerated/flagged — see
+# "Phase 1 review follow-ups" in docs/implementation-plan.md.
 #
 # Probe rules (Phase 1/E owns this script): a route counts as SERVED when the
 # response proves a handler ran — 2xx/3xx/4xx with a JSON, problem+json, or

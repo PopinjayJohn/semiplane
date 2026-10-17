@@ -158,6 +158,39 @@ anti-flake contract (testids only, no sleeps, zero external calls). Route specs
 include their axe scan via `helpers/axe.ts` (zero serious/critical). Full suite
 gates PR-to-main via `main-gate`; smoke stays advisory on feature branches.
 
+## Phase 1 review follow-ups (2026-10-17, post-1/C+1/E verification)
+
+Verified: both branches green individually and as a union (18/18 Go suites,
+lint/build/contract, doctor, e2e smoke 3/3). Findings accepted for follow-up,
+in priority order:
+
+1. **Wire auth into the server (highest).** 1/C ships `auth.Register(mux, Deps)`
+   + the `acl` middleware chain; 1/E ships `app.NewServer` — neither wires the
+   other, so the whole `/api/v1` surface (incl. GM-only `POST /api/v1/reveal`)
+   is unauthenticated on the merged tree. Follow-up integration PR: register
+   auth routes in `app.NewServer`, mount acl `RequireSession`/`Handler` around
+   the note/reveal routes (map in `internal/acl.Map` style), decide middleware
+   order (auth must sit before rate-limit logging of identities).
+2. **Spec the auth surface.** `openapi.yaml` has zero `/api/v1/auth/*` entries
+   (not even `x-slice: planned` stubs). Add the 7 auth endpoints when follow-up
+   1 lands; also consider implementing `contract.sh`'s promised undocumented-
+   live-route enumeration (comment now corrected to claim only spec→live).
+   Decisions taken 2026-10-17 (integratee rulings): cookie name stays
+   `semiplane_session`; dice breakdown stays opt-in `?breakdown=1`.
+3. **Rate-limit production number.** 600 req/min per `RemoteAddr` is generous
+   (port-included → effectively per-connection in tests). Owner wanted: stream
+   C's auth/ACL wiring should pick the conservative number for prod + move to
+   a trusted X-Forwarded-For policy behind the reverse proxy (note: 1/C's
+   `CookieSecure` already trusts `X-Forwarded-Proto` — same trust decision
+   documented there).
+4. **Thread the real pack id.** `api.Deps.PackID` defaults to `"none"`; whoever
+   wires system packs must thread it through `api.Deps`/board oplog replay.
+5. Cosmetic (no branch rework owed): exact-path ACL Map miss
+   (`GET /api/v1/notes` without trailing slash bypasses a `Map` prefix entry);
+   `lan_codes` duplicate-code edge (2 rows updated → safe rejection, 1-in-1M);
+   `acl.verifySession` uses `time.Now()` directly instead of auth's `timeNow`
+   seam.
+
 ## Phase 2 — Integration & release readiness (2 agents, after Phase 1)
 
 1. **Vault-format freeze**: `semiplane:` frontmatter namespace + marker-block
