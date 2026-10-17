@@ -36,6 +36,21 @@ const (
 // Frontmatter never leaks into the HTML: it is split off before parsing.
 // Unknown roles and invalid frontmatter are hard errors; an empty note
 // renders to "" with empty metadata.
+// META_KEYS registry (stream E follow-up owed; stream F consumes this).
+//
+// Render returns frontmatter metadata as an untyped map[string]any because
+// vault notes carry arbitrary per-system schemas (tech-stack §5: no
+// migrations for new character fields). Known keys produced or consumed by
+// the pipeline — documented here so the note endpoint shape stays stable
+// for stream F (fragment + meta + backlinks + ETag):
+//
+//	title   string   first ATX heading fallback (index.ParseTitle)
+//	tags    []string frontmatter `tags:` flow or block list (index.ParseTags)
+//	semiplane mapping  machine-written namespace only (ingest tools,
+//	                   marker blocks); user prose is never rewritten
+//
+// All other keys pass through untouched from the note's YAML frontmatter.
+// Unknown keys are data, never errors.
 func Render(doc []byte, role Role) (htmlOut string, meta map[string]any, err error) {
 	if !role.Valid() {
 		return "", nil, fmt.Errorf("render: unknown role %q", role)

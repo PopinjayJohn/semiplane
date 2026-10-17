@@ -34,19 +34,22 @@ paths:
                 properties:
                   version:
                     type: string
-  # Planned Phase-1 surface (tech-stack §6). Each stub carries
-  # `x-slice: planned`: scripts/contract.sh skips planned paths until the
-  # stream that owns them (plan Phase 1/E) serves them, so the contract
-  # gate stays green while the surface grows.
+  # Phase-1 surface, served by internal/api (plan Phase 1/E). All errors are
+  # RFC 7807 application/problem+json (tech-stack §6) via the single
+  # error path; success bodies are application/json unless noted.
   /api/v1/notes:
-    x-slice: planned
     get:
       operationId: listNotes
-      summary: list/filter notes by tag, folder, type
+      summary: list notes under a vault prefix
+      description: >-
+        Lists vault-relative .md paths in lexical order. ?folder= (alias
+        ?prefix=) scopes to a vault subtree, e.g. ?folder=campaign. Tag/type
+        filtering is future work and intentionally absent from this version.
+        Each entry carries its display title (first ATX heading, basename
+        fallback per index.ParseTitle).
       parameters:
-        - {name: tag, in: query, schema: {type: string}}
         - {name: folder, in: query, schema: {type: string}}
-        - {name: type, in: query, schema: {type: string}}
+        - {name: prefix, in: query, schema: {type: string}}
       responses:
         '200':
           description: note list
@@ -60,13 +63,26 @@ paths:
                     type: array
                     items:
                       type: object
+                      required: [path, title]
+                      properties:
+                        path: {type: string, example: campaign/intro.md}
+                        title: {type: string, example: Intro}
   /api/v1/notes/{path}:
-    x-slice: planned
     get:
       operationId: getNote
-      summary: note content, metadata, backlinks (ETag/If-None-Match)
+      summary: note document (fragment + meta + backlinks + ETag)
+      description: >-
+        Returns the stream-F wire shape: content (raw Markdown, frontmatter
+        included, for the editor), fragment (role-rendered HTML for the
+        reader), meta (frontmatter mapping; known keys documented in the
+        render.META_KEYS registry comment), backlinks (vault-relative .md
+        paths linking here), and etag (hex content hash, also sent as the
+        ETag response header). ?role=player (default) strips :::gm
+        server-side; ?role=gm keeps secrets. Conditional reads: If-None-Match
+        (quoted, weak, bare, list, or *) yields 304 when the hash matches.
       parameters:
         - {name: path, in: path, required: true, schema: {type: string}}
+        - {name: role, in: query, schema: {type: string, enum: [player, gm]}}
       responses:
         '200':
           description: note document
@@ -74,25 +90,89 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [path, content, fragment, meta, backlinks, etag]
+                properties:
+                  path: {type: string}
+                  content: {type: string}
+                  fragment: {type: string}
+                  meta: {type: object}
+                  backlinks: {type: array, items: {type: string}}
+                  etag: {type: string}
+        '304':
+          description: not modified (If-None-Match hit)
+        '400':
+          description: bad role
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '404':
+          description: unknown path
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
     post:
-      operationId: putNote
-      summary: atomic upsert with conflict detection (ErrConflict on hash mismatch)
+      operationId: postNote
+      summary: atomic upsert with explicit create/update branch
+      description: >-
+        Body is {content, hash}. The hash field branches explicitly (decided
+        ruling, plan Phase 1/E): an EMPTY hash means CREATE — no
+        precondition, 201 on success, 409 when the path already exists (never
+        silent overwrite). A NON-EMPTY hash means UPDATE guarded by the
+        read-time hash — 200 on success, 409 on concurrent external edit
+        (re-read, merge, retry; tech-stack §5). Writes are atomic
+        (temp → fsync → rename) and reindex the derived FTS5/backlink rows
+        best-effort. ?role= selects the returned fragment, as in GET.
       parameters:
         - {name: path, in: path, required: true, schema: {type: string}}
+        - {name: role, in: query, schema: {type: string, enum: [player, gm]}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: {type: string}
+                hash: {type: string, description: empty means create, non-empty means update-or-409}
       responses:
         '200':
-          description: stored note
+          description: updated note (same shape as GET)
           content:
             application/json:
               schema:
                 type: object
+                required: [path, content, fragment, meta, backlinks, etag]
+                properties:
+                  path: {type: string}
+                  content: {type: string}
+                  fragment: {type: string}
+                  meta: {type: object}
+                  backlinks: {type: array, items: {type: string}}
+                  etag: {type: string}
+        '201':
+          description: created note (same shape as GET)
+          content:
+            application/json:
+              schema:
+                type: object
+        '409':
+          description: create-on-existing or stale-hash update
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
   /api/v1/search:
-    x-slice: planned
     get:
       operationId: search
       summary: FTS5 BM25-ranked search over the corpus
+      description: >-
+        Runs the derived SQLite FTS5 index (BM25 rank, snippet highlights).
+        ?q= is required (400 otherwise). ?limit= clamps to 1..50 (default
+        10). MATCH syntax errors retry once as a quoted phrase before
+        failing. Scores are negated BM25 (higher is better).
       parameters:
         - {name: q, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
       responses:
         '200':
           description: ranked hits
@@ -106,11 +186,25 @@ paths:
                     type: array
                     items:
                       type: object
+                      required: [path, snippet, score]
+                      properties:
+                        path: {type: string}
+                        snippet: {type: string}
+                        score: {type: number}
+        '400':
+          description: missing q or bad limit
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
   /api/v1/graph:
-    x-slice: planned
     get:
       operationId: graph
       summary: nodes/edges for link visualisation
+      description: >-
+        Every indexed note as a node (path + title) plus every stored
+        wikilink edge (src → dst), both lexical. Edges may dangle (target
+        with no note row) until the target is created; the vault filesystem
+        is the source of truth.
       responses:
         '200':
           description: link graph
@@ -124,15 +218,44 @@ paths:
                     type: array
                     items:
                       type: object
+                      required: [path, title]
+                      properties:
+                        path: {type: string}
+                        title: {type: string}
                   edges:
                     type: array
                     items:
                       type: object
+                      required: [src, dst]
+                      properties:
+                        src: {type: string}
+                        dst: {type: string}
   /api/v1/dice/roll:
-    x-slice: planned
     post:
       operationId: rollDice
       summary: server-authoritative roll with seeded replay and tier breakdown
+      description: >-
+        Resolves one dice formula with the same engine that later serves
+        /ws/vtt (tech-stack §3.8) and journals the v0 replay fields
+        (seed, faces, contributions, conditions, pack, ontology version) to
+        the oplog, broadcasting dice_rolled on SSE. Seeding is decided:
+        SEMIPLANE_TEST_SEED wins when set and parseable (deterministic E2E +
+        exact goldens); otherwise the request seed wins when non-zero;
+        otherwise the server draws crypto-random. ?breakdown=1 adds the
+        GM-toggle lines: kept/discarded faces plus per-tier dice/flat lines,
+        so not-doubled-on-crit stays auditable.
+      parameters:
+        - {name: breakdown, in: query, schema: {type: string, enum: ['1']}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [formula]
+              properties:
+                formula: {type: string, example: 2d20kh1+5}
+                seed: {type: integer, description: advisory; ignored when SEMIPLANE_TEST_SEED is set}
       responses:
         '200':
           description: roll trace
@@ -140,15 +263,41 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [total]
+                required: [formula, total, faces, seed]
                 properties:
-                  total:
-                    type: integer
+                  formula: {type: string}
+                  total: {type: integer}
+                  faces: {type: array, items: {type: integer}}
+                  seed: {type: integer}
+                  kept: {type: array, items: {type: integer}}
+                  discarded: {type: array, items: {type: integer}}
+                  breakdown: {type: array, items: {type: string}}
+        '400':
+          description: missing formula or invalid dice expression
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
   /api/v1/reveal:
-    x-slice: planned
     post:
       operationId: reveal
       summary: reveal a GM block, broadcast via SSE block_revealed
+      description: >-
+        Body is {page, blockId}. The page must exist (404 otherwise); its
+        GM fragment is pre-rendered server-side and broadcast as a
+        block_revealed SSE event {page, blockId, html} (tech-stack §3.2:
+        never trust-the-client). v0 broadcasts the page GM fragment with
+        the block id; per-block HTML slicing is a later slice. Returns the
+        published SSE event id for Last-Event-ID resumption.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page, blockId]
+              properties:
+                page: {type: string}
+                blockId: {type: string}
       responses:
         '200':
           description: reveal broadcast accepted
@@ -156,11 +305,33 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ok, eventId]
+                properties:
+                  ok: {type: boolean}
+                  eventId: {type: integer}
+        '400':
+          description: missing page or blockId
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '404':
+          description: unknown page
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
   /api/v1/events:
-    x-slice: planned
     get:
       operationId: events
       summary: SSE stream with Last-Event-ID replay
+      description: >-
+        text/event-stream broadcast (tech-stack §3.5, §7): dice_rolled,
+        block_revealed, and future low-frequency frames. The Last-Event-ID
+        header (or ?lastEventId= fallback; header wins, unparsable values
+        replay from 0) replays every kept event after that id, so a client
+        that slept through a roll sees it on reconnect. Event ids are
+        server-assigned monotonic sequence numbers.
+      parameters:
+        - {name: lastEventId, in: query, schema: {type: integer}}
       responses:
         '200':
           description: text/event-stream
@@ -168,3 +339,13 @@ paths:
             text/event-stream:
               schema:
                 type: string
+components:
+  schemas:
+    problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: {type: string, example: about:blank}
+        title: {type: string, example: not found}
+        status: {type: integer, example: 404}
+        detail: {type: string}
