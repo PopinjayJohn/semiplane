@@ -114,6 +114,85 @@ func TestParseFrontmatter(t *testing.T) {
 			}
 		})
 	}
+	// TagsFromMeta: tags extraction from parsed frontmatter meta.
+	// yaml.v3 decodes flow AND block lists as []any, never []string —
+	// the []string arm exists for hand-built maps.
+	t.Run("tags", func(t *testing.T) {
+		cases := []struct {
+			name string
+			meta map[string]any
+			want []string
+		}{
+			{"nil map", nil, []string{}},
+			{"no key", map[string]any{}, []string{}},
+			{"nil value", map[string]any{"tags": nil}, []string{}},
+			{"absent + other keys", map[string]any{"title": "x"}, []string{}},
+			{"flow list []any", map[string]any{"tags": []any{"a", "b"}}, []string{"a", "b"}},
+			{"block list []any", map[string]any{"tags": []any{"a", "b", "c"}}, []string{"a", "b", "c"}},
+			{"typed []string", map[string]any{"tags": []string{"a", "b"}}, []string{"a", "b"}},
+			{"scalar", map[string]any{"tags": "solo"}, []string{"solo"}},
+			{"non-string items dropped", map[string]any{"tags": []any{"a", 2, true, "b"}}, []string{"a", "b"}},
+			{"mixed typed list", map[string]any{"tags": []string{"q"}, "title": "t"}, []string{"q"}},
+			{"quoted trimmed", map[string]any{"tags": []any{"\"a\"", "'b'", " c "}}, []string{"a", "b", "c"}},
+			{"empty items dropped", map[string]any{"tags": []any{"", "  ", "\"\""}}, []string{}},
+			{"non string non list", map[string]any{"tags": 42}, []string{}},
+			{"nested no leak", map[string]any{"semiplane": map[string]any{"tags": []any{"x", "y"}}}, []string{}},
+			{
+				"top level wins over nested",
+				map[string]any{
+					"tags":      []any{"a"},
+					"semiplane": map[string]any{"tags": []any{"x", "y"}},
+				},
+				[]string{"a"},
+			},
+			{"scalar no comma split", map[string]any{"tags": "a, b"}, []string{"a, b"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := TagsFromMeta(tc.meta)
+				if got == nil {
+					t.Fatal("TagsFromMeta returned nil, want non-nil empty slice")
+				}
+				if len(tc.want) == 0 && len(got) == 0 {
+					return
+				}
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("TagsFromMeta(%#v) = %#v, want %#v", tc.meta, got, tc.want)
+				}
+			})
+		}
+	})
+
+	// TagsFromMeta over real parsed docs: the shapes the index will
+	// actually feed it.
+	t.Run("tags from parsed docs", func(t *testing.T) {
+		cases := []struct {
+			name string
+			src  string
+			want []string
+		}{
+			{"flow", "---\ntags: [a, b]\n---\nbody", []string{"a", "b"}},
+			{"block", "---\ntags:\n  - a\n  - b\n---\n", []string{"a", "b"}},
+			{"nested semiplane no leak", "---\nsemiplane:\n  tags: [x]\ntags: [a]\n---\n", []string{"a"}},
+			{"nested only no leak", "---\nsemiplane:\n  tags: [x]\n---\n", []string{}},
+			{"scalar", "---\ntags: solo\n---\n", []string{"solo"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				doc, err := ParseFrontmatter([]byte(tc.src))
+				if err != nil {
+					t.Fatalf("ParseFrontmatter: %v", err)
+				}
+				got := TagsFromMeta(doc.Meta)
+				if len(tc.want) == 0 && len(got) == 0 {
+					return
+				}
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("TagsFromMeta(ParseFrontmatter(%q)) = %#v, want %#v", tc.src, got, tc.want)
+				}
+			})
+		}
+	})
 }
 
 func TestWikilinks(t *testing.T) {

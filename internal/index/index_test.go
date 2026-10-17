@@ -250,6 +250,8 @@ func TestParseTags(t *testing.T) {
 		in   string
 		want []string
 	}{
+		// Top-level shapes still supported after the swap to
+		// markdown.ParseFrontmatter + TagsFromMeta.
 		{"flow", "---\ntags: [a, b]\n---\nbody", []string{"a", "b"}},
 		{"flow quoted", "---\ntags: [\"a\", 'b' ]\n---\n", []string{"a", "b"}},
 		{"flow empty", "---\ntags: []\n---\n", []string{}},
@@ -257,9 +259,25 @@ func TestParseTags(t *testing.T) {
 		{"block quoted", "---\ntags:\n  - \"a\"\n  - 'b'\n---\n", []string{"a", "b"}},
 		{"absent", "---\ntitle: x\n---\n", []string{}},
 		{"no frontmatter", "# T\ntags: [a]\n", []string{}},
-		{"unclosed", "---\ntags: [a]\n", []string{}},
-		{"multiline flow unsupported", "---\ntags: [a,\n b]\n---\n", []string{}},
 		{"scalar", "---\ntags: solo\n---\n", []string{"solo"}},
+
+		// Fidelity over the old hand-rolled parser: full YAML is now
+		// understood.
+		{"multiline flow", "---\ntags: [a,\n b]\n---\n", []string{"a", "b"}},
+		{"yaml end marker", "---\ntags: [a, b]\n...\n", []string{"a", "b"}},
+		{"bom", "\xef\xbb\xbf---\ntags: [m]\n---\n", []string{"m"}},
+
+		// Deliberate swallow contract: author-typo YAML yields empty,
+		// never an error or panic.
+		{"unclosed", "---\ntags: [a]\n", []string{}},
+		{"invalid yaml", "---\ntags: [unclosed\n---\n", []string{}},
+		{"crlf frontmatter", "---\r\ntags: [a, b]\r\n---\r\nbody\r\n", []string{"a", "b"}},
+		{"crlf block", "---\r\ntags:\r\n  - c\r\n  - d\r\n---\r\n", []string{"c", "d"}},
+
+		// Nested namespace must not leak: a `semiplane:` map's
+		// tags-like key is not the note's tag set.
+		{"nested semiplane no leak", "---\nsemiplane:\n  tags: [x, y]\ntags: [a, b]\n---\n", []string{"a", "b"}},
+		{"nested only no leak", "---\nsemiplane:\n  tags:\n    - z\n---\n", []string{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

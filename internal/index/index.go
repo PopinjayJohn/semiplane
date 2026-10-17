@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PopinjayJohn/semiplane/internal/markdown"
 	"github.com/PopinjayJohn/semiplane/internal/migrate"
 	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 	_ "modernc.org/sqlite"
@@ -78,7 +79,6 @@ func New(db *sql.DB) *Index {
 var (
 	linkRe    = regexp.MustCompile(`\[\[([^\]|#]+)(?:\|[^\]]*)?\]`)
 	headingRe = regexp.MustCompile(`^#{1,6}\s+(.+)$`)
-	blockItem = regexp.MustCompile(`^\s*-\s+(.+)$`)
 )
 
 // ParseLinks extracts normalized wikilink targets from Markdown content.
@@ -131,84 +131,21 @@ func ParseTitle(notePath, content string) string {
 	return strings.TrimSuffix(path.Base(notePath), ".md")
 }
 
-// ParseTags parses leading YAML frontmatter (`---` ... `---`) for a `tags:`
-// key. This is a minimal hand-rolled parser supporting exactly two shapes:
+// ParseTags parses leading YAML frontmatter via the markdown package's
+// ParseFrontmatter and extracts the top-level `tags:` key with
+// TagsFromMeta (see that function for accepted value shapes).
 //
-//	tags: [a, b]      (single-line flow list)
-//	tags:             (block list)
-//	  - a
-//	  - b
-//
-// Anything else (no frontmatter, no tags key, multi-line flow, parse
-// failure) yields an empty slice, never an error. Items are trimmed of
-// surrounding whitespace and single/double quotes. A single-line scalar
-// (`tags: foo`) is accepted as one tag.
+// Deliberate swallow: a ParseFrontmatter error (invalid YAML such as
+// `tags: [unclosed`) yields an empty slice, never an error or panic — the
+// index must never fail Upsert because of an author typo. Strict callers
+// that care about malformed frontmatter use ParseFrontmatter directly and
+// get the hard error there.
 func ParseTags(content string) []string {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+	doc, err := markdown.ParseFrontmatter([]byte(content))
+	if err != nil {
 		return []string{}
 	}
-	end := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			end = i
-			break
-		}
-	}
-	if end < 0 {
-		return []string{}
-	}
-	fm := lines[1:end]
-	for i, ln := range fm {
-		trimmed := strings.TrimSpace(ln)
-		if !strings.HasPrefix(trimmed, "tags:") {
-			continue
-		}
-		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "tags:"))
-		if strings.HasPrefix(rest, "[") {
-			if !strings.HasSuffix(rest, "]") {
-				return []string{}
-			}
-			inner := strings.TrimSpace(rest[1 : len(rest)-1])
-			if inner == "" {
-				return []string{}
-			}
-			var out []string
-			for _, p := range strings.Split(inner, ",") {
-				t := strings.TrimSpace(strings.Trim(strings.TrimSpace(p), `"'`))
-				if t != "" {
-					out = append(out, t)
-				}
-			}
-			if out == nil {
-				return []string{}
-			}
-			return out
-		}
-		if rest != "" {
-			t := strings.TrimSpace(strings.Trim(rest, `"'`))
-			if t == "" {
-				return []string{}
-			}
-			return []string{t}
-		}
-		var out []string
-		for _, ln2 := range fm[i+1:] {
-			m := blockItem.FindStringSubmatch(ln2)
-			if m == nil {
-				break
-			}
-			t := strings.TrimSpace(strings.Trim(strings.TrimSpace(m[1]), `"'`))
-			if t != "" {
-				out = append(out, t)
-			}
-		}
-		if out == nil {
-			return []string{}
-		}
-		return out
-	}
-	return []string{}
+	return markdown.TagsFromMeta(doc.Meta)
 }
 
 // inImmediateTx runs fn on a single pinned connection inside an explicit
