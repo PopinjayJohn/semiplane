@@ -1,6 +1,8 @@
 import type { Identity, LoginBody } from './types.js';
 import { request } from './client.js';
 
+export type { Identity };
+
 export async function login(body: LoginBody): Promise<Identity> {
   return request<Identity>('/api/v1/auth/login', {
     method: 'POST',
