@@ -1,0 +1,226 @@
+/* web/src/lib/tokens.css — Semiplane design tokens (tech-stack §9).
+ *
+ * CSS custom properties ONLY. Components consume `var(--sp-*)`; community
+ * skins override through `[data-theme='parchment']` — never component CSS.
+ * No hardcoded palette values may appear in components or inline styles.
+ *
+ * Contrast ratios are recorded next to every color token declaration.
+ * Default base: the prototype dark surface `--sp-bg` (#0e1116).
+ * The parchment block evaluates against its own `--sp-bg` (#f5f0e6).
+ * Non-color tokens carry "n/a" (no contrast applies).
+ */
+
+/* ── root: default dark skin (prototype palette #0e1116) ── */
+
+:root {
+  /* contrast 1.00:1 vs --sp-bg (surface itself — reference base) */
+  --sp-bg: #0e1116;
+
+  /* contrast 1.09:1 vs --sp-bg (raised surface — structural chrome) */
+  --sp-bg-raised: #161b22;
+
+  /* contrast 1.20:1 vs --sp-bg (overlay surface — structural chrome) */
+  --sp-bg-overlay: #1c2330;
+
+  /* contrast 1.49:1 vs --sp-bg (border — structural chrome) */
+  --sp-border: #2a3342;
+
+  /* contrast 2.03:1 vs --sp-bg (strong border — structural chrome) */
+  --sp-border-strong: #3b4760;
+
+  /* contrast 15.72:1 vs --sp-bg (AAA) */
+  --sp-fg: #e8eaf0;
+
+  /* contrast 7.52:1 vs --sp-bg (AAA) */
+  --sp-fg-muted: #9aa4b5;
+
+  /* contrast 4.01:1 vs --sp-bg (AA large text only) */
+  --sp-fg-faint: #6b7484;
+
+  /* contrast 7.51:1 vs --sp-bg (AAA) */
+  --sp-accent: #7aa2f7;
+
+  /* contrast 1.00:1 vs --sp-bg (text-on-accent only, never text-on-bg) */
+  --sp-accent-contrast: #0b1020;
+
+  /* contrast 7.15:1 vs --sp-bg (AAA) */
+  --sp-danger: #f7768e;
+
+  /* contrast 9.46:1 vs --sp-bg (AAA) */
+  --sp-warn: #e0af68;
+
+  /* contrast 10.35:1 vs --sp-bg (AAA) */
+  --sp-ok: #9ece6a;
+
+  /* contrast 8.18:1 vs --sp-bg (AAA) */
+  --sp-gm: #bb9af7;
+
+  /* contrast 11.02:1 vs --sp-bg (AAA) */
+  --sp-player: #7dcfff;
+
+  /* contrast 10.35:1 vs --sp-bg (AAA) */
+  --sp-crit: #9ece6a;
+
+  /* contrast 7.15:1 vs --sp-bg (AAA) */
+  --sp-fumble: #f7768e;
+
+  /* contrast 1.71:1 vs --sp-bg (below AA — subtle secret-border chrome) */
+  --sp-secret-border: #333c4d;
+
+  /* contrast 1.09:1 vs --sp-bg (slot chrome — structural region bg) */
+  --sp-slot-toolbar: #161b22;
+
+  /* contrast 1.09:1 vs --sp-bg (slot chrome — structural region bg) */
+  --sp-slot-sidebar: #161b22;
+
+  /* contrast 1.20:1 vs --sp-bg (slot chrome — structural region bg) */
+  --sp-slot-panel: #1c2330;
+
+  /* contrast 1.09:1 vs --sp-bg (slot chrome — structural region bg) */
+  --sp-slot-footer: #161b22;
+
+  /* contrast 1.20:1 vs --sp-bg (slot chrome — structural region bg) */
+  --sp-slot-tray: #1c2330;
+
+  /* n/a — length token, no contrast */
+  --sp-radius: 10px;
+
+  /* n/a — length token, no contrast */
+  --sp-radius-sm: 6px;
+
+  /* n/a — font stack, no contrast */
+  --sp-font: 'Inter', system-ui, sans-serif;
+
+  /* n/a — font stack, no contrast */
+  --sp-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ── light skin: parchment ── */
+
+[data-theme='parchment'] {
+  /* contrast 1.00:1 vs --sp-bg (parchment — reference base) */
+  --sp-bg: #f5f0e6;
+
+  /* contrast 1.09:1 vs --sp-bg (parchment — structural chrome) */
+  --sp-bg-raised: #efe6d4;
+
+  /* contrast 1.22:1 vs --sp-bg (parchment — structural chrome) */
+  --sp-bg-overlay: #e7dac0;
+
+  /* contrast 1.52:1 vs --sp-bg (parchment — structural chrome) */
+  --sp-border: #d3c4a3;
+
+  /* contrast 2.22:1 vs --sp-bg (parchment — structural chrome) */
+  --sp-border-strong: #b3a182;
+
+  /* contrast 13.52:1 vs --sp-bg (parchment — AAA) */
+  --sp-fg: #2b2417;
+
+  /* contrast 5.52:1 vs --sp-bg (parchment — AA) */
+  --sp-fg-muted: #6b5f45;
+
+  /* contrast 2.88:1 vs --sp-bg (parchment — below AA, faint annotation only) */
+  --sp-fg-faint: #9a8d6f;
+
+  /* contrast 6.70:1 vs --sp-bg (parchment — AA) */
+  --sp-accent: #6b4f1d;
+
+  /* contrast 1.00:1 vs --sp-bg (parchment — text-on-accent only) */
+  --sp-accent-contrast: #f5f0e6;
+
+  /* contrast 7.05:1 vs --sp-bg (parchment — AAA) */
+  --sp-danger: #942a2a;
+
+  /* contrast 4.31:1 vs --sp-bg (parchment — AA large text only) */
+  --sp-warn: #8a6d1d;
+
+  /* contrast 6.23:1 vs --sp-bg (parchment — AA) */
+  --sp-ok: #3f6212;
+
+  /* contrast 6.26:1 vs --sp-bg (parchment — AA) */
+  --sp-gm: #6d28d9;
+
+  /* contrast 5.22:1 vs --sp-bg (parchment — AA) */
+  --sp-player: #0369a1;
+
+  /* contrast 6.23:1 vs --sp-bg (parchment — AA) */
+  --sp-crit: #3f6212;
+
+  /* contrast 7.05:1 vs --sp-bg (parchment — AAA) */
+  --sp-fumble: #942a2a;
+
+  /* contrast 2.12:1 vs --sp-bg (parchment — below AA, subtle chrome) */
+  --sp-secret-border: #b9a578;
+
+  /* contrast 1.09:1 vs --sp-bg (parchment — slot chrome — structural region bg) */
+  --sp-slot-toolbar: #efe6d4;
+
+  /* contrast 1.09:1 vs --sp-bg (parchment — slot chrome — structural region bg) */
+  --sp-slot-sidebar: #efe6d4;
+
+  /* contrast 1.22:1 vs --sp-bg (parchment — slot chrome — structural region bg) */
+  --sp-slot-panel: #e7dac0;
+
+  /* contrast 1.09:1 vs --sp-bg (parchment — slot chrome — structural region bg) */
+  --sp-slot-footer: #efe6d4;
+
+  /* contrast 1.22:1 vs --sp-bg (parchment — slot chrome — structural region bg) */
+  --sp-slot-tray: #e7dac0;
+
+  /* n/a — length token, no contrast */
+  --sp-radius: 10px;
+
+  /* n/a — length token, no contrast */
+  --sp-radius-sm: 6px;
+
+  /* n/a — font stack, no contrast */
+  --sp-font: 'Inter', system-ui, sans-serif;
+
+  /* n/a — font stack, no contrast */
+  --sp-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+body {
+  background: var(--sp-bg);
+  color: var(--sp-fg);
+  font-family: var(--sp-font);
+}
+
+.sp-card {
+  background: var(--sp-bg-raised);
+  border: 1px solid var(--sp-border);
+  border-radius: var(--sp-radius);
+}
+
+.sp-muted {
+  color: var(--sp-fg-muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Reduced motion: no shimmer, transitions, or parallax (tech-stack §9). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}
+
+/* TV viewport: 64 px touch targets (tech-stack §9). */
+[data-viewport='tv'] button,
+[data-viewport='tv'] input {
+  min-height: 64px;
+  min-width: 64px;
+}

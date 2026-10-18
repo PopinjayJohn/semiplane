@@ -1,7 +1,10 @@
 @import 'tailwindcss';
+@import './lib/tokens.css';
 
-/* Design tokens live here (tech-stack §9 theming seams: CSS custom properties). */
-:root {
-  --semiplane-bg: #fafaf9;
-  --semiplane-fg: #1c1917;
-}
+/*
+ * Legacy --semiplane-* design vars removed (tech-stack §9).
+ * Design tokens now live in web/src/lib/tokens.css as --sp-* custom
+ * properties; components consume them via var(). Community skins override
+ * them through [data-theme='parchment'] — never through component CSS.
+ * tokens.css already owns the `body` baseline (background, color, font).
+ */
