@@ -14,6 +14,7 @@
   import { session } from './lib/stores/session.svelte.ts';
   import Shell from './lib/Shell.svelte';
   import Login from './routes/Login.svelte';
+  import WikiReader from './routes/WikiReader.svelte';
 
   let pathname = $state(window.location.pathname);
 
@@ -69,13 +70,7 @@
             </button>
           </div>
         {:else}
-          <!-- WikiReader renders here (slice S3). Placeholder until then. -->
-          <div data-testid="wiki-placeholder" class="wiki-placeholder">
-            <p data-testid="wiki-placeholder-text">
-              WikiReader for <strong>{pathname.slice('/wiki/'.length) || '(root)'}</strong>
-              lands in slice S3.
-            </p>
-          </div>
+          <WikiReader path={pathname.slice('/wiki/'.length)} />
         {/if}
 
         <div class="app-meta">
@@ -158,13 +153,6 @@
   .app-role {
     margin: 0;
     font-size: 0.875rem;
-    color: var(--sp-fg-muted);
-  }
-  .wiki-placeholder {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-width: 420px;
     color: var(--sp-fg-muted);
   }
 </style>
