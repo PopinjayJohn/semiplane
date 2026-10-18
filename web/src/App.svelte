@@ -18,6 +18,15 @@
   import WikiReader from './routes/WikiReader.svelte';
 
   let pathname = $state(window.location.pathname);
+  let EditorComponent = $state<any>(null);
+
+  $effect(() => {
+    if (pathname.startsWith('/edit/') && !EditorComponent) {
+      import('./routes/Editor.svelte').then((mod) => {
+        EditorComponent = mod.default;
+      });
+    }
+  });
 
   $effect(() => {
     const onPop = () => {
@@ -43,7 +52,7 @@
   });
 
   function isAppRoute() {
-    return pathname === '/' || pathname.startsWith('/wiki/');
+    return pathname === '/' || pathname.startsWith('/wiki/') || pathname.startsWith('/edit/');
   }
 
   function go(to: string) {
@@ -70,9 +79,20 @@
             >
               Open wiki
             </button>
+            <button
+              data-testid="app-open-editor"
+              onclick={() => go('/edit/welcome')}
+              class="app-button"
+            >
+              Open editor
+            </button>
           </div>
-        {:else}
+        {:else if pathname.startsWith('/wiki/')}
           <WikiReader path={pathname.slice('/wiki/'.length)} />
+        {:else if pathname.startsWith('/edit/') && EditorComponent}
+          <EditorComponent path={pathname.slice('/edit/'.length)} />
+        {:else}
+          <div data-testid="app-notfound">Not found</div>
         {/if}
 
         <div class="app-meta">

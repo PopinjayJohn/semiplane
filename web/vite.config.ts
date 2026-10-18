@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 // Thin slice: SPA builds to web/dist, then `make embed` copies it into the Go binary.
 export default defineConfig({
   plugins: [svelte(), tailwindcss()],
+  test: {
+    environment: 'jsdom', // TipTap Editor (ProseMirror) needs a DOM for round-trip tests
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true

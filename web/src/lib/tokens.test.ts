@@ -10,7 +10,7 @@ async function readFile(path: string): Promise<string> {
   );
 }
 
-const css = await readFile(new URL('./tokens.css', import.meta.url).pathname);
+const css = await readFile('src/lib/tokens.css');
 
 describe('design tokens (tokens.css)', () => {
   it('declares every surface, border, text, accent, role, dice, slot and shape token', () => {
