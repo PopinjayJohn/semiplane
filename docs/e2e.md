@@ -46,12 +46,12 @@ make e2e
 
 | Spec | Verifies | Landed with PR |
 |---|---|---|
-| `01-auth.spec.ts` | password login/logout, `HttpOnly`+`SameSite` cookie flags, invalid creds = uninformative 401, LAN code single-use + 429 rate-limit on join, OIDC 503 when unconfigured | #N |
-| `02-acl.spec.ts` | cross-user `characters/<user>/*` write 403, `campaign/*` read 403 for players (200 for GM), token scope rejection = 401 (not 403) | #N |
-| `03-wiki.spec.ts` | note GET round-trip incl. ETag/304, 409 on empty-hash POST to existing path, search/graph served (player search shows no campaign/* rows), list endpoint works | #N |
-| `04-gm-secrets.spec.ts` | `role=player` strips `:::gm` in fragment; `role=gm` keeps it; bad role 400 (server-side property) | #N |
-| `05-realtime.spec.ts` | EventSource receives block_revealed/dice_rolled; Last-Event-ID replay on reconnect; reveal 403 for player | #N |
-| `06-dice.spec.ts` | default response omits breakdown; `?breakdown=1` includes kept/discarded/breakdown; seeded exact total+faces via SEMIPLANE_TEST_SEED; invalid formula 400 | #N |
+| `01-auth.spec.ts` | password login/logout, `HttpOnly`+`SameSite` cookie flags, invalid creds = uninformative 401, LAN code single-use + 429 rate-limit on join, OIDC 503 when unconfigured | #5 |
+| `02-acl.spec.ts` | cross-user `characters/<user>/*` write 403, `campaign/*` read 403 for players (200 for GM), token scope rejection = 401 (not 403) | #5 |
+| `03-wiki.spec.ts` | note GET round-trip incl. ETag/304, 409 on empty-hash POST to existing path, search/graph served (player search shows no campaign/* rows), list endpoint works | #5 |
+| `04-gm-secrets.spec.ts` | `role=player` strips `:::gm` in fragment; `role=gm` keeps it; bad role 400 (server-side property) | #5 |
+| `05-realtime.spec.ts` | EventSource receives block_revealed/dice_rolled; Last-Event-ID replay on reconnect; reveal 403 for player | #5 |
+| `06-dice.spec.ts` | default response omits breakdown; `?breakdown=1` includes kept/discarded/breakdown; seeded exact total+faces via SEMIPLANE_TEST_SEED; invalid formula 400 | #5 |
 | `07-editor.spec.ts` | TipTap edit → clean Markdown persisted to disk (round-trip), live preview on cursor line | pending-blocked-on-F |
 | `08-creator.spec.ts` | wizard steps driven by `rules/` metadata, point-buy validation, creates a character page the player then owns | pending-blocked-on-F |
 | `09-plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft | pending-blocked-on-F |
