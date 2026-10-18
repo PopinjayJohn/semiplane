@@ -44,19 +44,19 @@ make e2e
 
 ## Spec inventory (each maps to a tech-stack acceptance point)
 
-| Spec | Verifies |
-|---|---|
-| `auth.spec.ts` | password login/logout, `HttpOnly`+`SameSite` cookie flags, LAN 6-digit join, API token scope rejection (`characters:write` on read-only token) |
-| `acl.spec.ts` | `characters/<user>/*` ownership: player B cannot read/edit player A's sheet (403/404 contract) |
-| `wiki.spec.ts` | wikilink resolution, backlinks panel, FTS5 search ranking, callout rendering |
-| `gm-secrets.spec.ts` | `:::gm` block stripped for player context, visible for GM; GM clicks reveal → player sees the block appear via SSE without reload |
-| `realtime.spec.ts` | two contexts on one note: edit in GM context → player context updates via SSE; external file edit on disk → UI offers overwrite/reload/save-copy (never silent last-write-wins) |
-| `editor.spec.ts` | TipTap edit → clean Markdown persisted to disk (round-trip), live preview on cursor line |
-| `dice.spec.ts` | seeded roll returns exact total; roll breakdown shows components (`+4 STR +2 weapon +2 rage`-style provenance per §3.8/ontology); `/api/v1/dice/roll` parity with UI |
-| `creator.spec.ts` | wizard steps driven by `rules/` metadata (class/ancestry/background pick lists from the corpus), point-buy validation, creates a character page the player then owns |
-| `plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft |
-| `tv.spec.ts` | TV viewport never renders `:::gm` content under any mode/viewport pairing; glanceable NOW banner present |
-| `a11y.spec.ts` | axe scans (WCAG 2.2 AA tags) on shell + each route: zero serious/critical; keyboard-only pass of nav, reveal, dice, wizard; `aria-live` announcements asserted for SSE reveal + roll results; reduced-motion honored |
+| Spec | Verifies | Landed with PR |
+|---|---|---|
+| `01-auth.spec.ts` | password login/logout, `HttpOnly`+`SameSite` cookie flags, invalid creds = uninformative 401, LAN code single-use + 429 rate-limit on join, OIDC 503 when unconfigured | #N |
+| `02-acl.spec.ts` | cross-user `characters/<user>/*` write 403, `campaign/*` read 403 for players (200 for GM), token scope rejection = 401 (not 403) | #N |
+| `03-wiki.spec.ts` | note GET round-trip incl. ETag/304, 409 on empty-hash POST to existing path, search/graph served (player search shows no campaign/* rows), list endpoint works | #N |
+| `04-gm-secrets.spec.ts` | `role=player` strips `:::gm` in fragment; `role=gm` keeps it; bad role 400 (server-side property) | #N |
+| `05-realtime.spec.ts` | EventSource receives block_revealed/dice_rolled; Last-Event-ID replay on reconnect; reveal 403 for player | #N |
+| `06-dice.spec.ts` | default response omits breakdown; `?breakdown=1` includes kept/discarded/breakdown; seeded exact total+faces via SEMIPLANE_TEST_SEED; invalid formula 400 | #N |
+| `07-editor.spec.ts` | TipTap edit → clean Markdown persisted to disk (round-trip), live preview on cursor line | pending-blocked-on-F |
+| `08-creator.spec.ts` | wizard steps driven by `rules/` metadata, point-buy validation, creates a character page the player then owns | pending-blocked-on-F |
+| `09-plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft | pending-blocked-on-F |
+| `10-tv.spec.ts` | TV viewport (64px targets) never renders `:::gm` content under any mode/viewport pairing; glanceable NOW banner present | pending-blocked-on-F |
+| `11-a11y.spec.ts` | axe scans (WCAG 2.2 AA) on shell + each route: zero serious/critical; keyboard-only pass; `aria-live` for SSE reveal + roll results; reduced-motion honored | pending-blocked-on-F |
 
 ## Rules of the suite (anti-flake contract)
 
