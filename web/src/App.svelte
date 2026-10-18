@@ -14,6 +14,7 @@
   import { session } from './lib/stores/session.svelte.ts';
   import Shell from './lib/Shell.svelte';
   import Login from './routes/Login.svelte';
+  import LiveRegion from './components/LiveRegion.svelte';
   import WikiReader from './routes/WikiReader.svelte';
 
   let pathname = $state(window.location.pathname);
@@ -52,6 +53,7 @@
 </script>
 
 <main data-testid="app-root" class="app">
+  <LiveRegion />
   {#if session.loaded && session.isAuthenticated && isAppRoute()}
     <Shell>
       <div data-testid="app-body" class="app-body">

@@ -17,6 +17,8 @@
   import { getNote, postNote, search } from '../lib/api/notes.js';
   import { reveal } from '../lib/api/dice.js';
   import { APIError } from '../lib/api/client.js';
+  import { sse } from '../lib/stores/sse.svelte.ts';
+  import { announce } from '../lib/announce.ts';
   import type { NoteDoc, SearchHit } from '../lib/api/types.js';
 
   let { path } = $props<{ path: string }>();
@@ -156,10 +158,10 @@
 
   /* --- GM block reveal ---
 
-     One EventSource per page listens for block_revealed SSE events
+     Subscribes to the shared SSE store for block_revealed events
      {page, blockId, html}; events matching a rendered block paint event.html
-     into its reveal-target and clear the pending placeholder. Painted
-     content is never stripped client-side.
+     into its reveal-target and announce via aria-live. Painted content is
+     never stripped client-side. (S4: one SSE connection shared across pages.)
    */
 
   function blockState(blockId: string): RevealState {
@@ -179,22 +181,19 @@
   $effect(() => {
     const p = page;
     if (!p) return;
-    const es = new EventSource('/api/v1/events');
-    es.addEventListener('block_revealed', (event: MessageEvent) => {
-      let payload: { page: string; blockId: string; html: string };
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (payload.page !== p) return;
-      const state = revealState.get(payload.blockId);
+    const unsub = sse.on('block_revealed', (event) => {
+      if (event.type !== 'block_revealed') return;
+      if (event.page !== p) return;
+      const state = revealState.get(event.blockId);
       if (!state) return;
-      revealState.set(payload.blockId, { ...state, html: payload.html, revealed: true });
+      revealState.set(event.blockId, {
+        ...state,
+        html: event.html,
+        revealed: true,
+      });
+      announce(`GM revealed “${event.blockId}” on ${p}`);
     });
-    return () => {
-      es.close();
-    };
+    return () => unsub();
   });
 
   /* --- gm block enumeration from raw content ---
