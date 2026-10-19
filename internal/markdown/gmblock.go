@@ -166,3 +166,54 @@ func (s *stripGMs) Transform(doc *gast.Document, _ text.Reader, _ parser.Context
 		}
 	}
 }
+
+// StripGMBlocks removes all :::gm ... ::: fence blocks from raw Markdown
+// source for the given role. For RoleGM the source is returned unchanged.
+// For RolePlayer (and any non-GM role) the blocks are stripped entirely.
+// This operates on raw text (not AST) so the editor receives sanitized
+// Markdown without secret content. The block syntax is:
+//
+//	:::gm [optional title]
+//	secret content
+//	:::
+//
+// Unclosed blocks consume to EOF (fail-closed).
+func StripGMBlocks(src []byte, role Role) []byte {
+	if role == RoleGM {
+		return src
+	}
+	hasTrailingNL := len(src) > 0 && src[len(src)-1] == '\n'
+	lines := bytes.Split(src, []byte{'\n'})
+	// bytes.Split on "a\n" produces ["a", ""]; we want to preserve that
+	// trailing empty element to detect trailing newline, but not write it.
+	var out bytes.Buffer
+	inGM := false
+	for i, line := range lines {
+		// Skip the trailing empty element from Split
+		if i == len(lines)-1 && len(line) == 0 && hasTrailingNL {
+			break
+		}
+		if !inGM {
+			_, ok := isGMOpener(line, 0)
+			if ok {
+				inGM = true
+				continue
+			}
+		} else {
+			if bytes.Equal(bytes.TrimSpace(line), gmCloser) {
+				inGM = false
+				continue
+			}
+			continue
+		}
+		// Write non-GM line
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		out.Write(line)
+	}
+	if hasTrailingNL && out.Len() > 0 {
+		out.WriteByte('\n')
+	}
+	return out.Bytes()
+}

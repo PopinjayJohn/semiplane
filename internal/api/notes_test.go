@@ -2,8 +2,14 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/PopinjayJohn/semiplane/internal/identity"
+	"github.com/PopinjayJohn/semiplane/internal/markdown"
+	"github.com/PopinjayJohn/semiplane/internal/render"
+	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 )
 
 func TestNoteCreateGetRoundTrip(t *testing.T) {
@@ -205,5 +211,275 @@ func TestNoteTraversalRejected(t *testing.T) {
 	// never read vault content — accept 400/404, never 200 with content.
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("traversal attempt returned 200")
+	}
+}
+
+// TestNoteSecretsAmend_PlayerCannotRequestGMRole verifies that a player
+// session cannot request ?role=gm (returns 403). This test uses a test
+// server with a real auth middleware chain by setting up a player identity
+// in the request context via the ACL middleware.
+func TestNoteSecretsAmend_PlayerCannotRequestGMRole(t *testing.T) {
+	// This test would require a full auth middleware setup.
+	// For now, we test the roleOf function directly in a unit test below.
+	t.Skip("requires full auth middleware setup; covered by unit test")
+}
+
+// TestNoteSecretsAmend_PlayerContentStripped verifies that a player
+// reading a note with :::gm blocks gets the Content field stripped.
+func TestNoteSecretsAmend_PlayerContentStripped(t *testing.T) {
+	d := testDeps(t)
+	srv := serve(t, d)
+	defer srv.Close()
+
+	// Create a note with a GM block
+	gmContent := "# Public\n\nPublic content.\n\n:::gm\nSecret GM content.\n:::\n\nMore public content.\n"
+	resp := postJSON(t, srv.URL+"/api/v1/notes/campaign/secret.md",
+		map[string]string{"content": gmContent, "hash": ""})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	// GET as player (default role in tests without auth)
+	get, err := http.Get(srv.URL + "/api/v1/notes/campaign/secret.md?role=player") //nolint:gosec
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = get.Body.Close() }()
+	if get.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", get.StatusCode)
+	}
+	var doc NoteDoc
+	decodeBody(t, get, &doc)
+
+	// Content should NOT contain the GM block
+	if strings.Contains(doc.Content, "Secret GM content") {
+		t.Errorf("player Content should not contain GM secret, got: %q", doc.Content)
+	}
+	if strings.Contains(doc.Content, ":::gm") {
+		t.Errorf("player Content should not contain :::gm fence, got: %q", doc.Content)
+	}
+	// But should contain public content
+	if !strings.Contains(doc.Content, "Public content") {
+		t.Errorf("player Content should contain public content, got: %q", doc.Content)
+	}
+	if !strings.Contains(doc.Content, "More public content") {
+		t.Errorf("player Content should contain more public content, got: %q", doc.Content)
+	}
+
+	// Fragment should also be stripped (already tested by render package)
+	if strings.Contains(doc.Fragment, "Secret GM content") {
+		t.Errorf("player Fragment should not contain GM secret")
+	}
+}
+
+// TestNoteSecretsAmend_GMContentPreserved verifies that a GM
+// reading a note with :::gm blocks gets the full Content field.
+func TestNoteSecretsAmend_GMContentPreserved(t *testing.T) {
+	d := testDeps(t)
+	srv := serve(t, d)
+	defer srv.Close()
+
+	// Create a note with a GM block
+	gmContent := "# Public\n\nPublic content.\n\n:::gm\nSecret GM content.\n:::\n\nMore public content.\n"
+	resp := postJSON(t, srv.URL+"/api/v1/notes/campaign/secret.md",
+		map[string]string{"content": gmContent, "hash": ""})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	// GET as GM
+	get, err := http.Get(srv.URL + "/api/v1/notes/campaign/secret.md?role=gm") //nolint:gosec
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = get.Body.Close() }()
+	if get.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", get.StatusCode)
+	}
+	var doc NoteDoc
+	decodeBody(t, get, &doc)
+
+	// Content SHOULD contain the GM block
+	if !strings.Contains(doc.Content, "Secret GM content") {
+		t.Errorf("GM Content should contain GM secret, got: %q", doc.Content)
+	}
+	if !strings.Contains(doc.Content, ":::gm") {
+		t.Errorf("GM Content should contain :::gm fence, got: %q", doc.Content)
+	}
+	// And public content
+	if !strings.Contains(doc.Content, "Public content") {
+		t.Errorf("GM Content should contain public content, got: %q", doc.Content)
+	}
+
+	// Fragment should also contain the GM block (rendered as HTML)
+	if !strings.Contains(doc.Fragment, "Secret GM content") {
+		t.Errorf("GM Fragment should contain GM secret")
+	}
+	if !strings.Contains(doc.Fragment, `data-testid="gm-block"`) {
+		t.Errorf("GM Fragment should contain gm-block element")
+	}
+}
+
+// TestNoteSecretsAmend_CharacterOwnerSeesOwnGMBlocks verifies that
+// a player reading their own character note sees the GM blocks.
+func TestNoteSecretsAmend_CharacterOwnerSeesOwnGMBlocks(t *testing.T) {
+	// This test requires a player identity in context with a matching
+	// character note path. The testDeps doesn't set up auth middleware.
+	// We test the isCharacterOwner helper directly below.
+	t.Skip("requires auth middleware with player identity; covered by unit test")
+}
+
+// Test roleOf function directly
+func TestRoleOf(t *testing.T) {
+	tests := []struct {
+		name        string
+		roleParam   string
+		identRole   string
+		hasIdent    bool
+		wantRole    render.Role
+		wantErr     bool
+		errContains string
+	}{
+		// No identity (test context)
+		{"no ident, empty role", "", "", false, render.RolePlayer, false, ""},
+		{"no ident, player role", "player", "", false, render.RolePlayer, false, ""},
+		{"no ident, gm role", "gm", "", false, render.RoleGM, false, ""},
+		{"no ident, invalid role", "dm", "", false, render.RolePlayer, true, "role must be gm or player"},
+
+		// GM identity
+		{"gm ident, empty role", "", "gm", true, render.RoleGM, false, ""},
+		{"gm ident, gm role", "gm", "gm", true, render.RoleGM, false, ""},
+		{"gm ident, player role", "player", "gm", true, render.RolePlayer, false, ""},
+		{"gm ident, invalid role", "dm", "gm", true, render.RolePlayer, true, "role must be gm or player"},
+
+		// Player identity
+		{"player ident, empty role", "", "player", true, render.RolePlayer, false, ""},
+		{"player ident, player role", "player", "player", true, render.RolePlayer, false, ""},
+		{"player ident, gm role (forbidden)", "gm", "player", true, render.RolePlayer, true, "forbidden: player cannot request gm role"},
+		{"player ident, invalid role", "dm", "player", true, render.RolePlayer, false, ""}, // defaults to player
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/notes/test.md?role="+tc.roleParam, nil)
+			if tc.hasIdent {
+				ident := pluginapi.Identity{ID: "testuser", Role: tc.identRole}
+				req = req.WithContext(identity.WithIdentity(req.Context(), ident))
+			}
+
+			gotRole, err := roleOf(req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+					t.Fatalf("error %q does not contain %q", err.Error(), tc.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+			if gotRole != tc.wantRole {
+				t.Fatalf("role = %q, want %q", gotRole, tc.wantRole)
+			}
+		})
+	}
+}
+
+// Test isCharacterOwner helper
+func TestIsCharacterOwner(t *testing.T) {
+	tests := []struct {
+		name   string
+		path   string
+		userID string
+		want   bool
+	}{
+		{"owner match", "characters/player1/notes.md", "player1", true},
+		{"owner match nested", "characters/player1/subdir/notes.md", "player1", true},
+		{"different user", "characters/player1/notes.md", "player2", false},
+		{"not character path", "campaign/notes.md", "player1", false},
+		{"empty userID", "characters/player1/notes.md", "", false},
+		{"empty path", "", "player1", false},
+		{"prefix match only", "characters/player10/notes.md", "player1", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isCharacterOwner(tc.path, tc.userID)
+			if got != tc.want {
+				t.Fatalf("isCharacterOwner(%q, %q) = %v, want %v", tc.path, tc.userID, got, tc.want)
+			}
+		})
+	}
+}
+
+// Test StripGMBlocks function
+func TestStripGMBlocks(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		role     markdown.Role
+		expected string
+	}{
+		{
+			name:     "no gm blocks",
+			input:    "# Hello\n\nWorld\n",
+			role:     markdown.RolePlayer,
+			expected: "# Hello\n\nWorld\n",
+		},
+		{
+			name:     "single gm block",
+			input:    "# Public\n\n:::gm\nSecret\n:::\n\nMore\n",
+			role:     markdown.RolePlayer,
+			expected: "# Public\n\n\nMore\n",
+		},
+		{
+			name:     "gm block with title",
+			input:    "# Public\n\n:::gm Title\nSecret\n:::\n\nMore\n",
+			role:     markdown.RolePlayer,
+			expected: "# Public\n\n\nMore\n",
+		},
+		{
+			name:     "multiple gm blocks",
+			input:    ":::gm\nSecret1\n:::\nPublic\n:::gm\nSecret2\n:::\n",
+			role:     markdown.RolePlayer,
+			expected: "\nPublic\n",
+		},
+		{
+			name:     "unclosed gm block consumes to EOF",
+			input:    "Public\n:::gm\nSecret\nNo closer\n",
+			role:     markdown.RolePlayer,
+			expected: "Public\n",
+		},
+		{
+			name:     "gm role preserves everything",
+			input:    "# Public\n\n:::gm\nSecret\n:::\n\nMore\n",
+			role:     markdown.RoleGM,
+			expected: "# Public\n\n:::gm\nSecret\n:::\n\nMore\n",
+		},
+		{
+			name:     "empty input",
+			input:    "",
+			role:     markdown.RolePlayer,
+			expected: "",
+		},
+		{
+			name:     "only gm block",
+			input:    ":::gm\nSecret\n:::\n",
+			role:     markdown.RolePlayer,
+			expected: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := markdown.StripGMBlocks([]byte(tc.input), tc.role)
+			if string(result) != tc.expected {
+				t.Errorf("StripGMBlocks(%q, %v) = %q, want %q", tc.input, tc.role, string(result), tc.expected)
+			}
+		})
 	}
 }

@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/PopinjayJohn/semiplane/internal/identity"
 	"github.com/PopinjayJohn/semiplane/internal/index"
+	"github.com/PopinjayJohn/semiplane/internal/markdown"
 	"github.com/PopinjayJohn/semiplane/internal/render"
 	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 )
@@ -29,20 +31,55 @@ type NoteDoc struct {
 // pastes chunk client-side).
 const maxNoteBody = 1 << 20
 
-// roleOf resolves ?role= (default "player"): players get :::gm stripped
-// server-side, never client-side (security property, see render package).
+// roleOf resolves the effective render role for the request.
+// It reads the authenticated identity from context (set by ACL middleware)
+// and validates the optional ?role= query parameter against it:
+// - GM sessions may request ?role=gm (default) or ?role=player
+// - Player sessions may only use ?role=player (default); ?role=gm is 403
+// - Unknown roles return an error (400) but fail-closed to RolePlayer
+// - Without identity (tests), validate role parameter but default to player
 func roleOf(r *http.Request) (render.Role, error) {
+	ident, ok := identity.IdentityFrom(r.Context())
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("role")))
-	if q == "" || q == "player" {
+
+	if !ok {
+		// No identity in context (e.g., tests without auth middleware).
+		// Still validate the role parameter.
+		switch q {
+		case "", "player":
+			return render.RolePlayer, nil
+		case "gm":
+			return render.RoleGM, nil
+		default:
+			return render.RolePlayer, errors.New("role must be gm or player")
+		}
+	}
+
+	switch ident.Role {
+	case "gm":
+		if q == "" || q == "gm" {
+			return render.RoleGM, nil
+		}
+		if q == "player" {
+			return render.RolePlayer, nil
+		}
+		return render.RolePlayer, errors.New("role must be gm or player")
+	case "player":
+		if q == "gm" {
+			return render.RolePlayer, errors.New("forbidden: player cannot request gm role")
+		}
+		// Default to player for empty, "player", or any other value
+		return render.RolePlayer, nil
+	default:
+		// Unknown role: fail closed
 		return render.RolePlayer, nil
 	}
-	if q == "gm" {
-		return render.RoleGM, nil
-	}
-	return "", errors.New("role must be gm or player")
 }
 
 // buildNoteDoc renders note for role and attaches backlinks + ETag.
+// The Content field is stripped of :::gm blocks for non-GM readers,
+// unless the note is a character note owned by the requesting user
+// (characters/<user_id>/*).
 func (d *Deps) buildNoteDoc(r *http.Request, note pluginapi.Note, role render.Role) (NoteDoc, error) {
 	fragment, meta, err := render.Render([]byte(note.Content), role)
 	if err != nil {
@@ -59,14 +96,43 @@ func (d *Deps) buildNoteDoc(r *http.Request, note pluginapi.Note, role render.Ro
 		}
 		backlinks = bl
 	}
+
+	// Determine the effective role for Content stripping.
+	// GM role sees everything. For player role, check character ownership.
+	contentRole := role
+	if role == render.RolePlayer {
+		ident, ok := identity.IdentityFrom(r.Context())
+		if ok && isCharacterOwner(note.Path, ident.ID) {
+			// Character owners see their own GM blocks
+			contentRole = render.RoleGM
+		}
+	}
+
+	content := note.Content
+	if contentRole == render.RolePlayer {
+		content = string(markdown.StripGMBlocks([]byte(note.Content), markdown.RolePlayer))
+	}
+
 	return NoteDoc{
 		Path:      note.Path,
-		Content:   note.Content,
+		Content:   content,
 		Fragment:  fragment,
 		Meta:      meta,
 		Backlinks: backlinks,
 		ETag:      note.Hash,
 	}, nil
+}
+
+// isCharacterOwner reports whether the given note path is a character note
+// owned by the given user ID (i.e., characters/<userID>/*).
+func isCharacterOwner(notePath, userID string) bool {
+	if userID == "" {
+		return false
+	}
+	// Path is vault-relative, slash-separated
+	// Check if it starts with "characters/<userID>/"
+	prefix := "characters/" + userID + "/"
+	return strings.HasPrefix(notePath, prefix)
 }
 
 func (d *Deps) handleListNotes(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +182,11 @@ func (d *Deps) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	}
 	role, err := roleOf(r)
 	if err != nil {
-		WriteProblem(w, http.StatusBadRequest, "bad request", err.Error())
+		if strings.HasPrefix(err.Error(), "forbidden:") {
+			WriteProblem(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), "forbidden: "))
+		} else {
+			WriteProblem(w, http.StatusBadRequest, "bad request", err.Error())
+		}
 		return
 	}
 	path := r.PathValue("path")
@@ -162,7 +232,11 @@ func (d *Deps) handlePostNote(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 	role, err := roleOf(r)
 	if err != nil {
-		WriteProblem(w, http.StatusBadRequest, "bad request", err.Error())
+		if strings.HasPrefix(err.Error(), "forbidden:") {
+			WriteProblem(w, http.StatusForbidden, "forbidden", strings.TrimPrefix(err.Error(), "forbidden: "))
+		} else {
+			WriteProblem(w, http.StatusBadRequest, "bad request", err.Error())
+		}
 		return
 	}
 	created := false

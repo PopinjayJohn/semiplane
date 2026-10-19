@@ -37,24 +37,16 @@ import (
 
 	"github.com/PopinjayJohn/semiplane/internal/api"
 	"github.com/PopinjayJohn/semiplane/internal/auth"
+	"github.com/PopinjayJohn/semiplane/internal/identity"
 	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 )
 
-// ctxKeyIdentity is THE identity context key (see package doc). Unexported
-// on purpose; use WithIdentity / IdentityFrom.
-type ctxKeyIdentity struct{}
-
-// WithIdentity stores ident in ctx under the package's single canonical key.
-func WithIdentity(ctx context.Context, ident pluginapi.Identity) context.Context {
-	return context.WithValue(ctx, ctxKeyIdentity{}, ident)
-}
-
-// IdentityFrom returns the Identity stored by WithIdentity (by TokenScope,
-// RequireSession, ...) and whether one was present.
-func IdentityFrom(ctx context.Context) (pluginapi.Identity, bool) {
-	ident, ok := ctx.Value(ctxKeyIdentity{}).(pluginapi.Identity)
-	return ident, ok
-}
+// Re-export the canonical identity context functions from internal/identity
+// to break the import cycle between internal/api and internal/acl.
+var (
+	WithIdentity = identity.WithIdentity
+	IdentityFrom = identity.IdentityFrom
+)
 
 // Verifier performs DB-backed credential lookups against the sessions and
 // tokens tables. Credentials are stored hashed; see hashToken for the
