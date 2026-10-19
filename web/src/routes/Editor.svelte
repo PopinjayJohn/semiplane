@@ -19,6 +19,7 @@
   import StarterKit from '@tiptap/starter-kit';
   import { Markdown } from '@tiptap/markdown';
   import { customNodes } from '../lib/extensions/index.js';
+  import { splitFrontmatter, joinFrontmatter } from '../lib/editor-frontmatter.js';
   import { getNote, postNote } from '../lib/api/notes.js';
   import { APIError } from '../lib/api/client.js';
   import { session } from '../lib/stores/session.svelte.ts';
@@ -35,11 +36,40 @@
   let status = $state<'idle' | 'saved' | 'error' | null>(null);
   let statusMessage = $state('');
 
+  /* Frontmatter is held out of TipTap entirely: the Markdown extension has
+   * no YAML concept and would parse the fences as markup (mangling the note
+   * on every save). The front slice re-attaches verbatim at save time. The
+   * separator/trailing blank lines around the body are likewise not part of
+   * TipTap's block model (getMarkdown drops them), so they are remembered at
+   * load and restored at save — a save of an untouched note is byte-exact. */
+  let frontmatter = $state<string>('');
+  let bodyLeadBlank = $state(false); // body opened with a blank separator line
+  let docTrailingNL = $state(false); // note ended with a newline
+
+  function noteToEditorBody(content: string): string {
+    const split = splitFrontmatter(content);
+    frontmatter = split.frontmatter;
+    bodyLeadBlank = split.body.startsWith('\n');
+    docTrailingNL = content.endsWith('\n');
+    return split.body;
+  }
+
+  function editorBodyToNote(body: string): string {
+    let out = joinFrontmatter(
+      frontmatter,
+      bodyLeadBlank && !body.startsWith('\n') ? '\n' + body : body,
+    );
+    if (docTrailingNL && !out.endsWith('\n')) out += '\n';
+    return out;
+  }
+
   async function load() {
     const doc = await getNote(path, session.role ?? undefined);
     hash = doc.etag;
     if (editor) {
-      editor.commands.setContent(doc.content, { contentType: 'markdown' });
+      editor.commands.setContent(noteToEditorBody(doc.content), {
+        contentType: 'markdown',
+      });
     }
     loading = false;
     conflict = false;
@@ -67,7 +97,8 @@
     conflict = false;
     status = null;
     try {
-      const doc = await postNote(path, editor.getMarkdown(), hash);
+      const content = editorBodyToNote(editor.getMarkdown());
+      const doc = await postNote(path, content, hash);
       hash = doc.etag;
       status = 'saved';
       statusMessage = 'Saved.';
@@ -90,7 +121,9 @@
     const doc = await getNote(path, session.role ?? undefined);
     hash = doc.etag;
     if (editor) {
-      editor.commands.setContent(doc.content, { contentType: 'markdown' });
+      editor.commands.setContent(noteToEditorBody(doc.content), {
+        contentType: 'markdown',
+      });
     }
     conflict = false;
     status = null;
