@@ -218,9 +218,13 @@ body {
   }
 }
 
-/* TV viewport: 64 px touch targets (tech-stack §9). */
-[data-viewport='tv'] button,
-[data-viewport='tv'] input {
+/* TV viewport: 64 px touch targets (tech-stack §9).
+ * The duplicated [data-viewport='tv'] raises specificity above
+ * component-scoped classes (e.g. .app-button.svelte-x, 0,2,0) so the
+ * 64×64 target wins in TV mode regardless of bundle order. Covers every
+ * interactive element: all are <button> or <input>. */
+[data-viewport='tv'][data-viewport='tv'] button,
+[data-viewport='tv'][data-viewport='tv'] input {
   min-height: 64px;
   min-width: 64px;
 }

@@ -19,6 +19,7 @@
   import { APIError } from '../lib/api/client.js';
   import { sse } from '../lib/stores/sse.svelte.ts';
   import { announce } from '../lib/announce.ts';
+  import { now } from '../lib/stores/now.svelte.ts';
   import type { NoteDoc, SearchHit } from '../lib/api/types.js';
 
   let { path } = $props<{ path: string }>();
@@ -78,6 +79,15 @@
 
   $effect(() => {
     loadNote();
+  });
+
+  /* --- "now" focus for the TV NOW banner ---
+
+     Publish the current page and whether any GM block is still unrevealed so
+     the TV strip can glance at the in-table focus. */
+  $effect(() => {
+    now.setCurrentPage(note?.path ?? null);
+    now.setRevealPending(blockIds.some((id) => !blockState(id).revealed));
   });
 
   /* --- wikilink decoration ---

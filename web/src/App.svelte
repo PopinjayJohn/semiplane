@@ -19,6 +19,7 @@
   import Shell from './lib/Shell.svelte';
   import Login from './routes/Login.svelte';
   import LiveRegion from './components/LiveRegion.svelte';
+  import DiceRoller from './components/DiceRoller.svelte';
   import WikiReader from './routes/WikiReader.svelte';
 
   let pathname = $state(window.location.pathname);
@@ -109,6 +110,7 @@
       <div data-testid="app-body" class="app-body">
         {#if pathname.startsWith('/wiki/')}
           <WikiReader path={pathname.slice('/wiki/'.length)} />
+          <DiceRoller />
         {:else if pathname.startsWith('/edit/') && EditorComponent}
           <EditorComponent path={pathname.slice('/edit/'.length)} />
         {:else}
