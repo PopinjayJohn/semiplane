@@ -5,6 +5,8 @@
    * Every color is a --sp-* token from tokens.css; no style= attributes,
    * no inline event handlers (onclick attributes bind script functions).
    */
+  import { now } from './stores/now.svelte.ts';
+  import NowBanner from '../components/NowBanner.svelte';
 
   let role = $state<'gm' | 'player'>('gm');
   let drawerOpen = $state(false);
@@ -101,9 +103,13 @@
     {/if}
   </aside>
 
-  <main class="shell-main" data-test="shell-main">
+  <main class="shell-main" data-test="shell-main" class:tv-pad={viewport === 'tv'}>
     {@render children?.()}
   </main>
+
+  {#if viewport === 'tv'}
+    <NowBanner />
+  {/if}
 
   {#if viewport === 'mobile'}
     <div
@@ -276,5 +282,12 @@
     .shell-sidebar {
       display: none;
     }
+  }
+
+  /* TV viewport: pad shell-main so content isn't
+   * hidden behind the fixed NOW strip (64 px touch targets enforced by
+   * tokens.css). The strip positions itself in NowBanner's own CSS. */
+  [data-viewport='tv'] .shell-main.tv-pad {
+    padding-bottom: 72px;
   }
 </style>
