@@ -297,6 +297,12 @@ func TestNoteSecretsAmend_PlayerContentStripped(t *testing.T) {
 	if strings.Contains(doc.Fragment, "Secret GM content") {
 		t.Errorf("player Fragment should not contain GM secret")
 	}
+
+	// gm_blocks carries ids only — players can still see there IS a hidden
+	// block (reveal-pending) and agree on its id, without any content.
+	if len(doc.GMBlocks) != 1 || doc.GMBlocks[0] != "gm-0" {
+		t.Errorf("player GMBlocks = %v, want [gm-0]", doc.GMBlocks)
+	}
 }
 
 // TestNoteSecretsAmend_GMContentPreserved verifies that a GM

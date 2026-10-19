@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,12 +20,18 @@ import (
 // hash). content carries the raw Markdown for the editor; readers use
 // fragment.
 type NoteDoc struct {
-	Path      string         `json:"path"`
-	Content   string         `json:"content"`
-	Fragment  string         `json:"fragment"`
-	Meta      map[string]any `json:"meta"`
-	Backlinks []string       `json:"backlinks"`
-	ETag      string         `json:"etag"`
+	Path     string         `json:"path"`
+	Content  string         `json:"content"`
+	Fragment string         `json:"fragment"`
+	Meta     map[string]any `json:"meta"`
+	// GMBlocks lists the opaque per-block ids (gm-0, gm-1, …) of the note's
+	// :::gm blocks, in source order. It carries no content, so it is safe to
+	// send to every role: it exists so players/TV can show reveal-pending
+	// affordances and agree on block ids with the GM even though Content and
+	// Fragment have the blocks stripped for players. Empty ⇒ no GM blocks.
+	GMBlocks  []string `json:"gm_blocks,omitempty"`
+	Backlinks []string `json:"backlinks"`
+	ETag      string   `json:"etag"`
 }
 
 // maxNoteBody caps note upserts (1 MiB of Markdown is generous; larger
@@ -113,11 +120,23 @@ func (d *Deps) buildNoteDoc(r *http.Request, note pluginapi.Note, role render.Ro
 		content = string(markdown.StripGMBlocks([]byte(note.Content), markdown.RolePlayer))
 	}
 
+	// Block ids come from the raw content (same fence rules the renderer and
+	// StripGMBlocks use), so gm/player clients agree on them. Ids only — no
+	// block content is exposed to roles that had it stripped.
+	var gmBlocks []string
+	if n := markdown.CountGMBlocks([]byte(note.Content)); n > 0 {
+		gmBlocks = make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			gmBlocks = append(gmBlocks, fmt.Sprintf("gm-%d", i))
+		}
+	}
+
 	return NoteDoc{
 		Path:      note.Path,
 		Content:   content,
 		Fragment:  fragment,
 		Meta:      meta,
+		GMBlocks:  gmBlocks,
 		Backlinks: backlinks,
 		ETag:      note.Hash,
 	}, nil

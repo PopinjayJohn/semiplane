@@ -96,6 +96,16 @@ paths:
                   content: {type: string}
                   fragment: {type: string}
                   meta: {type: object}
+                  gm_blocks:
+                    type: array
+                    description: >-
+                      Opaque per-block ids (gm-0, gm-1, …) of the note's :::gm
+                      blocks in source order. Ids only — no block content, so
+                      it is sent to every role; players use it to show
+                      reveal-pending affordances and agree on block ids with
+                      GM reveal events. Absent when the note has no :::gm
+                      blocks.
+                    items: {type: string}
                   backlinks: {type: array, items: {type: string}}
                   etag: {type: string}
         '304':
@@ -148,6 +158,16 @@ paths:
                   content: {type: string}
                   fragment: {type: string}
                   meta: {type: object}
+                  gm_blocks:
+                    type: array
+                    description: >-
+                      Opaque per-block ids (gm-0, gm-1, …) of the note's :::gm
+                      blocks in source order. Ids only — no block content, so
+                      it is sent to every role; players use it to show
+                      reveal-pending affordances and agree on block ids with
+                      GM reveal events. Absent when the note has no :::gm
+                      blocks.
+                    items: {type: string}
                   backlinks: {type: array, items: {type: string}}
                   etag: {type: string}
         '201':
