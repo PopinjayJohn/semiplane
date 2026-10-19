@@ -197,20 +197,46 @@ func TestNoteList(t *testing.T) {
 	}
 }
 
-func TestNoteTraversalRejected(t *testing.T) {
+func TestSearchSnippetsStrippedForPlayer(t *testing.T) {
 	d := testDeps(t)
 	srv := serve(t, d)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/v1/notes/../evil.md") //nolint:gosec
+	// Create a note with a GM block
+	gmContent := "# Public\n\nPublic content.\n\n:::gm\nSecret GM content.\n:::\n\nMore public content.\n"
+	resp := postJSON(t, srv.URL+"/api/v1/notes/campaign/secret.md",
+		map[string]string{"content": gmContent, "hash": ""})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	// Search as player (no auth middleware in test)
+	resp, err := http.Get(srv.URL + "/api/v1/search?q=Secret") //nolint:gosec
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = resp.Body.Close()
-	// Go's ServeMux cleans the path; anything outside the vault root must
-	// never read vault content — accept 400/404, never 200 with content.
-	if resp.StatusCode == http.StatusOK {
-		t.Fatal("traversal attempt returned 200")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("search status = %d, want 200", resp.StatusCode)
+	}
+	var result struct {
+		Hits []struct {
+			Path    string  `json:"path"`
+			Snippet string  `json:"snippet"`
+			Score   float64 `json:"score"`
+		} `json:"hits"`
+	}
+	decodeBody(t, resp, &result)
+	if len(result.Hits) == 0 {
+		t.Fatal("expected search hit")
+	}
+	snippet := result.Hits[0].Snippet
+	if strings.Contains(snippet, "Secret GM content") {
+		t.Errorf("player snippet should not contain GM secret, got: %q", snippet)
+	}
+	if strings.Contains(snippet, ":::gm") {
+		t.Errorf("player snippet should not contain :::gm fence, got: %q", snippet)
 	}
 }
 

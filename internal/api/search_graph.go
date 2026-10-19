@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PopinjayJohn/semiplane/internal/identity"
+	"github.com/PopinjayJohn/semiplane/internal/markdown"
 	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
 )
 
@@ -45,6 +47,11 @@ func (d *Deps) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		hits = kept
 	}
+
+	// Strip :::gm blocks from snippets for non-GM readers.
+	ident, _ := identity.IdentityFrom(r.Context())
+	stripSecrets := ident.Role != "gm"
+
 	type hit struct {
 		Path    string  `json:"path"`
 		Snippet string  `json:"snippet"`
@@ -52,7 +59,11 @@ func (d *Deps) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]hit, 0, len(hits))
 	for _, h := range hits {
-		out = append(out, hit{Path: h.Path, Snippet: h.Snippet, Score: h.Score})
+		snippet := h.Snippet
+		if stripSecrets {
+			snippet = string(markdown.StripGMBlocks([]byte(snippet), markdown.RolePlayer))
+		}
+		out = append(out, hit{Path: h.Path, Snippet: snippet, Score: h.Score})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"hits": out})
 }

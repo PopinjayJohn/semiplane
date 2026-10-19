@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PopinjayJohn/semiplane/internal/identity"
 	"github.com/PopinjayJohn/semiplane/internal/render"
 	"github.com/PopinjayJohn/semiplane/internal/sse"
 	"github.com/PopinjayJohn/semiplane/pkg/pluginapi"
@@ -66,6 +67,8 @@ func (d *Deps) handleReveal(w http.ResponseWriter, r *http.Request) {
 // text/event-stream with Last-Event-ID replay, so a client that slept
 // through a roll sees it on reconnect. Both the Last-Event-ID header and
 // ?lastEventId= are honored (header wins); unparsable values replay from 0.
+// For non-GM clients, block_revealed events have their HTML stripped of
+// :::gm content.
 func (d *Deps) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -82,6 +85,11 @@ func (d *Deps) handleEvents(w http.ResponseWriter, r *http.Request) {
 			lastID = v
 		}
 	}
+	// Determine if we should strip secrets for this connection
+	ident, ok := identity.IdentityFrom(r.Context())
+	_ = ok
+	stripSecrets := ident.Role != "gm"
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -99,8 +107,76 @@ func (d *Deps) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			// Strip secrets from block_revealed events for non-GM clients
+			if stripSecrets && e.Type == "block_revealed" {
+				var payload map[string]any
+				if err := json.Unmarshal([]byte(e.Data), &payload); err == nil {
+					if html, ok := payload["html"].(string); ok {
+						// Strip :::gm blocks from the pre-rendered HTML
+						// The HTML contains <section class="gm-block"> elements
+						// We remove them entirely for players
+						stripped := stripGMBlocksFromHTML(html)
+						payload["html"] = stripped
+						if data, err := json.Marshal(payload); err == nil {
+							e.Data = string(data)
+						}
+					}
+				}
+			}
 			_, _ = fmt.Fprint(w, sse.Format(e))
 			flusher.Flush()
 		}
 	}
+}
+
+// stripGMBlocksFromHTML removes <section class="gm-block"> elements from HTML
+func stripGMBlocksFromHTML(html string) string {
+	// Simple approach: remove gm-block sections
+	// This is a basic implementation; could be more robust with an HTML parser
+	var b strings.Builder
+	inGM := false
+	depth := 0
+	i := 0
+	for i < len(html) {
+		if !inGM {
+			if i+len(`<section class="gm-block"`) <= len(html) && html[i:i+len(`<section class="gm-block"`)] == `<section class="gm-block"` {
+				// Found start of gm-block
+				inGM = true
+				depth = 1
+				// Skip to end of opening tag
+				for i < len(html) && html[i] != '>' {
+					i++
+				}
+				if i < len(html) {
+					i++ // skip '>'
+				}
+				continue
+			}
+			b.WriteByte(html[i])
+			i++
+		} else {
+			// Inside gm-block, track depth
+			if i+1 < len(html) && html[i] == '<' {
+				if i+2 < len(html) && html[i+1] == '/' {
+					// Closing tag
+					end := strings.Index(html[i:], ">")
+					if end != -1 {
+						tag := html[i : i+end+1]
+						if strings.Contains(tag, "section") {
+							depth--
+							if depth == 0 {
+								inGM = false
+								i += end + 1
+								continue
+							}
+						}
+					}
+				} else if i+len("<section") <= len(html) && html[i:i+len("<section")] == "<section" {
+					depth++
+				}
+			}
+			i++
+		}
+	}
+	return b.String()
 }
