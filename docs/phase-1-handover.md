@@ -66,18 +66,19 @@ below.
     players may see plugin-rendered UI. This narrows the trust model but does
     not remove the sandbox need (a plugin runs same-origin under the GM's
     session and its output reaches players) — research session's analysis.
-13. **Security amend (ruling, NOT YET IMPLEMENTED): "Secrets must not leave
+13. **Security amend (IMPLEMENTED in commit af37397): "Secrets must not leave
     the server for anyone but their owner or GM."** Research exposed two real
     gaps in `internal/api/notes.go`:
-    - `buildNoteDoc` returns `Content` (raw Markdown) **including `:::gm`
-      fences for every role** — a player receives secrets in the `content`
-      field of any note they can ACL-read. Only `Fragment` is role-stripped.
-    - `roleOf` parses `?role=gm` from the query without checking the session
-      — a player can request the unstripped GM fragment outright.
-    Required fix (stream E owns): strip `:::gm` raw text from `Content` for
-    non-owner/non-GM readers; reject `?role=gm` with 403 unless the session
-    holds the GM role; resolve note ownership for `characters/<user>/*`.
-    Stream F then removes any client-side reliance on `session.role` gating.
+    - `buildNoteDoc` returned `Content` (raw Markdown) **including `:::gm`
+      fences for every role** — a player received secrets in the `content`
+      field of any note they could ACL-read. Only `Fragment` was role-stripped.
+    - `roleOf` parsed `?role=gm` from the query without checking the session
+      — a player could request the unstripped GM fragment outright.
+    Fixed: strip `:::gm` raw text from `Content` for non-owner/non-GM readers;
+    reject `?role=gm` with 403 unless the session holds the GM role; resolve
+    note ownership for `characters/<user>/*` (character owners see their own
+    GM blocks). Added `StripGMBlocks` to `internal/markdown` and comprehensive
+    Go tests asserting player responses lack `:::gm` in `content`.
 
 ## Research deliverable: S7 recommendation (for implementation later)
 
@@ -100,9 +101,12 @@ worktree `openchamber/phase-2-s6s7-research`, pristine — no code/PR):
 
 ## Open questions for the next session(s)
 
-1. **Secrets amend (block until fixed):** implementation above — stream E
-   schedule, plus whether Go tests assert the player response *lacks* `:::gm`
-   in `content` (they should; add to the amend PR).
+1. **Secrets amend: FIXED (commit af37397).** Implementation complete with Go
+   tests asserting player responses lack `:::gm` in `content`. The fix:
+   - `roleOf` validates `?role=gm` against session identity; players get 403
+   - `buildNoteDoc` strips `:::gm` from `Content` for non-GM/non-owner readers
+   - Character owners (`characters/<user>/*`) see their own GM blocks
+   - New `StripGMBlocks` in `internal/markdown` for raw text stripping
 2. **Dice seed replay determinism:** confirm `(formula, seed)` → identical
    result server-side (Go test); contract note if `breakdown=1` + `seed`
    combined needs an example in `openapi.yaml`.
