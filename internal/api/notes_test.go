@@ -390,7 +390,7 @@ func TestRoleOf(t *testing.T) {
 		{"player ident, empty role", "", "player", true, render.RolePlayer, false, ""},
 		{"player ident, player role", "player", "player", true, render.RolePlayer, false, ""},
 		{"player ident, gm role (forbidden)", "gm", "player", true, render.RolePlayer, true, "forbidden: player cannot request gm role"},
-		{"player ident, invalid role", "dm", "player", true, render.RolePlayer, false, ""}, // defaults to player
+		{"player ident, invalid role", "dm", "player", true, render.RolePlayer, true, "role must be gm or player"},
 	}
 
 	for _, tc := range tests {

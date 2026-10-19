@@ -43,7 +43,7 @@ const maxNoteBody = 1 << 20
 // and validates the optional ?role= query parameter against it:
 // - GM sessions may request ?role=gm (default) or ?role=player
 // - Player sessions may only use ?role=player (default); ?role=gm is 403
-// - Unknown roles return an error (400) but fail-closed to RolePlayer
+// - Unknown role values are a 400 for every identity kind (fail closed)
 // - Without identity (tests), validate role parameter but default to player
 func roleOf(r *http.Request) (render.Role, error) {
 	ident, ok := identity.IdentityFrom(r.Context())
@@ -75,11 +75,19 @@ func roleOf(r *http.Request) (render.Role, error) {
 		if q == "gm" {
 			return render.RolePlayer, errors.New("forbidden: player cannot request gm role")
 		}
-		// Default to player for empty, "player", or any other value
-		return render.RolePlayer, nil
+		// Only "" and "player" are valid here; anything else (e.g. "dm") is
+		// a client error, never a silent default (bad role is 400).
+		if q == "" || q == "player" {
+			return render.RolePlayer, nil
+		}
+		return render.RolePlayer, errors.New("role must be gm or player")
 	default:
-		// Unknown role: fail closed
-		return render.RolePlayer, nil
+		// Unknown identity role: fail closed. Valid role requests keep the
+		// player projection; gm is never derivable from an unknown identity.
+		if q == "" || q == "player" {
+			return render.RolePlayer, nil
+		}
+		return render.RolePlayer, errors.New("role must be gm or player")
 	}
 }
 
