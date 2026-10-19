@@ -52,11 +52,11 @@ make e2e
 | `04-gm-secrets.spec.ts` | `role=player` strips `:::gm` in fragment; `role=gm` keeps it; bad role 400 (server-side property) | #5 |
 | `05-realtime.spec.ts` | EventSource receives block_revealed/dice_rolled; Last-Event-ID replay on reconnect; reveal 403 for player | #5 |
 | `06-dice.spec.ts` | default response omits breakdown; `?breakdown=1` includes kept/discarded/breakdown; seeded exact total+faces via SEMIPLANE_TEST_SEED; invalid formula 400 | #5 |
-| `07-editor.spec.ts` | TipTap edit → clean Markdown persisted to disk (round-trip), live preview on cursor line | pending-blocked-on-F |
-| `08-creator.spec.ts` | wizard steps driven by `rules/` metadata, point-buy validation, creates a character page the player then owns | pending-blocked-on-F |
-| `09-plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft | pending-blocked-on-F |
-| `10-tv.spec.ts` | TV viewport (64px targets) never renders `:::gm` content under any mode/viewport pairing; glanceable NOW banner present | pending-blocked-on-F |
-| `11-a11y.spec.ts` | axe scans (WCAG 2.2 AA) on shell + each route: zero serious/critical; keyboard-only pass; `aria-live` for SSE reveal + roll results; reduced-motion honored | pending-blocked-on-F |
+| `07-editor.spec.ts` | TipTap edit → clean Markdown persisted to disk (round-trip); `:::gm` block player-vs-GM visibility on wiki reader; stale-hash 409 conflict → editor-reload → save succeeds | #6 |
+| `08-creator.spec.ts` | wizard steps driven by `rules/` metadata, point-buy validation, creates a character page the player then owns | deferred — blocked on F TODO S6/S7 (creator wizard unshipped) |
+| `09-plugins.spec.ts` | runtime JS plugin from `.semiplane/plugins/` loads under strict CSP; broken plugin fails soft | deferred — blocked on F TODO S6/S7 (plugin execution unshipped) |
+| `10-tv.spec.ts` | TV viewport ≥64px touch targets (shell nav + primary buttons); `:::gm` content never renders for a player in TV view; drawer/nav usable; NOW banner unshipped (not asserted) | #6 |
+| `11-a11y.spec.ts` | axe scans zero serious/critical on `/`, login, wiki, editor; keyboard-only login→editor→save with visible focus at each step; `aria-live` announces editor save; reduced-motion honored (no running animations) | #6 |
 
 ## Rules of the suite (anti-flake contract)
 
