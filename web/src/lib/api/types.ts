@@ -15,6 +15,12 @@ export interface NoteDoc {
   content: string;
   fragment: string;
   meta: Record<string, unknown>;
+  /* Opaque ids (gm-0, gm-1, …) of the note's :::gm blocks, in source order.
+   * Ids only — no block content, so it is present for players too (whose
+   * content/fragment have the blocks stripped). Used for reveal-pending
+   * affordances and to agree on block ids with GM reveal events. Absent
+   * when the note has no :::gm blocks. */
+  gm_blocks?: string[];
   backlinks: string[];
   etag: string;
 }

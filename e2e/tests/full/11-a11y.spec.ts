@@ -7,7 +7,7 @@
 // aria-live: editor save announces into the polite live region.
 // prefers-reduced-motion: no animations run (animation-duration 0s).
 //
-// Credentials: gm/gm-secret. Helpers: loginAs + addSessionCookie from
+// Credentials: gm/gm-secret. Helpers: loginAsSession + addSessionCookie from
 // ../../helpers/session, expectNoSeriousViolations from ../../helpers/axe.
 // Selectors: data-testid only (shell via [data-test="..."]). No
 // waitForTimeout/sleeps anywhere. web/src is not modified.
@@ -27,7 +27,7 @@
 //   - now-banner: the glanceable TV NOW banner has not shipped.
 //
 import { expect, test, type Page } from '@playwright/test';
-import { addSessionCookie, loginAs } from '../../helpers/session';
+import { addSessionCookie, loginAs as loginAsSession } from '../../helpers/session';
 import { expectNoSeriousViolations } from '../../helpers/axe';
 
 const ARIA_LIVE = '[data-testid="aria-live"]';
@@ -80,7 +80,7 @@ test('axe: zero serious/critical violations on the wiki page (gm)', async ({
   page,
   request,
 }) => {
-  const gm = await loginAs(request, 'gm');
+  const gm = await loginAsSession(request, 'gm');
   await addSessionCookie(page, gm.sessionCookie);
 
   await page.goto('/wiki/hidden-lore.md');
@@ -92,7 +92,7 @@ test('axe: zero serious/critical violations on the editor page (gm)', async ({
   page,
   request,
 }) => {
-  const gm = await loginAs(request, 'gm');
+  const gm = await loginAsSession(request, 'gm');
   await addSessionCookie(page, gm.sessionCookie);
 
   await page.goto('/edit/next-session.md');
@@ -100,7 +100,17 @@ test('axe: zero serious/critical violations on the editor page (gm)', async ({
   await expectNoSeriousViolations(page);
 });
 
-test('keyboard-only flow: login → editor → save', async ({ page }) => {
+test('keyboard-only flow: login → editor → save', async ({ page, request }) => {
+  // Dedicated scratch note: this test's save rewrites the note through the
+  // TipTap round-trip, and other specs running in parallel on the same
+  // worker vault read elora.md — keep shared seeded fixtures untouched.
+  const gm = await loginAsSession(request, 'gm');
+  const created = await request.post('/api/v1/notes/a11y-save-flow.md', {
+    data: { content: '# a11y save flow\n', hash: '' },
+    headers: { Cookie: `semiplane_session=${gm.sessionCookie}` },
+  });
+  expect(created.status()).toBe(201);
+
   await page.goto('/login');
 
   // Field values are set with fill() (keyboard.type() does not reliably
@@ -120,9 +130,8 @@ test('keyboard-only flow: login → editor → save', async ({ page }) => {
     )
   ).toBeVisible();
 
-  // Navigate to an existing note's editor (the '/' landing welcome chrome
-  // opens /edit/welcome which has no seeded note).
-  await page.goto('/edit/elora.md');
+  // Navigate to the scratch note's editor (keyboard-only from here on).
+  await page.goto('/edit/a11y-save-flow.md');
   await expect(page.locator(EDITOR_LOADING)).toBeHidden();
 
   // Tab to the Save button, asserting visible focus, then submit with Enter.
@@ -135,10 +144,18 @@ test('aria-live: editor save announces into the polite live region', async ({
   page,
   request,
 }) => {
-  const gm = await loginAs(request, 'gm');
+  const gm = await loginAsSession(request, 'gm');
   await addSessionCookie(page, gm.sessionCookie);
 
-  await page.goto('/edit/next-session.md');
+  // Dedicated scratch note: this spec saves through the editor and must not
+  // rewrite a shared seeded note while other specs run in parallel.
+  const created = await request.post('/api/v1/notes/a11y-live-scratch.md', {
+    data: { content: '# a11y live scratch\n', hash: '' },
+    headers: { Cookie: `semiplane_session=${gm.sessionCookie}` },
+  });
+  expect(created.status()).toBe(201);
+
+  await page.goto('/edit/a11y-live-scratch.md');
   await expect(page.locator(EDITOR_LOADING)).toBeHidden();
 
   const live = page.locator(ARIA_LIVE_POLITE);

@@ -340,6 +340,40 @@ func TestGMBlockVariants(t *testing.T) {
 	})
 }
 
+func TestCountGMBlocks(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"none", "plain text\n", 0},
+		{"one closed", "public\n\n:::gm\nsecret\n:::\n", 1},
+		{
+			"nested opener text is not new block",
+			"a\n:::gm\ns1\n:::gm\ns2\n:::\n\n:::gm\ns3\n:::\n",
+			2,
+		},
+		{"titled opener", "pre\n:::gm show later\ns\n:::\n", 1},
+		{"unclosed final counts", ":::gm\nsecret to EOF\n", 1},
+		{"unclosed after closed", ":::gm\ns1\n:::\n\n:::gm\ns2 to EOF\n", 2},
+		{"lookalike not counted", ":::gmx\nnot secret\n:::\n", 0},
+		{"indented opener is code", "    :::gm\n    s\n", 0},
+		{"closer inside does not nest", ":::gm\n:::\n:::\n", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CountGMBlocks([]byte(tc.src)); got != tc.want {
+				t.Errorf("CountGMBlocks(%q) = %d, want %d", tc.src, got, tc.want)
+			}
+		})
+	}
+	// Count must agree with what the renderer emits for GM.
+	src := "public\n\n:::gm\ns1\n:::\n\n:::gm\ns2\n:::\n"
+	if n := CountGMBlocks([]byte(src)); n != strings.Count(convert(t, RoleGM, src), `data-testid="gm-block"`) {
+		t.Errorf("count disagrees with rendered gm-block sections")
+	}
+}
+
 func TestCallouts(t *testing.T) {
 	t.Run("note with title and body", func(t *testing.T) {
 		got := convert(t, RoleGM, "> [!note] Delver's warning\n> Bring rope.\n")

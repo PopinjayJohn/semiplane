@@ -51,5 +51,11 @@ else
   if [ -n "$LIBSUB" ]; then
     export LD_LIBRARY_PATH="$LIBSUB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   fi
+  # Repo-local fonts: without them headless Chromium renders ALL text blank
+  # (screenshots + axe scans are unusable). Absolute (see above).
+  FONTCONF="$(pwd)/e2e/.browser-libs/fonts.conf"
+  if [ -f "$FONTCONF" ]; then
+    export FONTCONFIG_FILE="$FONTCONF"
+  fi
 fi
 (cd e2e && BASE_URL="http://127.0.0.1:$PORT" npx playwright test --project="$PROJECT")

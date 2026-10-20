@@ -217,3 +217,23 @@ func StripGMBlocks(src []byte, role Role) []byte {
 	}
 	return out.Bytes()
 }
+
+// CountGMBlocks counts the :::gm blocks in src using the same fence rules as
+// StripGMBlocks and the goldmark block renderer, so the count is identical
+// for both roles. It does NOT depend on the role: the raw content is counted
+// regardless. Unclosed final blocks (no ::: closer) still count as one block.
+func CountGMBlocks(src []byte) int {
+	count := 0
+	inGM := false
+	for _, line := range bytes.Split(src, []byte{'\n'}) {
+		if !inGM {
+			if _, ok := isGMOpener(line, 0); ok {
+				inGM = true
+				count++
+			}
+		} else if bytes.Equal(bytes.TrimSpace(line), gmCloser) {
+			inGM = false
+		}
+	}
+	return count
+}

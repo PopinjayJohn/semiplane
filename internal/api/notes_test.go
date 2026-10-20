@@ -297,6 +297,12 @@ func TestNoteSecretsAmend_PlayerContentStripped(t *testing.T) {
 	if strings.Contains(doc.Fragment, "Secret GM content") {
 		t.Errorf("player Fragment should not contain GM secret")
 	}
+
+	// gm_blocks carries ids only — players can still see there IS a hidden
+	// block (reveal-pending) and agree on its id, without any content.
+	if len(doc.GMBlocks) != 1 || doc.GMBlocks[0] != "gm-0" {
+		t.Errorf("player GMBlocks = %v, want [gm-0]", doc.GMBlocks)
+	}
 }
 
 // TestNoteSecretsAmend_GMContentPreserved verifies that a GM
@@ -384,7 +390,7 @@ func TestRoleOf(t *testing.T) {
 		{"player ident, empty role", "", "player", true, render.RolePlayer, false, ""},
 		{"player ident, player role", "player", "player", true, render.RolePlayer, false, ""},
 		{"player ident, gm role (forbidden)", "gm", "player", true, render.RolePlayer, true, "forbidden: player cannot request gm role"},
-		{"player ident, invalid role", "dm", "player", true, render.RolePlayer, false, ""}, // defaults to player
+		{"player ident, invalid role", "dm", "player", true, render.RolePlayer, true, "role must be gm or player"},
 	}
 
 	for _, tc := range tests {

@@ -25,7 +25,7 @@ import {
   addSessionCookie,
   loginAs as loginAsSession,
 } from '../../helpers/session';
-import { getNote, updateNote } from '../../helpers/vault';
+import { createNote, getNote, updateNote } from '../../helpers/vault';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -53,24 +53,34 @@ test('editor round-trip: gm block + dice node persist to wiki (GM sees both)', a
     '',
   ].join('\n');
 
-  const before = await getNote(request, gm.sessionCookie, 'next-session.md', 'gm');
+  // Dedicated scratch note: this spec authors content via the API and saves
+  // through the editor, so it must not rewrite a shared seeded note while
+  // other specs run in parallel on the same worker vault.
+  await createNote(
+    request,
+    gm.sessionCookie,
+    'editor-round-trip-scratch.md',
+    '# Scratch\n',
+  );
+
+  const before = await getNote(request, gm.sessionCookie, 'editor-round-trip-scratch.md', 'gm');
   expect(before.status).toBe(200);
   const authored = await updateNote(
     request,
     gm.sessionCookie,
-    'next-session.md',
+    'editor-round-trip-scratch.md',
     markdown,
     before.etag,
   );
   expect(authored.etag).not.toBe(before.etag);
 
-  await page.goto('/edit/next-session.md');
+  await page.goto('/edit/editor-round-trip-scratch.md');
   await expect(page.getByTestId('editor-loading')).toBeHidden();
 
   await page.getByTestId('editor-save').click();
   await expect(page.getByTestId('editor-saved')).toBeVisible();
 
-  await page.goto('/wiki/next-session.md');
+  await page.goto('/wiki/editor-round-trip-scratch.md');
   await expect(page.getByTestId('wiki-loading')).toBeHidden();
 
   const fragment = (await page.getByTestId('wiki-fragment').textContent()) ?? '';
@@ -125,18 +135,28 @@ test('conflict path: stale hash 409, reload clears, fresh save succeeds', async 
   const gm = await loginAsSession(request, 'gm');
   await addSessionCookie(page, gm.sessionCookie);
 
-  await page.goto('/edit/elora.md');
+  // Dedicated scratch note: this test intentionally invalidates a loaded
+  // etag, and other specs running in parallel on the same worker vault open
+  // elora.md in their own editors/sessions (11-a11y keyboard flow saves it).
+  // Bumping a shared seeded fixture would break those with a spurious 409.
+  const created = await request.post('/api/v1/notes/editor-conflict-scratch.md', {
+    data: { content: '# editor-conflict scratch\n', hash: '' },
+    headers: { Cookie: `semiplane_session=${gm.sessionCookie}` },
+  });
+  expect(created.status()).toBe(201);
+
+  await page.goto('/edit/editor-conflict-scratch.md');
   await expect(page.getByTestId('editor-loading')).toBeHidden();
 
-  // Externally bump elora.md's etag so the editor's loaded hash goes stale.
-  const before = await getNote(request, gm.sessionCookie, 'elora.md', 'gm');
+  // Externally bump the note's etag so the editor's loaded hash goes stale.
+  const before = await getNote(request, gm.sessionCookie, 'editor-conflict-scratch.md', 'gm');
   expect(before.status).toBe(200);
   const h1 = before.etag;
   const updated = await updateNote(
     request,
     gm.sessionCookie,
-    'elora.md',
-    '# Elora (externally edited)\n',
+    'editor-conflict-scratch.md',
+    '# editor-conflict scratch (externally edited)\n',
     h1,
   );
   // updateNote throws on non-2xx; a successful call means the external edit

@@ -116,3 +116,44 @@ describe('custom TipTap nodes — markdown round-trip (slice S5)', () => {
     ed.destroy();
   });
 });
+
+describe('wikilink node — markdown round-trip (mirrors internal/markdown)', () => {
+  it('plain wikilink survives', () => {
+    survivesRoundTrip('See [[quest-board]] for jobs.', ['[[quest-board]]']);
+  });
+
+  it('aliased wikilink survives', () => {
+    survivesRoundTrip(
+      'Trusts [[throg|Throg]] with her life.',
+      ['[[throg|Throg]]'],
+    );
+  });
+
+  it('anchor wikilink survives', () => {
+    survivesRoundTrip(
+      'Headed [[yonder#bridge|the bridge]] way.',
+      ['[[yonder#bridge|the bridge]]'],
+    );
+  });
+
+  it('half-written link stays readable and round-trip-stable', () => {
+    // No closing ]] on the line: Go's renderer leaves it literal, while
+    // marked escapes it to \[\[… — the semantic contract is that the text
+    // survives (re-parses to the same rendered glyphs) and a re-save is a
+    // no-op, i.e. content never corrupts or vanishes.
+    const out = roundTrip('a half-written [[link stays');
+    expect(out).toContain('link stays');
+    expect(roundTrip(out)).toBe(out); // second save is byte-stable
+  });
+
+  it('nested [[ stays literal', () => {
+    survivesRoundTrip('literal [[outer[[inner]] here', ['[[inner]]']);
+  });
+
+  it('several wikilinks in one paragraph survive', () => {
+    survivesRoundTrip(
+      '[[quest-board]], [[throg|Throg]] and [[yonder]].',
+      ['[[quest-board]]', '[[throg|Throg]]', '[[yonder]]'],
+    );
+  });
+});

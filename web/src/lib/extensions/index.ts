@@ -8,9 +8,11 @@
 import { diceNode } from './diceNode.js';
 import { gmBlockNode } from './gmBlockNode.js';
 import { statblockNode } from './statblockNode.js';
+import { wikilinkNode } from './wikilinkNode.js';
 
 export { diceNode };
 export { gmBlockNode };
 export { statblockNode };
+export { wikilinkNode };
 
-export const customNodes = [diceNode, gmBlockNode, statblockNode];
+export const customNodes = [diceNode, gmBlockNode, statblockNode, wikilinkNode];

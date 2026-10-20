@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,12 +20,18 @@ import (
 // hash). content carries the raw Markdown for the editor; readers use
 // fragment.
 type NoteDoc struct {
-	Path      string         `json:"path"`
-	Content   string         `json:"content"`
-	Fragment  string         `json:"fragment"`
-	Meta      map[string]any `json:"meta"`
-	Backlinks []string       `json:"backlinks"`
-	ETag      string         `json:"etag"`
+	Path     string         `json:"path"`
+	Content  string         `json:"content"`
+	Fragment string         `json:"fragment"`
+	Meta     map[string]any `json:"meta"`
+	// GMBlocks lists the opaque per-block ids (gm-0, gm-1, …) of the note's
+	// :::gm blocks, in source order. It carries no content, so it is safe to
+	// send to every role: it exists so players/TV can show reveal-pending
+	// affordances and agree on block ids with the GM even though Content and
+	// Fragment have the blocks stripped for players. Empty ⇒ no GM blocks.
+	GMBlocks  []string `json:"gm_blocks,omitempty"`
+	Backlinks []string `json:"backlinks"`
+	ETag      string   `json:"etag"`
 }
 
 // maxNoteBody caps note upserts (1 MiB of Markdown is generous; larger
@@ -36,7 +43,7 @@ const maxNoteBody = 1 << 20
 // and validates the optional ?role= query parameter against it:
 // - GM sessions may request ?role=gm (default) or ?role=player
 // - Player sessions may only use ?role=player (default); ?role=gm is 403
-// - Unknown roles return an error (400) but fail-closed to RolePlayer
+// - Unknown role values are a 400 for every identity kind (fail closed)
 // - Without identity (tests), validate role parameter but default to player
 func roleOf(r *http.Request) (render.Role, error) {
 	ident, ok := identity.IdentityFrom(r.Context())
@@ -68,11 +75,19 @@ func roleOf(r *http.Request) (render.Role, error) {
 		if q == "gm" {
 			return render.RolePlayer, errors.New("forbidden: player cannot request gm role")
 		}
-		// Default to player for empty, "player", or any other value
-		return render.RolePlayer, nil
+		// Only "" and "player" are valid here; anything else (e.g. "dm") is
+		// a client error, never a silent default (bad role is 400).
+		if q == "" || q == "player" {
+			return render.RolePlayer, nil
+		}
+		return render.RolePlayer, errors.New("role must be gm or player")
 	default:
-		// Unknown role: fail closed
-		return render.RolePlayer, nil
+		// Unknown identity role: fail closed. Valid role requests keep the
+		// player projection; gm is never derivable from an unknown identity.
+		if q == "" || q == "player" {
+			return render.RolePlayer, nil
+		}
+		return render.RolePlayer, errors.New("role must be gm or player")
 	}
 }
 
@@ -113,11 +128,23 @@ func (d *Deps) buildNoteDoc(r *http.Request, note pluginapi.Note, role render.Ro
 		content = string(markdown.StripGMBlocks([]byte(note.Content), markdown.RolePlayer))
 	}
 
+	// Block ids come from the raw content (same fence rules the renderer and
+	// StripGMBlocks use), so gm/player clients agree on them. Ids only — no
+	// block content is exposed to roles that had it stripped.
+	var gmBlocks []string
+	if n := markdown.CountGMBlocks([]byte(note.Content)); n > 0 {
+		gmBlocks = make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			gmBlocks = append(gmBlocks, fmt.Sprintf("gm-%d", i))
+		}
+	}
+
 	return NoteDoc{
 		Path:      note.Path,
 		Content:   content,
 		Fragment:  fragment,
 		Meta:      meta,
+		GMBlocks:  gmBlocks,
 		Backlinks: backlinks,
 		ETag:      note.Hash,
 	}, nil

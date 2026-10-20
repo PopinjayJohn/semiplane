@@ -41,7 +41,7 @@
   let revealState = $state<Map<string, RevealState>>(new Map());
   let revealError = $state<string | null>(null);
 
-  let blockIds = $derived(scanGmBlockIds(note?.content ?? ''));
+  let blockIds = $derived(note?.gm_blocks ?? scanGmBlockIds(note?.content ?? ''));
   let page = $derived(note?.path);
 
   /* --- fetching ---
@@ -206,11 +206,15 @@
     return () => unsub();
   });
 
-  /* --- gm block enumeration from raw content ---
+  /* --- gm block enumeration ---
 
-     note.content carries the raw Markdown (:::gm fences included) for both
-     roles; only the fragment is role-rendered. Block ids (gm-0, gm-1, …)
-     are derived from fence order so GM and player clients agree on them.
+     The server enumerates block ids over the RAW content (same fence rules
+     as the renderer and StripGMBlocks) and sends them as gm_blocks — ids
+     only, no content, so players/TV get the reveal-pending affordance even
+     though Content/Fragment have :::gm stripped for them. The client-side
+     scan below is a fallback (and matches gm-0, gm-1, … ordinals both ways).
+     Container ids are derived from fence order so GM and player clients
+     agree on them.
    */
 
   function scanGmBlockIds(content: string): string[] {
@@ -411,6 +415,90 @@
   }
   .wiki-fragment {
     line-height: 1.7;
+    color: var(--sp-fg);
+  }
+  /* The fragment is server-rendered HTML injected via {@html} — Svelte's
+   * scoped hashing can never reach those nodes, so everything here is
+   * :global but namespaced under .wiki-fragment. Without this, Tailwind's
+   * preflight resets render headings/lists/links as bare text. Only
+   * --sp-* tokens; contrast is recorded for the token set (see docs). */
+  .wiki-fragment :global(h1),
+  .wiki-fragment :global(h2),
+  .wiki-fragment :global(h3),
+  .wiki-fragment :global(h4) {
+    margin: 24px 0 8px;
+    line-height: 1.25;
+    color: var(--sp-fg);
+  }
+  .wiki-fragment :global(h1) {
+    font-size: 1.6rem;
+    font-weight: 700;
+  }
+  .wiki-fragment :global(h2) {
+    font-size: 1.3rem;
+    font-weight: 650;
+  }
+  .wiki-fragment :global(h3) {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .wiki-fragment :global(h4) {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .wiki-fragment :global(p) {
+    margin: 0 0 12px;
+  }
+  .wiki-fragment :global(ul),
+  .wiki-fragment :global(ol) {
+    margin: 0 0 12px;
+    padding-left: 24px;
+  }
+  .wiki-fragment :global(ul) {
+    list-style: disc;
+  }
+  .wiki-fragment :global(ol) {
+    list-style: decimal;
+  }
+  .wiki-fragment :global(li) {
+    margin: 4px 0;
+  }
+  .wiki-fragment :global(blockquote) {
+    margin: 12px 0;
+    padding: 6px 14px;
+    border-left: 3px solid var(--sp-border);
+    color: var(--sp-fg-muted);
+  }
+  .wiki-fragment :global(code) {
+    font-family: var(--sp-mono);
+    font-size: 0.9em;
+    background: var(--sp-bg-raised);
+    border: 1px solid var(--sp-border);
+    border-radius: var(--sp-radius-sm);
+    padding: 1px 5px;
+  }
+  .wiki-fragment :global(a.wikilink) {
+    color: var(--sp-accent);
+    text-decoration: underline;
+  }
+  .wiki-fragment :global(a.wikilink:focus-visible) {
+    outline: 3px solid var(--sp-accent);
+    outline-offset: 2px;
+  }
+  /* The server's own :::gm section (GM view) shares the component .gm-block
+   * affordances below; :global keeps them styled since it arrives via
+   * {@html}. */
+  .wiki-fragment :global(section.gm-block) {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--sp-secret-border);
+    border-radius: var(--sp-radius-sm);
+    background: var(--sp-bg-overlay);
+    color: var(--sp-fg);
+  }
+  .wiki-fragment :global(section.gm-block > p.gm-title) {
+    margin: 0 0 8px;
+    font-weight: 600;
     color: var(--sp-fg);
   }
   .wiki-state {
