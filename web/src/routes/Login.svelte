@@ -151,7 +151,7 @@
   .login-hint {
     margin-top: 20px;
     font-size: 0.75rem;
-    color: var(--sp-fg-faint);
+    color: var(--sp-fg-muted);
     text-align: center;
   }
 </style>

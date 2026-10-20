@@ -68,6 +68,12 @@ make e2e
   `e2e/helpers/` (or feature-flagged mock); everything else local.
 - **Retries**: 0 local, 1 in CI; a spec failing twice is quarantined with
   `@flake` tag + linked issue, not silenced.
+- **Fixture ownership**: specs that MUTATE a note (editor round-trip, conflict
+  bump, save flows) must use a dedicated scratch note created in the spec —
+  never a seeded fixture like `elora.md`/`next-session.md`. Local runs use
+  multiple parallel workers on a per-worker vault: a spec rewriting a shared
+  fixture invalidates other specs' loaded etags mid-flight and fails them with
+  spurious 409s. Seeded notes are read-only from specs' perspective.
 - **Artifacts**: trace + screenshot on failure, video retained on failure only,
   14-day retention (matches ci.md).
 - **Runtime budget**: zero E2E on feature-branch PRs (light tier skips it) — streaks
@@ -88,6 +94,11 @@ be text, not shimmer-only), and `prefers-reduced-motion`. Svelte compiler a11y
 warnings are part of `pnpm lint`: zero new warnings. Automated scans do not
 replace humans: a manual keyboard-only + screen-reader pass is required before
 every release (append to the release checklist when `release.yml` lands).
+Font caveat: scans need actually rendered text. On machines without system
+fonts (fc-list empty), Chromium draws no glyphs and contrast findings silently
+degrade to zero — that is why `e2e/scripts/install-deps-nosudo.sh` provisions
+repo-local fonts and `run.sh` exports `FONTCONFIG_FILE`; keep them installed
+wherever axe scans run.
 
 ## Out of scope (deliberate)
 
