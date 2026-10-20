@@ -63,18 +63,29 @@ test('update branch: non-empty matching hash succeeds (200), stale hash 409', as
 }) => {
   const gm = await loginAsSession(request, 'gm');
 
-  const doc = await getNote(request, gm.sessionCookie, 'elora.md', 'player');
+  // Own scratch note: this test mutates content, and other specs running in
+  // parallel on the same worker vault read elora.md (07-editor conflict
+  // bumps its etag by design; 11-a11y loads it in the editor and saves).
+  // Mutating a shared seeded fixture races those and fails their runs with
+  // spurious 409s. Create a distinct note per spec run instead.
+  const created = await request.post('/api/v1/notes/wiki/u-turn-test.md', {
+    data: { content: '# u-turn-test\n', hash: '' },
+    headers: { Cookie: `semiplane_session=${gm.sessionCookie}` },
+  });
+  expect(created.status()).toBe(201);
+
+  const doc = await getNote(request, gm.sessionCookie, 'wiki/u-turn-test.md', 'player');
   expect(doc.status).toBe(200);
 
-  const updated = await request.post('/api/v1/notes/elora.md', {
-    data: { content: '# Elora (edited)\n', hash: doc.etag },
+  const updated = await request.post('/api/v1/notes/wiki/u-turn-test.md', {
+    data: { content: '# u-turn-test edited\n', hash: doc.etag },
     headers: { Cookie: `semiplane_session=${gm.sessionCookie}` },
   });
   expect(updated.status()).toBe(200);
 
   // Same hash again → stale → 409.
-  const stale = await request.post('/api/v1/notes/elora.md', {
-    data: { content: '# Elora (edited)\n', hash: doc.etag },
+  const stale = await request.post('/api/v1/notes/wiki/u-turn-test.md', {
+    data: { content: '# u-turn-test edited\n', hash: doc.etag },
     headers: { Cookie: `semiplane_session=${gm.sessionCookie}` },
   });
   expect(stale.status()).toBe(409);
