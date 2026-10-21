@@ -1,0 +1,91 @@
+{
+	"optionalfeature": [
+		{
+			"name": "Subtle Spell",
+			"source": "XPHB",
+			"page": 142,
+			"srd52": true,
+			"featureType": ["MM"],
+			"consumes": { "name": "Sorcery Point" },
+			"entries": [
+				"When you cast a spell, you can spend 1 Sorcery Point to cast it without any Verbal, Somatic, or Material components, except Material components that are consumed by the spell or that have a cost specified in the spell."
+			]
+		},
+		{
+			"name": "Lifedrinker",
+			"source": "XPHB",
+			"page": 156,
+			"srd52": true,
+			"featureType": ["EI"],
+			"prerequisite": [
+				{
+					"level": {
+						"level": 9,
+						"class": { "name": "Warlock", "source": "XPHB", "visibleStats": true }
+					},
+					"optionalfeature": ["pact of the blade|xphb"]
+				}
+			],
+			"entries": ["prose"]
+		},
+		{
+			"name": "Agonizing Blast",
+			"source": "XPHB",
+			"page": 150,
+			"srd52": true,
+			"featureType": ["EI"],
+			"prerequisite": [
+				{
+					"spell": [
+						{
+							"choose": "level=0|class=Warlock",
+							"entry": "a Warlock Cantrip That Deals Damage",
+							"entrySummary": "Warlock Cantrip That Deals Damage"
+						}
+					],
+					"level": {
+						"level": 2,
+						"class": { "name": "Warlock", "source": "XPHB", "visibleStats": true }
+					}
+				}
+			],
+			"entries": ["prose"]
+		},
+		{
+			"name": "Old Blast",
+			"source": "PHB",
+			"page": 150,
+			"featureType": ["EI"],
+			"prerequisite": [
+				{
+					"level": {
+						"level": 2,
+						"class": { "name": "Warlock" }
+					},
+					"spell": ["eldritch blast#c"],
+					"pact": "Tome"
+				}
+			],
+			"entries": ["prose"]
+		},
+		{
+			"name": "Pact of the Blade",
+			"source": "XPHB",
+			"page": 162,
+			"srd52": true,
+			"featureType": ["EI"],
+			"entries": ["prose"]
+		},
+		{
+			"name": "Item Locked",
+			"source": "XPHB",
+			"page": 163,
+			"srd52": true,
+			"featureType": ["EI"],
+			"prerequisite": [
+				{ "item": "A suit of armor (requires attunement)" }
+			],
+			"entries": ["prose"]
+		}
+	]
+}

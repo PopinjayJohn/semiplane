@@ -1,0 +1,164 @@
+{
+	"spell": [
+		{
+			"name": "Fireball",
+			"source": "XPHB",
+			"page": 274,
+			"srd52": true,
+			"level": 3,
+			"school": "V",
+			"time": [
+				{ "number": 1, "unit": "action" }
+			],
+			"range": {
+				"type": "point",
+				"distance": { "type": "feet", "amount": 150 }
+			},
+			"components": {
+				"v": true,
+				"s": true,
+				"m": "a ball of bat guano and sulfur"
+			},
+			"duration": [
+				{ "type": "instant" }
+			],
+			"entries": [
+				"A bright streak flashes from you. Each creature makes a Dexterity saving throw."
+			],
+			"entriesHigherLevel": [
+				{
+					"type": "entries",
+					"name": "Using a Higher-Level Spell Slot",
+					"entries": ["The damage increases by 1d6 per slot level above 3."]
+				}
+			],
+			"savingThrow": ["dexterity"],
+			"damageInflict": ["fire"]
+		},
+		{
+			"name": "Acid Splash",
+			"source": "XPHB",
+			"page": 239,
+			"srd52": true,
+			"level": 0,
+			"school": "V",
+			"time": [
+				{ "number": 1, "unit": "action" }
+			],
+			"range": {
+				"type": "point",
+				"distance": { "type": "feet", "amount": 60 }
+			},
+			"components": {
+				"v": true,
+				"s": true,
+				"m": null
+			},
+			"duration": [
+				{ "type": "instant" }
+			],
+			"scalingLevelDice": {
+				"label": "damage",
+				"scaling": { "1": "1d6", "5": "2d6" }
+			}
+		},
+		{
+			"name": "Bigby's Hand",
+			"source": "XPHB",
+			"page": 246,
+			"srd52": "Arcane Hand",
+			"level": 5,
+			"school": "V",
+			"time": [
+				{ "number": 1, "unit": "action" }
+			],
+			"range": {
+				"type": "point",
+				"distance": { "type": "feet", "amount": 120 }
+			},
+			"components": {
+				"v": true,
+				"s": true,
+				"m": "an eggshell and a glove"
+			},
+			"duration": [
+				{
+					"type": "timed",
+					"duration": { "type": "minute", "amount": 1 },
+					"concentration": true
+				}
+			]
+		},
+		{
+			"name": "Imploding Smoke",
+			"source": "XPHB",
+			"page": 999,
+			"srd52": true,
+			"level": 4,
+			"school": "N",
+			"time": [
+				{ "number": 1, "unit": "action" }
+			],
+			"range": {
+				"type": "point",
+				"distance": { "type": "feet", "amount": 90 }
+			},
+			"components": {
+				"v": true,
+				"s": true
+			},
+			"duration": [
+				{ "type": "instant" }
+			],
+			"damage": {
+				"dice": "8d6",
+				"damageType": "necrotic"
+			}
+		},
+		{
+			"name": "Banishing Smite",
+			"source": "XPHB",
+			"page": 220,
+			"srd52": true,
+			"level": 5,
+			"school": "A",
+			"time": [
+				{
+					"number": 1,
+					"unit": "bonus",
+					"condition": "which you take immediately after hitting a creature with a Melee weapon or an {@variantrule Unarmed Strike|XPHB}"
+				}
+			],
+			"range": {
+				"type": "self"
+			},
+			"components": {
+				"v": true
+			},
+			"duration": [
+				{ "type": "instant" }
+			],
+			"damage": null
+		},
+		{
+			"name": "Friends",
+			"source": "XPHB",
+			"page": 254,
+			"srd52": null,
+			"level": 0,
+			"school": "E",
+			"time": [
+				{ "number": 1, "unit": "action" }
+			],
+			"range": {
+				"type": "self"
+			},
+			"components": {
+				"v": true
+			},
+			"duration": [
+				{ "type": "timed", "duration": { "type": "minute", "amount": 1 } }
+			]
+		}
+	]
+}

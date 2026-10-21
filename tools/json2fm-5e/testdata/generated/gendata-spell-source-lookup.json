@@ -1,0 +1,90 @@
+{
+	"xphb": {
+		"fireball": {
+			"class": {
+				"XPHB": {
+					"Sorcerer": true,
+					"Wizard": true
+				}
+			},
+			"subclass": {
+				"TCE": {
+					"Artificer": {
+						"TCE": {
+							"Artillerist": { "name": "Artillerist" }
+						}
+					}
+				},
+				"XPHB": {
+					"Bard": {
+						"XPHB": {
+							"Lore": { "name": "College of Lore" }
+						}
+					},
+					"Wizard": {
+						"XPHB": {
+							"Evoker": { "name": "Evoker" }
+						}
+					}
+				},
+				"PHB": {
+					"Cleric": {
+						"PHB": {
+							"Light": { "name": "Light Domain" }
+						}
+					}
+				}
+			}
+		},
+		"acid splash": {
+			"class": {
+				"XPHB": {
+					"Sorcerer": true,
+					"Wizard": true
+				}
+			},
+			"subclass": {
+				"XPHB": {
+					"Druid": {
+						"XPHB": {
+							"Land": { "name": "Circle of the Land", "subSubclasses": ["Tropical Land"] }
+						}
+					}
+				}
+			}
+		},
+		"bigby's hand": {
+			"class": {
+				"XPHB": {
+					"Sorcerer": true,
+					"Wizard": true
+				}
+			}
+		},
+		"imploding smoke": {
+			"class": {
+				"XPHB": {
+					"Warlock": {
+						"definedInSources": ["SatO"]
+					}
+				}
+			}
+		},
+		"banishing smite": {
+			"class": {
+				"XPHB": {
+					"Paladin": true
+				}
+			}
+		},
+		"friends": {
+			"class": {
+				"XPHB": {
+					"Sorcerer": true,
+					"Warlock": true,
+					"Wizard": true
+				}
+			}
+		}
+	}
+}
