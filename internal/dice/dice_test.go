@@ -315,3 +315,207 @@ func TestEvaluatorRoll(t *testing.T) {
 		t.Errorf("Roll(cancelled ctx) succeeded, want context error")
 	}
 }
+
+func TestVariableSubstitution(t *testing.T) {
+	cases := []struct {
+		name          string
+		formula       string
+		vars          map[string]int
+		queue         []int
+		wantFaces     []int
+		wantKept      []int
+		wantDiscarded []int
+		wantTotal     int
+		wantSuccesses int
+		wantErr       bool
+	}{
+		{
+			name:      "simple variable",
+			formula:   "1d12 + @con",
+			vars:      map[string]int{"con": 3},
+			queue:     []int{7},
+			wantFaces: []int{7}, wantKept: []int{7}, wantDiscarded: []int{},
+			wantTotal: 10, wantSuccesses: 1, wantErr: false,
+		},
+		{
+			name:      "variable in keep expression",
+			formula:   "2d20kh1 + @mod",
+			vars:      map[string]int{"mod": 5},
+			queue:     []int{17, 4},
+			wantFaces: []int{17, 4}, wantKept: []int{17}, wantDiscarded: []int{4},
+			wantTotal: 22, wantSuccesses: 1, wantErr: false,
+		},
+		{
+			name:      "negative variable",
+			formula:   "1d20 - @penalty",
+			vars:      map[string]int{"penalty": 2},
+			queue:     []int{15},
+			wantFaces: []int{15}, wantKept: []int{15}, wantDiscarded: []int{},
+			wantTotal: 13, wantSuccesses: 1, wantErr: false,
+		},
+		{
+			name:      "multiple variables",
+			formula:   "@a + @b + @c",
+			vars:      map[string]int{"a": 1, "b": 2, "c": 3},
+			queue:     []int{},
+			wantFaces: []int{}, wantKept: []int{}, wantDiscarded: []int{},
+			wantTotal: 6, wantSuccesses: 0, wantErr: false,
+		},
+		{
+			name:      "variable with multiplication",
+			formula:   "2 * @mult",
+			vars:      map[string]int{"mult": 4},
+			queue:     []int{},
+			wantFaces: []int{}, wantKept: []int{}, wantDiscarded: []int{},
+			wantTotal: 8, wantSuccesses: 0, wantErr: false,
+		},
+		{
+			name:      "variable in parentheses",
+			formula:   "(@base + 2) * 3",
+			vars:      map[string]int{"base": 4},
+			queue:     []int{},
+			wantFaces: []int{}, wantKept: []int{}, wantDiscarded: []int{},
+			wantTotal: 18, wantSuccesses: 0, wantErr: false,
+		},
+		{
+			name:    "unknown variable fails",
+			formula: "1d20 + @unknown",
+			vars:    map[string]int{"known": 5},
+			queue:   []int{10},
+			wantErr: true,
+		},
+		{
+			name:    "nil vars map fails on variable",
+			formula: "1d20 + @con",
+			vars:    nil,
+			queue:   []int{10},
+			wantErr: true,
+		},
+		{
+			name:    "empty vars map fails on variable",
+			formula: "1d20 + @con",
+			vars:    map[string]int{},
+			queue:   []int{10},
+			wantErr: true,
+		},
+		{
+			name:      "variable name with underscore",
+			formula:   "1d6 + @my_var",
+			vars:      map[string]int{"my_var": 2},
+			queue:     []int{3},
+			wantFaces: []int{3}, wantKept: []int{3}, wantDiscarded: []int{},
+			wantTotal: 5, wantSuccesses: 1, wantErr: false,
+		},
+		{
+			name:      "variable name with numbers",
+			formula:   "1d6 + @con12",
+			vars:      map[string]int{"con12": 3},
+			queue:     []int{4},
+			wantFaces: []int{4}, wantKept: []int{4}, wantDiscarded: []int{},
+			wantTotal: 7, wantSuccesses: 1, wantErr: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ast, err := Parse(tc.formula)
+			if err != nil {
+				t.Fatalf("Parse(%q) error: %v", tc.formula, err)
+			}
+			got, err := ast.EvalWithVars(NewQueueRoller(tc.queue...), tc.vars)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("EvalWithVars(%q, %v) succeeded, want error", tc.formula, tc.vars)
+				}
+				if !strings.Contains(err.Error(), "unknown variable") {
+					t.Errorf("EvalWithVars(%q) error %q does not mention unknown variable", tc.formula, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("EvalWithVars(%q, %v) error: %v", tc.formula, tc.vars, err)
+			}
+			if !reflect.DeepEqual(got.Faces, tc.wantFaces) {
+				t.Errorf("Faces = %v, want %v", got.Faces, tc.wantFaces)
+			}
+			if !reflect.DeepEqual(got.Kept, tc.wantKept) {
+				t.Errorf("Kept = %v, want %v", got.Kept, tc.wantKept)
+			}
+			if !reflect.DeepEqual(got.Discarded, tc.wantDiscarded) {
+				t.Errorf("Discarded = %v, want %v", got.Discarded, tc.wantDiscarded)
+			}
+			if got.Total != tc.wantTotal {
+				t.Errorf("Total = %d, want %d", got.Total, tc.wantTotal)
+			}
+			if got.Successes != tc.wantSuccesses {
+				t.Errorf("Successes = %d, want %d", got.Successes, tc.wantSuccesses)
+			}
+			if got.Successes != len(got.Kept) {
+				t.Errorf("Successes = %d, want len(Kept) = %d", got.Successes, len(got.Kept))
+			}
+			if len(got.Breakdown) == 0 && (len(tc.wantFaces) > 0 || tc.wantTotal != 0) {
+				t.Errorf("Breakdown is empty")
+			}
+		})
+	}
+}
+
+func TestEvaluatorRollWithVars(t *testing.T) {
+	var ev Evaluator
+	a, err := ev.RollWithVars(context.Background(), "1d12 + @con", 7, map[string]int{"con": 3})
+	if err != nil {
+		t.Fatalf("RollWithVars error: %v", err)
+	}
+	b, err := ev.RollWithVars(context.Background(), "1d12 + @con", 7, map[string]int{"con": 3})
+	if err != nil {
+		t.Fatalf("RollWithVars error: %v", err)
+	}
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("same seed diverged: %+v vs %+v", a, b)
+	}
+	if a.Total < 4 || a.Total > 15 {
+		t.Errorf("Total = %d, want in [4,15]", a.Total)
+	}
+
+	// Unknown variable should fail
+	if _, err := ev.RollWithVars(context.Background(), "1d20 + @unk", 1, map[string]int{}); err == nil {
+		t.Errorf("RollWithVars(unknown var) succeeded, want error")
+	} else if !strings.Contains(err.Error(), "unknown variable") {
+		t.Errorf("RollWithVars error %q does not mention unknown variable", err)
+	}
+
+	// Cancelled context
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ev.RollWithVars(ctx, "d20", 1, nil); err == nil {
+		t.Errorf("RollWithVars(cancelled ctx) succeeded, want context error")
+	}
+}
+
+func TestVariableFuzz(t *testing.T) {
+	// Fuzz test for variable parsing
+	testCases := []string{
+		"@con",
+		"@CON",
+		"@Con",
+		"@con12",
+		"@my_var",
+		"@_private",
+		"1d20+@mod",
+		"2d20kh1+@mod",
+		"@a+@b",
+		"(@x)*2",
+		"-@penalty",
+	}
+	for _, tc := range testCases {
+		ast, err := Parse(tc)
+		if err != nil {
+			t.Errorf("Parse(%q) error: %v", tc, err)
+			continue
+		}
+		// Should evaluate without error when vars provided
+		_, err = ast.EvalWithVars(NewQueueRoller(1, 2, 3, 4, 5), map[string]int{"con": 1, "mod": 2, "a": 3, "b": 4, "x": 5, "penalty": 1, "CON": 1, "Con": 1, "con12": 1, "my_var": 1, "_private": 1})
+		if err != nil {
+			t.Errorf("EvalWithVars(%q) error: %v", tc, err)
+		}
+	}
+}

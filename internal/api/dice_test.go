@@ -136,3 +136,108 @@ func TestDiceRollRequestSeedHonoredWithoutEnv(t *testing.T) {
 		t.Fatal("same request seed gave different totals")
 	}
 }
+
+func TestDiceRollWithVariables(t *testing.T) {
+	t.Setenv("SEMIPLANE_TEST_SEED", "99")
+	d := testDeps(t)
+	srv := serve(t, d)
+	defer srv.Close()
+
+	// Test variable substitution via API
+	resp := postJSON(t, srv.URL+"/api/v1/dice/roll?breakdown=1",
+		map[string]any{"formula": "1d12 + @con", "vars": map[string]int{"con": 3}})
+	var out struct {
+		Formula   string   `json:"formula"`
+		Total     int      `json:"total"`
+		Faces     []int    `json:"faces"`
+		Seed      int64    `json:"seed"`
+		Kept      []int    `json:"kept"`
+		Discarded []int    `json:"discarded"`
+		Breakdown []string `json:"breakdown"`
+	}
+	decodeBody(t, resp, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if out.Total < 4 || out.Total > 15 {
+		t.Errorf("Total = %d, want in [4,15] (1d12 + 3)", out.Total)
+	}
+	if len(out.Faces) != 1 {
+		t.Errorf("Faces = %v, want 1 face", out.Faces)
+	}
+	if out.Formula != "1d12 + @con" {
+		t.Errorf("Formula echoed back = %q, want %q", out.Formula, "1d12 + @con")
+	}
+}
+
+func TestDiceRollWithVariablesInKeep(t *testing.T) {
+	t.Setenv("SEMIPLANE_TEST_SEED", "100")
+	d := testDeps(t)
+	srv := serve(t, d)
+	defer srv.Close()
+
+	// Test variable in keep expression: 2d20kh1 + @mod
+	resp := postJSON(t, srv.URL+"/api/v1/dice/roll?breakdown=1",
+		map[string]any{"formula": "2d20kh1 + @mod", "vars": map[string]int{"mod": 5}})
+	var out struct {
+		Total     int   `json:"total"`
+		Faces     []int `json:"faces"`
+		Kept      []int `json:"kept"`
+		Discarded []int `json:"discarded"`
+	}
+	decodeBody(t, resp, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if len(out.Faces) != 2 {
+		t.Errorf("Faces = %v, want 2 faces", out.Faces)
+	}
+	if len(out.Kept) != 1 || len(out.Discarded) != 1 {
+		t.Errorf("Kept/Discarded = %v/%v, want 1/1", out.Kept, out.Discarded)
+	}
+	// Total = kept face + mod (5)
+	if out.Total != out.Kept[0]+5 {
+		t.Errorf("Total = %d, want kept(%d) + 5 = %d", out.Total, out.Kept[0], out.Kept[0]+5)
+	}
+}
+
+func TestDiceRollUnknownVariable400(t *testing.T) {
+	d := testDeps(t)
+	srv := serve(t, d)
+	defer srv.Close()
+
+	resp := postJSON(t, srv.URL+"/api/v1/dice/roll",
+		map[string]any{"formula": "1d20 + @unknown", "vars": map[string]int{"known": 5}})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("content-type = %q, want problem+json", ct)
+	}
+}
+
+func TestDiceRollNegativeVariable(t *testing.T) {
+	t.Setenv("SEMIPLANE_TEST_SEED", "101")
+	d := testDeps(t)
+	srv := serve(t, d)
+	defer srv.Close()
+
+	// Test negative variable: 1d20 - @penalty
+	resp := postJSON(t, srv.URL+"/api/v1/dice/roll",
+		map[string]any{"formula": "1d20 - @penalty", "vars": map[string]int{"penalty": 2}})
+	var out struct {
+		Total int   `json:"total"`
+		Faces []int `json:"faces"`
+	}
+	decodeBody(t, resp, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if len(out.Faces) != 1 {
+		t.Errorf("Faces = %v, want 1 face", out.Faces)
+	}
+	// Total = face - 2
+	if out.Total != out.Faces[0]-2 {
+		t.Errorf("Total = %d, want face(%d) - 2 = %d", out.Total, out.Faces[0], out.Faces[0]-2)
+	}
+}

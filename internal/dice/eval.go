@@ -45,11 +45,23 @@ func Parse(formula string) (*AST, error) {
 // A nil roller is an error, never a fallback to a global RNG. On error the
 // returned Result is zero.
 func (a *AST) Eval(roller *Roller) (Result, error) {
+	return a.EvalWithVars(roller, nil)
+}
+
+// EvalWithVars evaluates the AST with the given variables map. Variables are
+// substituted before evaluation; unknown variables cause an error. A nil
+// roller is an error. On error the returned Result is zero.
+func (a *AST) EvalWithVars(roller *Roller, vars map[string]int) (Result, error) {
 	if a == nil || a.root == nil {
 		return Result{}, errors.New("dice: nil AST")
 	}
 	if roller == nil {
 		return Result{}, errors.New("dice: nil roller")
+	}
+	// Resolve variables by replacing varRef nodes with intLit nodes.
+	resolvedRoot, err := resolveVars(a.root, vars)
+	if err != nil {
+		return Result{}, err
 	}
 	acc := &Result{
 		Faces:     []int{},
@@ -57,13 +69,74 @@ func (a *AST) Eval(roller *Roller) (Result, error) {
 		Discarded: []int{},
 		Breakdown: []string{},
 	}
-	total, err := a.root.eval(roller, acc)
+	total, err := resolvedRoot.eval(roller, acc)
 	if err != nil {
 		return Result{}, err
 	}
 	acc.Total = total
 	acc.Successes = len(acc.Kept)
 	return *acc, nil
+}
+
+// resolveVars walks the AST and replaces varRef nodes with intLit nodes.
+func resolveVars(n node, vars map[string]int) (node, error) {
+	switch x := n.(type) {
+	case *addExpr:
+		first, err := resolveVars(x.first, vars)
+		if err != nil {
+			return nil, err
+		}
+		rest := make([]addOpNode, len(x.rest))
+		for i, o := range x.rest {
+			next, err := resolveVars(o.next, vars)
+			if err != nil {
+				return nil, err
+			}
+			rest[i] = addOpNode{op: o.op, next: next}
+		}
+		return &addExpr{first: first, rest: rest}, nil
+	case *mulExpr:
+		first, err := resolveVars(x.first, vars)
+		if err != nil {
+			return nil, err
+		}
+		rest := make([]mulOpNode, len(x.rest))
+		for i, o := range x.rest {
+			next, err := resolveVars(o.next, vars)
+			if err != nil {
+				return nil, err
+			}
+			rest[i] = mulOpNode{op: o.op, next: next}
+		}
+		return &mulExpr{first: first, rest: rest}, nil
+	case *negExpr:
+		inner, err := resolveVars(x.inner, vars)
+		if err != nil {
+			return nil, err
+		}
+		return &negExpr{inner: inner}, nil
+	case *parenExpr:
+		inner, err := resolveVars(x.inner, vars)
+		if err != nil {
+			return nil, err
+		}
+		return &parenExpr{inner: inner}, nil
+	case *diceExpr:
+		return x, nil
+	case *intLit:
+		return x, nil
+	case *varRef:
+		if vars == nil {
+			return nil, fmt.Errorf("dice: unknown variable %q (no variables provided)", x.name)
+		}
+		val, ok := vars[x.name]
+		if !ok {
+			return nil, fmt.Errorf("dice: unknown variable %q", x.name)
+		}
+		return &intLit{value: val}, nil
+	default:
+		return nil, fmt.Errorf("dice: unknown node type %T", n)
+	}
 }
 
 // Evaluator evaluates formulas with a seed-derived deterministic roller.
@@ -76,6 +149,13 @@ type Evaluator struct{}
 // Roll parses formula and evaluates it with NewSeededRoller(seed). Equal
 // seeds yield equal results. A cancelled context fails before parsing.
 func (Evaluator) Roll(ctx context.Context, formula string, seed int64) (Result, error) {
+	return Evaluator{}.RollWithVars(ctx, formula, seed, nil)
+}
+
+// RollWithVars parses formula and evaluates it with NewSeededRoller(seed)
+// and the given variables map. Equal seeds yield equal results. A cancelled
+// context fails before parsing. Unknown variables cause an error.
+func (Evaluator) RollWithVars(ctx context.Context, formula string, seed int64, vars map[string]int) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, fmt.Errorf("dice: %w", err)
 	}
@@ -83,7 +163,7 @@ func (Evaluator) Roll(ctx context.Context, formula string, seed int64) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	return ast.Eval(NewSeededRoller(seed))
+	return ast.EvalWithVars(NewSeededRoller(seed), vars)
 }
 
 // node is one evaluable AST node.
@@ -134,6 +214,10 @@ type diceExpr struct {
 	keepHigh bool
 	hasKeep  bool
 	src      string
+}
+
+type varRef struct {
+	name string
 }
 
 func (n *addExpr) eval(r *Roller, acc *Result) (int, error) {
@@ -245,6 +329,12 @@ func (n *diceExpr) eval(r *Roller, acc *Result) (int, error) {
 	acc.Discarded = append(acc.Discarded, discarded...)
 	acc.Breakdown = append(acc.Breakdown, fmt.Sprintf("%s -> faces %v kept %v discarded %v = %d", n.src, faces, kept, discarded, sub))
 	return sub, nil
+}
+
+func (n *varRef) eval(_ *Roller, acc *Result) (int, error) {
+	// Variables are resolved at evaluation time via the vars map on the AST.
+	// This method should never be called directly; the AST.EvalWithVars handles variable resolution.
+	return 0, fmt.Errorf("dice: variable %q must be resolved before evaluation", n.name)
 }
 
 // keptIndices returns the indices of the keep highest (or lowest) faces.
