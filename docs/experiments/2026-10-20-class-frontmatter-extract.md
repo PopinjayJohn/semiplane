@@ -679,3 +679,27 @@ go run … -optfeature "Subtle Spell@XPHB"  # MM token, Sorcery Point, no prereq
   the parent subclass entry — the note inventory is parent-level.
 - The optional-feature bulk mode was deliberately not added: 29 notes, no
   scale pressure; widening later is a loop-shaped change, not a schema one.
+
+## 5. Authored system notes (not extractor output)
+
+The attribute-methods data the creator needs cannot be extracted — it must be
+authored (tech-stack §3.4: point-buy rules come from Markdown; §10: system
+packs live at `rules/systems/<id>/`). First of these:
+`testdata/vaults/facets/rules/systems/dnd5e-2024/charcreation.md` — the tracked
+curated-vault location mirrors a real deployment's vault path exactly, so the
+facet layer sees it as a real system note would be seen.
+
+- `semiplane.charcreation.methods[]`: `point-buy` (budget 27, score range
+  8–15, canonical SRD 5.2 costs 8=0…15=9) and `standard-array`
+  (15/14/13/12/10/8).
+- `semiplane.charcreation.increases`: background grants +2/+1 (`weights:
+  [2,1]`) — species grant nothing under the 2024 rules, mirroring the
+  extractor's empty `ability` on XPHB species notes.
+- `generatedFrom: authored/...` distinguishes hand-maintained namespaces from
+  extractor output (which always points at a source JSON path).
+
+Invariants live in `internal/index/charcreation_test.go`: canonical cost
+table, score range, array shape, and the cross-method property that the
+standard array spends exactly the 27-point budget (9+7+5+4+2+0). The note is
+hand-written, so drift in it can only be caught by tests — the same
+vocabulary-refusal philosophy the extractor applies to unknown records.

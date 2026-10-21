@@ -123,6 +123,7 @@ func TestReindexFacetsFromVault(t *testing.T) {
 	want := []string{
 		"rules/classes/barbarian-xphb-path-of-the-berserker-xphb.md",
 		"rules/classes/barbarian-xphb.md",
+		"rules/systems/dnd5e-2024/charcreation.md",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("semiplane facets = %v, want %v", got, want)

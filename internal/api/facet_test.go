@@ -74,7 +74,13 @@ func TestNoteListFacetFilter(t *testing.T) {
 			[]string{
 				"rules/classes/barbarian-xphb-path-of-the-berserker-xphb.md",
 				"rules/classes/barbarian-xphb.md",
+				"rules/systems/dnd5e-2024/charcreation.md",
 			},
+		},
+		{
+			"charcreation",
+			"/api/v1/notes?facet=semiplane.charcreation",
+			[]string{"rules/systems/dnd5e-2024/charcreation.md"},
 		},
 		{
 			"class",
