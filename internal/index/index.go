@@ -131,21 +131,51 @@ func ParseTitle(notePath, content string) string {
 	return strings.TrimSuffix(path.Base(notePath), ".md")
 }
 
-// ParseTags parses leading YAML frontmatter via the markdown package's
-// ParseFrontmatter and extracts the top-level `tags:` key with
-// TagsFromMeta (see that function for accepted value shapes).
-//
-// Deliberate swallow: a ParseFrontmatter error (invalid YAML such as
-// `tags: [unclosed`) yields an empty slice, never an error or panic — the
-// index must never fail Upsert because of an author typo. Strict callers
-// that care about malformed frontmatter use ParseFrontmatter directly and
-// get the hard error there.
-func ParseTags(content string) []string {
+// parseMeta parses leading YAML frontmatter via the markdown package's
+// ParseFrontmatter, swallowing malformed-YAML errors (the index must never
+// fail Upsert because of an author typo). Strict callers that care about
+// malformed frontmatter use ParseFrontmatter directly and get the hard error
+// there.
+func parseMeta(content string) map[string]any {
 	doc, err := markdown.ParseFrontmatter([]byte(content))
 	if err != nil {
-		return []string{}
+		return nil
 	}
-	return markdown.TagsFromMeta(doc.Meta)
+	return doc.Meta
+}
+
+// ParseTags parses leading YAML frontmatter and extracts the top-level
+// `tags:` key with TagsFromMeta (see that function for accepted value
+// shapes). Malformed YAML deliberately yields an empty slice, never an error
+// or panic — see parseMeta.
+func ParseTags(content string) []string {
+	return markdown.TagsFromMeta(parseMeta(content))
+}
+
+// SemiplaneFacet is the frontmatter namespace indexed in note_facets.
+const SemiplaneFacet = "semiplane"
+
+// semiplaneJSON returns the JSON encoding of meta["semiplane"] when the
+// namespace is present and non-null. Absent, null, or unencodable values are
+// reported as not present, never as an error.
+func semiplaneJSON(meta map[string]any) ([]byte, bool) {
+	v, ok := meta[SemiplaneFacet]
+	if !ok || v == nil {
+		return nil, false
+	}
+	raw, err := json.Marshal(v)
+	if err != nil || string(raw) == "null" {
+		return nil, false
+	}
+	return raw, true
+}
+
+// ParseSemiplane extracts the top-level `semiplane:` frontmatter value and
+// returns its JSON encoding, or false when the namespace is absent, null, or
+// unencodable. Like ParseTags it deliberately swallows malformed YAML: the
+// derived index must not fail because of an author typo.
+func ParseSemiplane(content string) ([]byte, bool) {
+	return semiplaneJSON(parseMeta(content))
 }
 
 // inImmediateTx runs fn on a single pinned connection inside an explicit
@@ -172,7 +202,8 @@ func (ix *Index) inImmediateTx(ctx context.Context, fn func(context.Context, *sq
 // notes_ai/notes_ad/notes_au triggers automatically.
 func (ix *Index) Upsert(notePath, content, hash string, mtime int64) error {
 	title := ParseTitle(notePath, content)
-	tags := ParseTags(content)
+	meta := parseMeta(content)
+	tags := markdown.TagsFromMeta(meta)
 	if tags == nil {
 		tags = []string{}
 	}
@@ -180,6 +211,7 @@ func (ix *Index) Upsert(notePath, content, hash string, mtime int64) error {
 	if err != nil {
 		return err
 	}
+	semiplane, hasSemiplane := semiplaneJSON(meta)
 	links := ParseLinks(content)
 	ctx := context.Background()
 	return ix.inImmediateTx(ctx, func(ctx context.Context, conn *sql.Conn) error {
@@ -187,6 +219,16 @@ func (ix *Index) Upsert(notePath, content, hash string, mtime int64) error {
 			`INSERT OR REPLACE INTO notes(path, content, hash, mtime, title, tags) VALUES(?, ?, ?, ?, ?, ?)`,
 			notePath, content, hash, mtime, title, string(tagsJSON)); err != nil {
 			return err
+		}
+		if _, err := conn.ExecContext(ctx, `DELETE FROM note_facets WHERE path = ?`, notePath); err != nil {
+			return err
+		}
+		if hasSemiplane {
+			if _, err := conn.ExecContext(ctx,
+				`INSERT INTO note_facets(path, namespace, data) VALUES(?, ?, ?)`,
+				notePath, SemiplaneFacet, string(semiplane)); err != nil {
+				return err
+			}
 		}
 		if _, err := conn.ExecContext(ctx, `DELETE FROM backlinks WHERE src = ?`, notePath); err != nil {
 			return err
@@ -207,6 +249,9 @@ func (ix *Index) Delete(notePath string) error {
 	ctx := context.Background()
 	return ix.inImmediateTx(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx, `DELETE FROM notes WHERE path = ?`, notePath); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, `DELETE FROM note_facets WHERE path = ?`, notePath); err != nil {
 			return err
 		}
 		_, err := conn.ExecContext(ctx, `DELETE FROM backlinks WHERE src = ? OR dst = ?`, notePath, notePath)
@@ -282,6 +327,41 @@ func (ix *Index) Backlinks(notePath string) ([]string, error) {
 	}
 	if out == nil {
 		out = []string{}
+	}
+	return out, nil
+}
+
+// FacetPaths returns the sorted paths of notes carrying namespace. When key
+// is non-empty it must be a dot-separated path within the namespace value
+// (e.g. "class" or "class.name"); only notes whose JSON value has that key
+// are returned. An absent key yields an empty, non-nil slice.
+func (ix *Index) FacetPaths(namespace, key string) ([]string, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if key == "" {
+		rows, err = ix.DB.Query(
+			`SELECT path FROM note_facets WHERE namespace = ? ORDER BY path`, namespace)
+	} else {
+		rows, err = ix.DB.Query(
+			`SELECT path FROM note_facets WHERE namespace = ? AND json_type(data, ?) IS NOT NULL ORDER BY path`,
+			namespace, "$."+key)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -373,6 +453,10 @@ func (ix *Index) Reindex(vaultRoot string) (int, error) {
 				`DELETE FROM notes WHERE path IN (`+strings.Join(holders, ", ")+`)`, args...); err != nil {
 				return err
 			}
+		}
+		if _, err := conn.ExecContext(ctx,
+			`DELETE FROM note_facets WHERE path NOT IN (SELECT path FROM notes)`); err != nil {
+			return err
 		}
 		// Drop edges whose SOURCE is gone. Dangling destinations (links to
 		// notes that do not exist yet) are kept: they resolve when the
