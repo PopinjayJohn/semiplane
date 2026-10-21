@@ -14,6 +14,7 @@ agents before.
 | `docs/e2e.md` | E2E architecture, determinism, anti-flake contract, spec inventory. |
 | `docs/rules-ontology.md` | **Canonical** event/state/hook spec. The rules engine's law. |
 | `docs/implementation-plan.md` | Phases, workstreams, conflict map, merge order. |
+| `docs/tools/*.md` | Dev-tool references (`json2fm-5e`: 5e.tools JSON → `semiplane:` frontmatter extraction). |
 | `docs/prototype-notes.md` | Does not exist on main (lives on the disposable UX branch) — see Branches. |
 
 ## The contract: `make` targets (CI wraps these, nothing else)

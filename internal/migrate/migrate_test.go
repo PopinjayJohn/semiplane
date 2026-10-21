@@ -28,7 +28,7 @@ func TestApplyIdempotent(t *testing.T) {
 	}
 
 	wantTables := []string{
-		"notes", "notes_fts", "backlinks", "sessions", "tokens",
+		"notes", "notes_fts", "note_facets", "backlinks", "sessions", "tokens",
 		"lan_codes", "oidc_states", "acls", "users", "user_version",
 	}
 	for _, table := range wantTables {

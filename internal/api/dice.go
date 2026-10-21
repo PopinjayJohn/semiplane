@@ -19,9 +19,11 @@ import (
 // SEMIPLANE_TEST_SEED is set the env value wins (deterministic E2E + exact
 // goldens); otherwise the request seed wins when non-zero; otherwise the
 // server draws crypto-random.
+// vars is an optional map of @-variable substitutions (e.g. {"con": 3}).
 type rollBody struct {
-	Formula string `json:"formula"`
-	Seed    int64  `json:"seed"`
+	Formula string         `json:"formula"`
+	Seed    int64          `json:"seed"`
+	Vars    map[string]int `json:"vars,omitempty"`
 }
 
 // handleDiceRoll resolves one formula server-authoritatively (D's engine,
@@ -48,7 +50,7 @@ func (d *Deps) handleDiceRoll(w http.ResponseWriter, r *http.Request) {
 	} else if seed == 0 {
 		seed = cryptoSeed()
 	}
-	res, err := dice.Evaluator{}.Roll(r.Context(), formula, seed)
+	res, err := dice.Evaluator{}.RollWithVars(r.Context(), formula, seed, body.Vars)
 	if err != nil {
 		WriteProblem(w, http.StatusBadRequest, "bad request", "invalid formula: "+err.Error())
 		return

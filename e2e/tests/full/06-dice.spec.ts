@@ -19,6 +19,15 @@ const SEEDED = {
     discarded: [1],
     seed: 7357,
   },
+  // Variable formulas with SEMIPLANE_TEST_SEED=7357 and provided vars
+  '1d12+@con': { total: 13, faces: [10], seed: 7357 }, // con=3, 1d12 rolls 10
+  '2d20kh1+@mod': {
+    total: 22,
+    faces: [17, 1],
+    kept: [17],
+    discarded: [1],
+    seed: 7357,
+  }, // mod=5, 2d20kh1 rolls 17,1 -> kept 17 + 5 = 22
 } as const;
 
 test.beforeEach(async ({ page }) => {
@@ -103,6 +112,66 @@ test('breakdown=1 seeded exact kept/discarded', async ({ request }) => {
   expect(body.discarded).toEqual(SEEDED['2d20kh1+5'].discarded);
   expect(Array.isArray(body.breakdown)).toBe(true);
   expect(body.breakdown.length).toBeGreaterThan(0);
+});
+
+test('variable substitution @con', async ({ request }) => {
+  const { sessionCookie } = await loginAsSession(request, 'player1');
+
+  const res = await request.post('/api/v1/dice/roll', {
+    data: { formula: '1d12+@con', vars: { con: 3 } },
+    headers: { Cookie: `semiplane_session=${sessionCookie}` },
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.seed).toBe(SEEDED['1d12+@con'].seed);
+  expect(body.total).toBe(SEEDED['1d12+@con'].total);
+  expect(body.faces).toEqual(SEEDED['1d12+@con'].faces);
+  expect(body.formula).toBe('1d12+@con');
+});
+
+test('variable in keep expression @mod', async ({ request }) => {
+  const { sessionCookie } = await loginAsSession(request, 'player1');
+
+  const res = await request.post('/api/v1/dice/roll?breakdown=1', {
+    data: { formula: '2d20kh1+@mod', vars: { mod: 5 } },
+    headers: { Cookie: `semiplane_session=${sessionCookie}` },
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.seed).toBe(SEEDED['2d20kh1+@mod'].seed);
+  expect(body.total).toBe(SEEDED['2d20kh1+@mod'].total);
+  expect(body.faces).toEqual(SEEDED['2d20kh1+@mod'].faces);
+  expect(body.kept).toEqual(SEEDED['2d20kh1+@mod'].kept);
+  expect(body.discarded).toEqual(SEEDED['2d20kh1+@mod'].discarded);
+  expect(Array.isArray(body.breakdown)).toBe(true);
+  expect(body.breakdown.length).toBeGreaterThan(0);
+});
+
+test('unknown variable is 400', async ({ request }) => {
+  const { sessionCookie } = await loginAsSession(request, 'player1');
+
+  const res = await request.post('/api/v1/dice/roll', {
+    data: { formula: '1d20+@unknown', vars: { known: 5 } },
+    headers: { Cookie: `semiplane_session=${sessionCookie}` },
+  });
+  expect(res.status()).toBe(400);
+  expect(res.headers()['content-type']).toContain('application/problem+json');
+});
+
+test('negative variable substitution', async ({ request }) => {
+  const { sessionCookie } = await loginAsSession(request, 'player1');
+
+  const res = await request.post('/api/v1/dice/roll', {
+    data: { formula: '1d20-@penalty', vars: { penalty: 2 } },
+    headers: { Cookie: `semiplane_session=${sessionCookie}` },
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  // With SEMIPLANE_TEST_SEED=7357, 1d20 rolls 17
+  // Total = 17 - 2 = 15
+  expect(body.total).toBe(15);
+  expect(body.faces).toEqual([17]);
+  expect(body.formula).toBe('1d20-@penalty');
 });
 
 test('invalid formula is 400', async ({ request }) => {

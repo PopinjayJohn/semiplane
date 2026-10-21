@@ -9,6 +9,11 @@
 --     The index can be fully rebuilt by rescanning the vault (reindex).
 --   * notes_fts is a derived FTS5 index over notes, kept in sync by the
 --     notes_ai / notes_ad / notes_au triggers (delete+insert pattern).
+--   * note_facets is a derived facet index over frontmatter namespaces. It
+--     stores the JSON value of a namespace (currently only `semiplane:`) so
+--     note consumers can discover notes by key (e.g. semiplane.class)
+--     without reading every note. Like the other derived tables it is
+--     rebuilt from content by code (upsert/delete/reindex).
 --   * backlinks is a derived edge index (src -> dst note links). It carries
 --     NO foreign keys to notes on purpose: edges are rebuilt from content
 --     by code, and rows for deleted notes are cleaned up by code (delete
@@ -26,6 +31,17 @@ CREATE TABLE IF NOT EXISTS notes (
   title   TEXT,
   tags    TEXT NOT NULL DEFAULT '[]'
 );
+
+-- Derived facet rows: one per (note, frontmatter namespace) carrying data.
+-- data is the namespace value encoded as JSON; queries test key presence
+-- with SQLite's built-in JSON functions (json_type(data, '$.some.key')).
+CREATE TABLE IF NOT EXISTS note_facets (
+  path      TEXT NOT NULL,
+  namespace TEXT NOT NULL,
+  data      TEXT NOT NULL,
+  PRIMARY KEY (path, namespace)
+);
+CREATE INDEX IF NOT EXISTS idx_note_facets_namespace ON note_facets(namespace);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   path,

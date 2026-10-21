@@ -34,6 +34,16 @@ func FuzzParse(f *testing.F) {
 		strings.Repeat("1+", 40),
 		strings.Repeat("(", 10),
 		strings.Repeat("d", 20),
+		// Variable expressions
+		"@con",
+		"1d20+@mod",
+		"2d20kh1+@mod",
+		"@a+@b",
+		"(@x)*2",
+		"-@penalty",
+		"1d12+@con",
+		"@my_var",
+		"@con12",
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -46,7 +56,9 @@ func FuzzParse(f *testing.F) {
 		if ast == nil {
 			t.Fatal("Parse returned nil AST with nil error")
 		}
-		_, _ = ast.Eval(NewQueueRoller(1, 2, 3, 4, 5, 6))
-		_, _ = ast.Eval(NewSeededRoller(1))
+		// Use a vars map that covers common test variable names
+		vars := map[string]int{"con": 1, "mod": 2, "a": 3, "b": 4, "x": 5, "penalty": 1, "my_var": 1, "con12": 1}
+		_, _ = ast.EvalWithVars(NewQueueRoller(1, 2, 3, 4, 5, 6), vars)
+		_, _ = ast.EvalWithVars(NewSeededRoller(1), vars)
 	})
 }

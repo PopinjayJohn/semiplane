@@ -31,6 +31,7 @@ var diceLexer = lexer.MustSimple([]lexer.SimpleRule{
 	{Name: "Keep", Pattern: `[kK][hHlL]`},
 	{Name: "Dice", Pattern: `[dD]`},
 	{Name: "Op", Pattern: `[-+*/()]`},
+	{Name: "Var", Pattern: `@[A-Za-z_][A-Za-z0-9_]*`},
 })
 
 var formulaParser = participle.MustBuild[formula](
@@ -74,6 +75,7 @@ type unaryGram struct {
 type atomGram struct {
 	Dice *diceGram `parser:"  @@"`
 	Num  *int      `parser:"| @Int"`
+	Var  *string   `parser:"| @Var"`
 	Sub  *sumGram  `parser:"| '(' @@ ')'"`
 }
 
@@ -162,6 +164,8 @@ func buildAtom(a *atomGram, depth int) (node, error) {
 		return buildDice(a.Dice)
 	case a.Num != nil:
 		return &intLit{value: *a.Num}, nil
+	case a.Var != nil:
+		return &varRef{name: strings.TrimPrefix(*a.Var, "@")}, nil
 	case a.Sub != nil:
 		if depth+1 > MaxParenDepth {
 			return nil, fmt.Errorf("dice: paren depth %d exceeds MaxParenDepth=%d", depth+1, MaxParenDepth)
