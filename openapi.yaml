@@ -43,13 +43,20 @@ paths:
       summary: list notes under a vault prefix
       description: >-
         Lists vault-relative .md paths in lexical order. ?folder= (alias
-        ?prefix=) scopes to a vault subtree, e.g. ?folder=campaign. Tag/type
-        filtering is future work and intentionally absent from this version.
-        Each entry carries its display title (first ATX heading, basename
-        fallback per index.ParseTitle).
+        ?prefix=) scopes to a vault subtree, e.g. ?folder=campaign. ?facet=
+        filters on the derived frontmatter facet index: ?facet=semiplane
+        lists every note carrying the semiplane: namespace, while
+        ?facet=semiplane.class or ?facet=semiplane.subclass narrows to notes
+        carrying that nested key (dot-separated [A-Za-z0-9_-] segments under
+        the semiplane namespace only). Facet results come from the derived
+        index; run `semiplane reindex` after external edits. Tag/type
+        filtering is future work and remains absent. Each entry carries its
+        display title (first ATX heading, basename fallback per
+        index.ParseTitle).
       parameters:
         - {name: folder, in: query, schema: {type: string}}
         - {name: prefix, in: query, schema: {type: string}}
+        - {name: facet, in: query, schema: {type: string}, example: semiplane.class}
       responses:
         '200':
           description: note list
@@ -67,6 +74,16 @@ paths:
                       properties:
                         path: {type: string, example: campaign/intro.md}
                         title: {type: string, example: Intro}
+        '400':
+          description: invalid facet key
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
+        '503':
+          description: facet requested but the derived index is unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/problem'}
   /api/v1/notes/{path}:
     get:
       operationId: getNote

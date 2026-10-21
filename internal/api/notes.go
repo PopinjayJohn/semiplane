@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/PopinjayJohn/semiplane/internal/identity"
@@ -162,6 +163,26 @@ func isCharacterOwner(notePath, userID string) bool {
 	return strings.HasPrefix(notePath, prefix)
 }
 
+// facetSegmentRe matches one dot-separated segment of a ?facet= key.
+var facetSegmentRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// parseFacet splits a facet key such as "semiplane.class" into the indexed
+// namespace ("semiplane") and the nested JSON key ("class"). Only the
+// semiplane namespace is indexed today; every segment must be non-empty and
+// restricted to [A-Za-z0-9_-] so it can be used as a JSON path.
+func parseFacet(raw string) (namespace, key string, err error) {
+	segments := strings.Split(raw, ".")
+	if segments[0] != index.SemiplaneFacet {
+		return "", "", errors.New("facet must start with semiplane")
+	}
+	for _, seg := range segments {
+		if !facetSegmentRe.MatchString(seg) {
+			return "", "", errors.New("facet keys are dot-separated [A-Za-z0-9_-] segments")
+		}
+	}
+	return segments[0], strings.Join(segments[1:], "."), nil
+}
+
 func (d *Deps) handleListNotes(w http.ResponseWriter, r *http.Request) {
 	if d.Vault == nil {
 		WriteProblem(w, http.StatusServiceUnavailable, "vault unavailable", "no NoteRepository wired")
@@ -172,6 +193,35 @@ func (d *Deps) handleListNotes(w http.ResponseWriter, r *http.Request) {
 	prefix := q.Get("folder")
 	if p := q.Get("prefix"); p != "" {
 		prefix = p
+	}
+	// ?facet= filters through the derived index: facet=semiplane lists every
+	// note carrying the semiplane: namespace, and a nested key such as
+	// facet=semiplane.class narrows to notes carrying that key.
+	var facetPaths map[string]struct{}
+	if q.Has("facet") {
+		facet := strings.TrimSpace(q.Get("facet"))
+		if facet == "" {
+			WriteProblem(w, http.StatusBadRequest, "bad request", "facet must not be empty")
+			return
+		}
+		namespace, key, err := parseFacet(facet)
+		if err != nil {
+			WriteProblem(w, http.StatusBadRequest, "bad request", err.Error())
+			return
+		}
+		if d.Index == nil {
+			WriteProblem(w, http.StatusServiceUnavailable, "index unavailable", "no index wired for facet filtering")
+			return
+		}
+		matches, err := d.Index.FacetPaths(namespace, key)
+		if err != nil {
+			writeRouteError(w, err, "facet query failed: "+err.Error())
+			return
+		}
+		facetPaths = make(map[string]struct{}, len(matches))
+		for _, p := range matches {
+			facetPaths[p] = struct{}{}
+		}
 	}
 	paths, err := d.Vault.List(r.Context(), prefix)
 	if err != nil {
@@ -186,6 +236,15 @@ func (d *Deps) handleListNotes(w http.ResponseWriter, r *http.Request) {
 		kept := make([]string, 0, len(paths))
 		for _, p := range paths {
 			if d.VaultCan(r.Context(), p, "read") {
+				kept = append(kept, p)
+			}
+		}
+		paths = kept
+	}
+	if facetPaths != nil {
+		kept := make([]string, 0, len(paths))
+		for _, p := range paths {
+			if _, ok := facetPaths[p]; ok {
 				kept = append(kept, p)
 			}
 		}
